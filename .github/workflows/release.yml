@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build linux amd64
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 go build -o dist/awvs-sqlmap-panel-linux-amd64 .
+          chmod +x dist/awvs-sqlmap-panel-linux-amd64
+          cd dist
+          zip -9 awvs-sqlmap-panel-linux-amd64.zip awvs-sqlmap-panel-linux-amd64
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/awvs-sqlmap-panel-linux-amd64
+            dist/awvs-sqlmap-panel-linux-amd64.zip
