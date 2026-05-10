@@ -5,6 +5,7 @@ import (
 	"awvs-sqlmap-panel/auth"
 	"awvs-sqlmap-panel/models"
 	"awvs-sqlmap-panel/scheduler"
+	"awvs-sqlmap-panel/updater"
 	"embed"
 	"flag"
 	"fmt"
@@ -25,6 +26,14 @@ var frontendFiles embed.FS
 func main() {
 	initLogger()
 
+	remainingArgs, updateHandled, updateErr := updater.HandleUpdateCLI(os.Args[1:])
+	if updateErr != nil {
+		log.Fatalf("update failed: %v", updateErr)
+	}
+	if updateHandled {
+		return
+	}
+
 	db, err := gorm.Open(sqlite.Open("panel.db"), &gorm.Config{})
 	if err != nil {
 		log.Fatal("failed to connect database")
@@ -41,7 +50,7 @@ func main() {
 		&models.AdminCredential{},
 	)
 
-	if handled, err := auth.HandleCLI(db, os.Args[1:]); handled {
+	if handled, err := auth.HandleCLI(db, remainingArgs); handled {
 		if err != nil {
 			log.Fatalf("reset-admin failed: %v", err)
 		}
@@ -51,7 +60,7 @@ func main() {
 	if err := auth.EnsureDefaultAdminCredential(db); err != nil {
 		log.Fatalf("failed to initialize admin credential: %v", err)
 	}
-	listenAddr, err := parseListenAddress(os.Args[1:])
+	listenAddr, err := parseListenAddress(remainingArgs)
 	if err != nil {
 		log.Fatalf("invalid listen args: %v", err)
 	}
