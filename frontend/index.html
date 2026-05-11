@@ -453,8 +453,8 @@
                         <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_status') }}</div><div class="summary-value" style="color:var(--accent-blue)">{{ taskDetail.status || '-' }}</div></div></div>
                         <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_phase') }}</div><div class="summary-value">{{ taskDetail.phase || '-' }}</div></div></div>
                         <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_action') }}</div><div class="summary-value">{{ taskDetail.latest_action || '-' }}</div></div></div>
-                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">DBMS</div><div class="summary-value">{{ getTaskDetailValue(taskDetail, ['session', 'dbms']) || '-' }}</div></div></div>
-                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">OS</div><div class="summary-value">{{ getTaskDetailValue(taskDetail, ['session', 'os']) || '-' }}</div></div></div>
+                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_dbms') }}</div><div class="summary-value">{{ getTaskDetailValue(taskDetail, ['session', 'dbms']) || '-' }}</div></div></div>
+                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_os') }}</div><div class="summary-value">{{ getTaskDetailValue(taskDetail, ['session', 'os']) || '-' }}</div></div></div>
                         <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_current_db') }}</div><div class="summary-value text-success">{{ getTaskDetailValue(taskDetail, ['content', 'current_db']) || '-' }}</div></div></div>
                     </div>
 
@@ -470,11 +470,11 @@
                             <option value="T">{{ t('tech_t') }}</option>
                             <option value="Q">{{ t('tech_q') }}</option>
                         </select>
-                        <input class="form-control form-control-sm w-auto bg-dark border-secondary text-white" style="min-width: 200px;" list="db-options" v-model.trim="selectedActionDb" placeholder="DB">
+                        <input class="form-control form-control-sm w-auto bg-dark border-secondary text-white" style="min-width: 200px;" list="db-options" v-model.trim="selectedActionDb" :placeholder="t('placeholder_db')">
                         <datalist id="db-options">
                             <option v-for="dbName in getActionDbOptions()" :key="'db-opt-' + dbName" :value="dbName">{{ dbName }}</option>
                         </datalist>
-                        <input class="form-control form-control-sm w-auto bg-dark border-secondary text-white" style="min-width: 200px;" list="table-options" v-model.trim="selectedActionTable" placeholder="Table">
+                        <input class="form-control form-control-sm w-auto bg-dark border-secondary text-white" style="min-width: 200px;" list="table-options" v-model.trim="selectedActionTable" :placeholder="t('placeholder_table')">
                         <datalist id="table-options">
                             <option v-for="tableName in getActionTableOptions()" :key="'tbl-opt-' + tableName" :value="tableName">{{ tableName }}</option>
                         </datalist>
@@ -483,10 +483,10 @@
                         <button class="btn btn-outline-primary btn-sm" :disabled="taskActionBusy || !selectedActionDb" @click="runTaskAction('get_tables', { db: selectedActionDb })">{{ t('btn_tables') }}</button>
                         <button class="btn btn-outline-primary btn-sm" :disabled="taskActionBusy || !selectedActionDb || !selectedActionTable" @click="runTaskAction('get_columns', { db: selectedActionDb, table: selectedActionTable })">{{ t('btn_columns') }}</button>
                         <select class="form-select form-select-sm w-auto bg-dark border-secondary text-white" v-model="dumpLimitMode">
-                            <option value="head">Head</option>
-                            <option value="tail">Tail</option>
+                            <option value="head">{{ t('dump_mode_head') }}</option>
+                            <option value="tail">{{ t('dump_mode_tail') }}</option>
                         </select>
-                        <input class="form-control form-control-sm w-auto bg-dark border-secondary text-white" style="max-width: 100px;" type="number" min="1" v-model.number="dumpLimitRows" placeholder="N">
+                        <input class="form-control form-control-sm w-auto bg-dark border-secondary text-white" style="max-width: 100px;" type="number" min="1" v-model.number="dumpLimitRows" :placeholder="t('row_limit_placeholder')">
                         <button class="btn btn-outline-success btn-sm" :disabled="taskActionBusy || !selectedActionDb || !selectedActionTable" @click="runTaskAction('dump_table_data', buildDumpPayload())">{{ t('btn_dump_data') }}</button>
                         <button class="btn btn-outline-danger btn-sm" :disabled="taskActionBusy" @click="runTaskAction('probe_shell')">{{ t('btn_probe_shell') }}</button>
                         <button class="btn btn-outline-warning btn-sm" :disabled="taskActionBusy || !selectedFindingId" @click="retryTaskPush">{{ t('force_retry_push') }}</button>
@@ -503,7 +503,7 @@
                                 <div v-if="!getTaskTechniques().length" class="muted">{{ t('no_injection_data') }}</div>
                                 <div v-for="item in getTaskTechniques()" :key="item.place + ':' + item.parameter" class="mb-3">
                                     <div><strong class="text-white">{{ item.parameter }}</strong> <span class="badge bg-secondary ms-2">{{ item.place }}</span></div>
-                                    <div class="muted small mt-1" v-if="item.dbms || item.os">DBMS: {{ item.dbms || '-' }} | OS: {{ item.os || '-' }}</div>
+                                    <div class="muted small mt-1" v-if="item.dbms || item.os">{{ t('label_dbms') }}: {{ item.dbms || '-' }} | {{ t('label_os') }}: {{ item.os || '-' }}</div>
                                     <div v-for="entry in item.entries" :key="entry.type + ':' + entry.title" class="code-box mt-2 p-2">
                                         <div class="text-info">{{ entry.type }}</div>
                                         <div class="small text-muted mt-1">{{ entry.title }}</div>
@@ -630,7 +630,7 @@
                         <div class="col-12">
                             <div class="tree-box">
                                 <div class="d-flex justify-content-between align-items-center mb-3">
-                                    <h6 class="mb-0">Sqlmap Request (request.txt)</h6>
+                                    <h6 class="mb-0">{{ t('sqlmap_request_title') }}</h6>
                                     <div class="btn-group btn-group-sm">
                                         <button class="btn btn-outline-secondary" v-if="!requestEditMode" @click="startEditRequest">{{ t('edit') }}</button>
                                         <button class="btn btn-primary" v-if="requestEditMode" @click="saveRequestContent">{{ t('save_changes') }}</button>
@@ -644,7 +644,7 @@
 
                         <div class="col-12">
                             <div class="tree-box">
-                                <h6 class="mb-3">AWVS Original Payload</h6>
+                                <h6 class="mb-3">{{ t('awvs_original_payload') }}</h6>
                                 <div class="code-box" style="min-height:80px; white-space: pre-wrap;">{{ selectedFinding && selectedFinding.awvs_payload ? selectedFinding.awvs_payload : '-' }}</div>
                             </div>
                         </div>
@@ -680,7 +680,7 @@
                     <div class="row g-4">
                         <div class="col-12">
                             <div class="tree-box">
-                                <h6 class="mb-3">AWVS Original Payload</h6>
+                                <h6 class="mb-3">{{ t('awvs_original_payload') }}</h6>
                                 <div class="code-box" style="min-height:80px; white-space: pre-wrap;">{{ selectedFinding.awvs_payload || '-' }}</div>
                             </div>
                         </div>
@@ -1105,7 +1105,7 @@
                         <table class="table table-hover align-middle mb-0">
                             <thead><tr><th><input class="form-check-input" type="checkbox" @change="toggleAllCloudInstances('awvs', $event)" :checked="selectedAwvsCloudInstanceIds.length === awvsCloudInstances.length && awvsCloudInstances.length > 0"></th><th>ID</th><th>{{ t('instance') }}</th><th>{{ t('region_zone') }}</th><th>{{ t('spec') }}</th><th>{{ t('status') }}</th><th>{{ t('price') }}</th><th>{{ t('recycle_countdown') }}</th><th>{{ t('heartbeat') }}</th><th>{{ t('failure_reason') }}</th><th>{{ t('action') }}</th></tr></thead>
                             <tbody>
-                            <tr v-for="item in awvsCloudInstances" :key="'awvs-'+item.ID"><td><input class="form-check-input" type="checkbox" :value="item.ID" v-model="selectedAwvsCloudInstanceIds"></td><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td><div class="small">Total: {{ formatUSD(item.spot_price_usd) }}</div><div class="small text-muted">Instance: {{ formatUSD(item.instance_price_usd || item.spot_price_usd) }}</div><div class="small text-muted">Extra: {{ formatUSD(item.extra_price_usd) }}</div><div class="small text-muted">Public IP est: {{ formatUSD(item.public_traffic_price_usd) }}</div></td><td><small class="text-muted">{{ formatRecycleCountdown(item.expires_at) }}</small></td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td><td><button class="btn btn-outline-warning btn-sm" @click="rebootCloudInstances('awvs', [item.ID])">{{ t('reboot_server') }}</button></td></tr>
+                            <tr v-for="item in awvsCloudInstances" :key="'awvs-'+item.ID"><td><input class="form-check-input" type="checkbox" :value="item.ID" v-model="selectedAwvsCloudInstanceIds"></td><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td><div class="small">{{ t('price_total') }}: {{ formatUSD(item.spot_price_usd) }}</div><div class="small text-muted">{{ t('price_instance') }}: {{ formatUSD(item.instance_price_usd || item.spot_price_usd) }}</div><div class="small text-muted">{{ t('price_extra') }}: {{ formatUSD(item.extra_price_usd) }}</div><div class="small text-muted">{{ t('price_public_ip_est') }}: {{ formatUSD(item.public_traffic_price_usd) }}</div></td><td><small class="text-muted">{{ formatRecycleCountdown(item.expires_at) }}</small></td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td><td><button class="btn btn-outline-warning btn-sm" @click="rebootCloudInstances('awvs', [item.ID])">{{ t('reboot_server') }}</button></td></tr>
                             <tr v-if="awvsCloudInstances.length===0"><td colspan="11" class="text-center muted py-4">{{ t('no_cloud_instances') }}</td></tr>
                             </tbody>
                         </table>
@@ -1125,7 +1125,7 @@
                         <table class="table table-hover align-middle mb-0">
                             <thead><tr><th><input class="form-check-input" type="checkbox" @change="toggleAllCloudInstances('sqlmap', $event)" :checked="selectedSqlmapCloudInstanceIds.length === sqlmapCloudInstances.length && sqlmapCloudInstances.length > 0"></th><th>ID</th><th>{{ t('instance') }}</th><th>{{ t('region_zone') }}</th><th>{{ t('spec') }}</th><th>{{ t('status') }}</th><th>{{ t('price') }}</th><th>{{ t('recycle_countdown') }}</th><th>{{ t('heartbeat') }}</th><th>{{ t('failure_reason') }}</th><th>{{ t('action') }}</th></tr></thead>
                             <tbody>
-                            <tr v-for="item in sqlmapCloudInstances" :key="'sqlmap-'+item.ID"><td><input class="form-check-input" type="checkbox" :value="item.ID" v-model="selectedSqlmapCloudInstanceIds"></td><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td><div class="small">Total: {{ formatUSD(item.spot_price_usd) }}</div><div class="small text-muted">Instance: {{ formatUSD(item.instance_price_usd || item.spot_price_usd) }}</div><div class="small text-muted">Extra: {{ formatUSD(item.extra_price_usd) }}</div><div class="small text-muted">Public IP est: {{ formatUSD(item.public_traffic_price_usd) }}</div></td><td><small class="text-muted">{{ formatRecycleCountdown(item.expires_at) }}</small></td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td><td><button class="btn btn-outline-warning btn-sm" @click="rebootCloudInstances('sqlmap', [item.ID])">{{ t('reboot_server') }}</button></td></tr>
+                            <tr v-for="item in sqlmapCloudInstances" :key="'sqlmap-'+item.ID"><td><input class="form-check-input" type="checkbox" :value="item.ID" v-model="selectedSqlmapCloudInstanceIds"></td><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td><div class="small">{{ t('price_total') }}: {{ formatUSD(item.spot_price_usd) }}</div><div class="small text-muted">{{ t('price_instance') }}: {{ formatUSD(item.instance_price_usd || item.spot_price_usd) }}</div><div class="small text-muted">{{ t('price_extra') }}: {{ formatUSD(item.extra_price_usd) }}</div><div class="small text-muted">{{ t('price_public_ip_est') }}: {{ formatUSD(item.public_traffic_price_usd) }}</div></td><td><small class="text-muted">{{ formatRecycleCountdown(item.expires_at) }}</small></td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td><td><button class="btn btn-outline-warning btn-sm" @click="rebootCloudInstances('sqlmap', [item.ID])">{{ t('reboot_server') }}</button></td></tr>
                             <tr v-if="sqlmapCloudInstances.length===0"><td colspan="11" class="text-center muted py-4">{{ t('no_cloud_instances') }}</td></tr>
                             </tbody>
                         </table>
@@ -1497,7 +1497,7 @@ const I18N = {
         failure_reason: 'Failure Reason',
         hourly_total: 'Hourly Total',
         no_cloud_instances: 'No cloud instances yet.',
-        reboot_server: 'Reboot Server',
+        reboot_server: 'Reboot',
         batch_reboot_server: 'Batch Reboot',
         restart_docker: 'Restart Docker',
         batch_restart_docker: 'Batch Docker Restart',
@@ -1527,6 +1527,8 @@ const I18N = {
         summary_status: 'Status',
         summary_phase: 'Phase',
         summary_action: 'Action',
+        summary_dbms: 'DBMS',
+        summary_os: 'OS',
         summary_current_db: 'Current DB',
         actions_label: 'Actions',
         title_force_tech: 'Force injection technique',
@@ -1543,6 +1545,11 @@ const I18N = {
         btn_columns: 'Columns',
         btn_dump_data: 'Dump Data',
         btn_probe_shell: 'Probe Shell',
+        placeholder_db: 'DB',
+        placeholder_table: 'Table',
+        dump_mode_head: 'Head',
+        dump_mode_tail: 'Tail',
+        row_limit_placeholder: 'Rows',
         injection_points: 'Injection Points',
         no_injection_data: 'No injection data yet',
         search: 'Search',
@@ -1552,6 +1559,8 @@ const I18N = {
         proxy_requested: 'Requested Proxy',
         proxy_effective: 'Runtime Proxy (from temp config)',
         proxy_config_file: 'Runtime Config File',
+        label_dbms: 'DBMS',
+        label_os: 'OS',
         label_db: 'DB',
         label_tbl: 'TBL',
         label_col: 'COL',
@@ -1568,7 +1577,13 @@ const I18N = {
         data_short: 'Data',
         no_columns_loaded: 'No columns loaded',
         shell_capability: 'Shell Capability',
-        session_state: 'Session State'
+        session_state: 'Session State',
+        sqlmap_request_title: 'Sqlmap Request (request.txt)',
+        awvs_original_payload: 'AWVS Original Payload',
+        price_total: 'Total',
+        price_instance: 'Instance',
+        price_extra: 'Extra',
+        price_public_ip_est: 'Public IP est'
         ,
         finding_not_bound_hint: 'This finding is saved. It is not currently bound to a sqlmap task. Use Retry Push to bind it again.',
         request_failed: 'Request failed',
@@ -1627,10 +1642,10 @@ const I18N = {
         confirm_cleanup_0_vuln: '\u5c06\u5220\u9664 AWVS \u626b\u63cf\u5df2\u5b8c\u6210\u4f46\u6ca1\u6709\u4efb\u4f55\u6f0f\u6d1e\u7684\u4efb\u52a1\uff0c\u540c\u65f6\u4f1a\u5220\u9664\u5176 AWVS target\u3002\u7ee7\u7eed\u5417\uff1f',
         confirm_batch_delete: '\u786e\u5b9a\u5220\u9664\u9009\u4e2d\u7684 {count} \u4e2a\u4efb\u52a1\u53ca\u5176\u5bf9\u5e94\u7684 AWVS target \u5417\uff1f',
         confirm_batch_retry_push: '\u73b0\u5728\u5c06\u9009\u4e2d\u7684 {count} \u4e2a\u4efb\u52a1\u6279\u91cf\u91cd\u65b0\u6295\u9012\u5230 sqlmap \u5417\uff1f',
-        one_click_cleanup: 'One-click Cleanup',
+        one_click_cleanup: '\u4e00\u952e\u6e05\u7406',
         cleanup_offline_nodes: '\u6e05\u7406\u79bb\u7ebf\u8282\u70b9',
-        confirm_cloud_cleanup_awvs: 'This will stop AWVS autoscale and terminate all AWVS spot instances now. Continue?',
-        confirm_cloud_cleanup_sqlmap: 'This will stop SQLMap autoscale and terminate all SQLMap spot instances now. Continue?',
+        confirm_cloud_cleanup_awvs: '\u8fd9\u5c06\u7acb\u5373\u505c\u6b62 AWVS \u81ea\u52a8\u8d2d\u4e70\u5e76\u9500\u6bc1\u6240\u6709 AWVS \u7ade\u4ef7\u5b9e\u4f8b\uff0c\u786e\u5b9a\u7ee7\u7eed\u5417\uff1f',
+        confirm_cloud_cleanup_sqlmap: '\u8fd9\u5c06\u7acb\u5373\u505c\u6b62 SQLMap \u81ea\u52a8\u8d2d\u4e70\u5e76\u9500\u6bc1\u6240\u6709 SQLMap \u7ade\u4ef7\u5b9e\u4f8b\uff0c\u786e\u5b9a\u7ee7\u7eed\u5417\uff1f',
         confirm_cleanup_offline_awvs: '\u73b0\u5728\u5220\u9664\u6240\u6709\u79bb\u7ebf AWVS \u8282\u70b9\u5417\uff1f',
         confirm_cleanup_offline_sqlmap: '\u73b0\u5728\u5220\u9664\u6240\u6709\u79bb\u7ebf SQLMap \u8282\u70b9\u5417\uff1f',
 
@@ -1699,27 +1714,27 @@ const I18N = {
         finding_sqlmap_config: 'Finding \u7ea7 Sqlmap \u914d\u7f6e',
         finding_sqlmap_config_hint: '\u4ec5\u5bf9\u5f53\u524d finding \u751f\u6548\uff0c\u4f1a\u8986\u76d6\u5168\u5c40\u9ed8\u8ba4\u914d\u7f6e\u3002',
         default_use_proxy: '\u9ed8\u8ba4\u4f7f\u7528\u4ee3\u7406',
-        sqlmap_opt_level: 'Level',
-        sqlmap_opt_risk: 'Risk',
-        sqlmap_opt_threads: 'Threads',
-        sqlmap_opt_timeout: 'Timeout',
-        sqlmap_opt_retries: 'Retries',
-        sqlmap_opt_technique: 'Technique',
-        sqlmap_opt_random_agent: 'Random Agent',
-        sqlmap_opt_smart: 'Smart',
-        sqlmap_opt_parse_errors: 'Parse Errors',
-        sqlmap_opt_keep_alive: 'Keep Alive',
-        sqlmap_opt_skip_waf: 'Skip WAF',
-        sqlmap_opt_batch: 'Batch',
+        sqlmap_opt_level: '\u68c0\u6d4b\u7ea7\u522b',
+        sqlmap_opt_risk: '\u98ce\u9669\u7ea7\u522b',
+        sqlmap_opt_threads: '\u7ebf\u7a0b\u6570',
+        sqlmap_opt_timeout: '\u8d85\u65f6',
+        sqlmap_opt_retries: '\u91cd\u8bd5\u6b21\u6570',
+        sqlmap_opt_technique: '\u6280\u672f',
+        sqlmap_opt_random_agent: '\u968f\u673a Agent',
+        sqlmap_opt_smart: '\u667a\u80fd\u6a21\u5f0f',
+        sqlmap_opt_parse_errors: '\u89e3\u6790\u62a5\u9519',
+        sqlmap_opt_keep_alive: '\u4fdd\u6301\u8fde\u63a5',
+        sqlmap_opt_skip_waf: '\u8df3\u8fc7 WAF',
+        sqlmap_opt_batch: '\u6279\u5904\u7406',
 
         proxy_agent: '\u4ee3\u7406\u8282\u70b9',
         proxy_none: '\u4e0d\u4f7f\u7528',
         use_proxy: '\u4f7f\u7528\u4ee3\u7406',
-        generate_proxy_cmd: 'Generate Proxy Install Command',
-        register_installed_proxy: 'Register Installed Proxy Agent',
-        register_proxy: 'Register Proxy Agent',
-        proxy_install_hint: 'Run this command on the proxy server. After it starts, copy the generated vless link from its output and paste it into the register box on the right.',
-        proxy_optional_name: 'Optional node name',
+        generate_proxy_cmd: '\u751f\u6210\u4ee3\u7406\u5b89\u88c5\u547d\u4ee4',
+        register_installed_proxy: '\u6ce8\u518c\u5df2\u5b89\u88c5\u7684\u4ee3\u7406\u8282\u70b9',
+        register_proxy: '\u6ce8\u518c\u4ee3\u7406\u8282\u70b9',
+        proxy_install_hint: '\u5728\u4ee3\u7406\u670d\u52a1\u5668\u4e0a\u6267\u884c\u8fd9\u6761\u547d\u4ee4\u3002\u542f\u52a8\u540e\uff0c\u590d\u5236\u8f93\u51fa\u7684 vless \u94fe\u63a5\uff0c\u7c98\u8d34\u5230\u53f3\u4fa7\u6ce8\u518c\u6846\u3002',
+        proxy_optional_name: '\u53ef\u9009\u8282\u70b9\u540d',
         proxy_list: '\u4ee3\u7406\u8282\u70b9\u5217\u8868',
         proxy_server_host: '\u670d\u52a1\u5668\u5730\u5740/IP',
         proxy_server_auto_ipv4: '\u5bf9\u5916 IPv4 \u81ea\u52a8\u83b7\u53d6 (ip.sb -4)',
@@ -1776,9 +1791,9 @@ const I18N = {
         recycle_countdown: '\u56de\u6536\u5012\u8ba1\u65f6',
         heartbeat: '\u5fc3\u8df3',
         failure_reason: '\u5931\u8d25\u539f\u56e0',
-        hourly_total: 'Hourly Total',
+        hourly_total: '\u5c0f\u65f6\u603b\u4ef7',
         no_cloud_instances: '\u5f53\u524d\u6ca1\u6709\u4e91\u5b9e\u4f8b\u3002',
-        reboot_server: '\u91cd\u542f\u670d\u52a1\u5668',
+        reboot_server: '\u91cd\u542f',
         batch_reboot_server: '\u6279\u91cf\u91cd\u542f',
         restart_docker: '\u91cd\u542f Docker',
         batch_restart_docker: '\u6279\u91cf\u91cd\u542f Docker',
@@ -1808,6 +1823,8 @@ const I18N = {
         summary_status: '\u72b6\u6001',
         summary_phase: '\u9636\u6bb5',
         summary_action: '\u64cd\u4f5c',
+        summary_dbms: 'DBMS',
+        summary_os: 'OS',
         summary_current_db: '\u5f53\u524d DB',
         actions_label: '\u52a8\u4f5c',
         title_force_tech: '\u5f3a\u5236\u6307\u5b9a\u6ce8\u5165\u6280\u672f',
@@ -1824,6 +1841,11 @@ const I18N = {
         btn_columns: '\u5217',
         btn_dump_data: '\u5bfc\u51fa\u6570\u636e',
         btn_probe_shell: '\u63a2\u6d4b Shell',
+        placeholder_db: 'DB',
+        placeholder_table: '\u8868',
+        dump_mode_head: '\u5934\u90e8',
+        dump_mode_tail: '\u5c3e\u90e8',
+        row_limit_placeholder: '\u884c\u6570',
         injection_points: '\u6ce8\u5165\u70b9',
         no_injection_data: '\u6682\u65e0\u6ce8\u5165\u6570\u636e',
         search: '\u641c\u7d22',
@@ -1833,6 +1855,8 @@ const I18N = {
         proxy_requested: '\u671f\u671b\u4ee3\u7406',
         proxy_effective: '\u5b9e\u9645\u4ee3\u7406\uff08\u4ece\u4e34\u65f6\u914d\u7f6e\u8bfb\u53d6\uff09',
         proxy_config_file: '\u5b9e\u9645\u914d\u7f6e\u6587\u4ef6',
+        label_dbms: 'DBMS',
+        label_os: 'OS',
         label_db: 'DB',
         label_tbl: '\u8868',
         label_col: '\u5217',
@@ -1849,9 +1873,15 @@ const I18N = {
         data_short: '\u6570\u636e',
         no_columns_loaded: '\u6682\u65e0\u5217\u6570\u636e',
         shell_capability: 'Shell \u80fd\u529b',
-        session_state: '\u4f1a\u8bdd\u72b6\u6001'
+        session_state: '\u4f1a\u8bdd\u72b6\u6001',
+        sqlmap_request_title: 'Sqlmap \u8bf7\u6c42 (request.txt)',
+        awvs_original_payload: 'AWVS \u539f\u59cb Payload',
+        price_total: '\u603b\u4ef7',
+        price_instance: '\u5b9e\u4f8b',
+        price_extra: '\u9644\u52a0',
+        price_public_ip_est: '\u516c\u7f51 IP \u9884\u4f30'
         ,
-        finding_not_bound_hint: '\u8be5 finding \u5df2\u5165\u5e93\uff0c\u4f46\u5f53\u524d\u672a\u7ed1\u5b9a sqlmap \u4efb\u52a1\uff0c\u53ef\u70b9\u51fb Retry Push \u91cd\u65b0\u7ed1\u5b9a\u3002',
+        finding_not_bound_hint: '\u8be5 finding \u5df2\u5165\u5e93\uff0c\u4f46\u5f53\u524d\u672a\u7ed1\u5b9a sqlmap \u4efb\u52a1\uff0c\u53ef\u70b9\u51fb\u91cd\u65b0\u6295\u9012\u91cd\u65b0\u7ed1\u5b9a\u3002',
         request_failed: '\u8bf7\u6c42\u5931\u8d25',
         no_logs: '\u6682\u65e0\u65e5\u5fd7',
         check: '\u67e5\u770b',
