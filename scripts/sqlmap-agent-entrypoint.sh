@@ -227,8 +227,13 @@ if [ -n "$PROTO" ]; then
   RAW_PROTO="${PROTO#${PREFIX}}"
   DECODED_PROTO="$(printf '%s' "$RAW_PROTO" | base64 -d 2>/dev/null || true)"
   if [ -n "$DECODED_PROTO" ] && [ "$DECODED_PROTO" != "$RAW_PROTO" ]; then
-    UPDATED_PROTO="$(printf '%s' "$DECODED_PROTO" | sed "s/}[[:space:]]*$/,\"manager_url\":\"$(json_escape "$MANAGER_URL")\",\"manager_token\":\"$(json_escape "$MANAGER_TOKEN")\"}/")"
-    printf '%s%s\n' "$PREFIX" "$(printf '%s' "$UPDATED_PROTO" | base64 | tr -d '\n')"
+    LAST_CHAR="${DECODED_PROTO#"${DECODED_PROTO%?}"}"
+    if [ "$LAST_CHAR" = "}" ]; then
+      UPDATED_PROTO="${DECODED_PROTO%?},\"manager_url\":\"$(json_escape "$MANAGER_URL")\",\"manager_token\":\"$(json_escape "$MANAGER_TOKEN")\"}"
+      printf '%s%s\n' "$PREFIX" "$(printf '%s' "$UPDATED_PROTO" | base64 | tr -d '\n')"
+    else
+      echo "$PROTO"
+    fi
   else
     echo "$PROTO"
   fi
