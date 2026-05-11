@@ -170,3 +170,9 @@ type AdminCredential struct {
 	Username     string `json:"username" gorm:"uniqueIndex"`
 	PasswordHash string `json:"-"`
 }
+
+type AdminSession struct {
+	gorm.Model
+	TokenHash string `json:"-" gorm:"uniqueIndex"`
+	ExpiresAt int64  `json:"expires_at"`
+}

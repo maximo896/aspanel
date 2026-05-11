@@ -48,6 +48,7 @@ func main() {
 		&models.CloudSettings{},
 		&models.CloudInstance{},
 		&models.AdminCredential{},
+		&models.AdminSession{},
 	)
 
 	if handled, err := auth.HandleCLI(db, remainingArgs); handled {
@@ -70,7 +71,8 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery())
-	r.Use(auth.BasicAuthMiddleware(db))
+	auth.RegisterRoutes(r, db)
+	r.Use(auth.SessionAuthMiddleware(db))
 
 	r.GET("/", func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")

@@ -390,7 +390,9 @@ func (api *API) RegisterAgentFromProtocol(c *gin.Context) {
 		return
 	}
 
-	httpReq, _ := http.NewRequest("GET", cfg.URL+"/info", nil)
+	baseURL := normalizeBaseURL(cfg.URL)
+	httpReq, _ := http.NewRequest("GET", baseURL+"/status", nil)
+	httpReq.Header.Set("X-Api-Token", strings.TrimSpace(cfg.APIKey))
 	resp, err := httpClient().Do(httpReq)
 	if err != nil {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("Cannot connect to agent: %v", err)})
@@ -404,8 +406,8 @@ func (api *API) RegisterAgentFromProtocol(c *gin.Context) {
 
 	agent := models.SqlmapAgent{
 		Name:            cfg.Name,
-		URL:             cfg.URL,
-		APIKey:          cfg.APIKey,
+		URL:             baseURL,
+		APIKey:          strings.TrimSpace(cfg.APIKey),
 		MaxConcurrency:  cfg.MaxConcurrency,
 		DefaultUseProxy: api.getSqlmapAgentDefaultUseProxy(),
 		ShareByDomain:   true,
@@ -616,7 +618,10 @@ func (api *API) TestSqlmapAgent(c *gin.Context) {
 		return
 	}
 
-	httpReq, _ := http.NewRequest("GET", req.URL+"/info", nil)
+	baseURL := normalizeBaseURL(req.URL)
+	apiKey := strings.TrimSpace(req.APIKey)
+	httpReq, _ := http.NewRequest("GET", baseURL+"/status", nil)
+	httpReq.Header.Set("X-Api-Token", apiKey)
 	resp, err := httpClient().Do(httpReq)
 	if err != nil {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("Connection failed: %v", err)})
@@ -629,9 +634,12 @@ func (api *API) TestSqlmapAgent(c *gin.Context) {
 		return
 	}
 
-	var info map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&info)
-	c.JSON(200, gin.H{"message": "Connected successfully", "info": info})
+	var statusInfo map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&statusInfo)
+	c.JSON(200, gin.H{
+		"message": "Connected successfully",
+		"info":    statusInfo,
+	})
 }
 
 func (api *API) GetTasks(c *gin.Context) {

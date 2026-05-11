@@ -169,6 +169,7 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h2 class="mb-0">AWVS <span style="color:var(--accent-blue)">Sqlmap</span> Panel</h2>
         <div class="d-flex align-items-center gap-3">
+            <button v-if="isAuthenticated" class="btn btn-sm btn-outline-secondary" @click="logout">{{ t('logout') }}</button>
             <div class="text-muted small">{{ t('tagline') }}</div>
             <select class="form-select form-select-sm w-auto bg-dark border-secondary text-white" v-model="language" @change="persistLanguage">
                 <option value="en">{{ t('lang_en') }}</option>
@@ -177,6 +178,30 @@
         </div>
     </div>
 
+    <div v-if="!authReady" class="card">
+        <div class="card-body text-center muted">{{ t('auth_checking') }}</div>
+    </div>
+
+    <div v-else-if="!isAuthenticated" class="row justify-content-center">
+        <div class="col-md-5">
+            <div class="card">
+                <div class="card-header">{{ t('login_title') }}</div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">{{ t('username') }}</label>
+                        <input class="form-control" v-model="loginForm.username" :placeholder="t('username')">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">{{ t('password') }}</label>
+                        <input class="form-control" type="password" v-model="loginForm.password" :placeholder="t('password')">
+                    </div>
+                    <button class="btn btn-primary w-100" :disabled="loginSubmitting" @click="login">{{ t('login') }}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <template v-else>
     <ul class="nav nav-tabs mb-4">
         <li class="nav-item">
             <a class="nav-link" :class="{active: activeTab==='tasks'}" href="#" @click.prevent="activeTab='tasks'">{{ t('tab_tasks') }}</a>
@@ -1225,12 +1250,19 @@
     </div>
 
     <div class="modal-backdrop fade show" v-if="globalSqlmapModalVisible || findingSqlmapModalVisible || awvsEditId || agentEditId || confirmDialog.visible"></div>
+    </template>
 </div>
 
 <script>
 const I18N = {
     en: {
         tagline: 'Automatic advanced injection orchestration',
+        login_title: 'Login',
+        login: 'Login',
+        logout: 'Logout',
+        username: 'Username',
+        password: 'Password',
+        auth_checking: 'Checking authentication...',
         lang_en: 'English',
         lang_zh: 'Chinese',
         tab_tasks: 'Tasks',
@@ -1491,6 +1523,12 @@ const I18N = {
     },
     zh: {
         tagline: '\u81ea\u52a8\u9ad8\u7ea7\u6ce8\u5165\u6d41\u7a0b\u7f16\u6392',
+        login_title: '\u767b\u5f55',
+        login: '\u767b\u5f55',
+        logout: '\u9000\u51fa',
+        username: '\u7528\u6237\u540d',
+        password: '\u5bc6\u7801',
+        auth_checking: '\u6b63\u5728\u6821\u9a8c\u767b\u5f55\u72b6\u6001...',
         lang_en: '\u82f1\u6587',
         lang_zh: '\u4e2d\u6587',
         tab_tasks: '\u4efb\u52a1',
@@ -1750,6 +1788,13 @@ new Vue({
     el: '#app',
     data: {
         activeTab: 'tasks',
+        authReady: false,
+        isAuthenticated: false,
+        loginSubmitting: false,
+        loginForm: {
+            username: '',
+            password: ''
+        },
         language: 'en',
         servers: [],
         agents: [],
@@ -1770,10 +1815,12 @@ new Vue({
         agentEdit: { name: '', url: '', api_key: '', max_concurrency: 10, default_use_proxy: true, share_by_domain: true },
         selectedTaskId: null,
         selectedTask: null,
+        pendingRouteTaskId: null,
         taskDetail: null,
         taskFindings: [],
         selectedFindingId: null,
         selectedFinding: null,
+        pendingRouteFindingId: null,
         taskDetailError: '',
         taskActionBusy: false,
         taskActionMessage: '',
@@ -1979,6 +2026,15 @@ new Vue({
         }
     },
     watch: {
+            activeTab(newTab) {
+                this.syncRouteStateToURL();
+            },
+            selectedTaskId() {
+                this.syncRouteStateToURL();
+            },
+            selectedFindingId() {
+                this.syncRouteStateToURL();
+            },
             taskFilter() {
                 this.currentPage = 1;
                 this.selectedTaskIds = [];
@@ -2000,11 +2056,29 @@ new Vue({
             }
         },
         mounted() {
-        this.initLanguage();
-        this.fetchData();
-        setInterval(this.fetchData, 15000);
-        setInterval(this.refreshSelectedTaskSilently, 10000);
-    },
+            this.initLanguage();
+            this.initTabFromURL();
+            axios.interceptors.response.use(
+                response => response,
+                error => {
+                    if (error && error.response && error.response.status === 401) {
+                        this.handleUnauthorized();
+                    }
+                    return Promise.reject(error);
+                }
+            );
+            this.initAuth();
+            setInterval(() => {
+                if (this.isAuthenticated) this.fetchData();
+            }, 15000);
+            setInterval(() => {
+                if (this.isAuthenticated) this.refreshSelectedTaskSilently();
+            }, 10000);
+            window.addEventListener('popstate', this.handleLocationChange);
+        },
+        beforeDestroy() {
+            window.removeEventListener('popstate', this.handleLocationChange);
+        },
     methods: {
         t(key) {
             const pack = I18N[this.language] || I18N.en;
@@ -2016,6 +2090,154 @@ new Vue({
                 s = s.split('{' + k + '}').join(String(vars[k]));
             });
             return s;
+        },
+        allowedTabs() {
+            return ['tasks', 'awvs', 'sqlmap', 'proxy', 'cloud'];
+        },
+        normalizeTab(tab) {
+            const v = String(tab || '').trim().toLowerCase();
+            return this.allowedTabs().includes(v) ? v : 'tasks';
+        },
+        parsePositiveInt(value) {
+            const n = Number.parseInt(String(value || '').trim(), 10);
+            return Number.isFinite(n) && n > 0 ? n : null;
+        },
+        initTabFromURL() {
+            const state = this.readRouteStateFromURL();
+            this.activeTab = state.tab;
+            this.pendingRouteTaskId = state.taskId;
+            this.pendingRouteFindingId = state.findingId;
+        },
+        readRouteStateFromURL() {
+            try {
+                const params = new URLSearchParams(window.location.search || '');
+                const taskId = this.parsePositiveInt(params.get('task'));
+                let findingId = this.parsePositiveInt(params.get('finding'));
+                if (!taskId) findingId = null;
+                return {
+                    tab: this.normalizeTab(params.get('tab')),
+                    taskId: taskId,
+                    findingId: findingId
+                };
+            } catch (_) {
+                return {
+                    tab: 'tasks',
+                    taskId: null,
+                    findingId: null
+                };
+            }
+        },
+        syncRouteStateToURL() {
+            try {
+                const normalized = this.normalizeTab(this.activeTab);
+                const taskId = this.parsePositiveInt(this.selectedTaskId);
+                const findingId = this.parsePositiveInt(this.selectedFindingId);
+                const current = this.readRouteStateFromURL();
+                if (current.tab === normalized && current.taskId === taskId && current.findingId === (taskId ? findingId : null)) {
+                    return;
+                }
+                const url = new URL(window.location.href);
+                if (normalized === 'tasks') {
+                    url.searchParams.delete('tab');
+                } else {
+                    url.searchParams.set('tab', normalized);
+                }
+                if (taskId) {
+                    url.searchParams.set('task', String(taskId));
+                } else {
+                    url.searchParams.delete('task');
+                }
+                if (taskId && findingId) {
+                    url.searchParams.set('finding', String(findingId));
+                } else {
+                    url.searchParams.delete('finding');
+                }
+                window.history.replaceState({}, '', url.pathname + (url.search || '') + (url.hash || ''));
+            } catch (_) {
+            }
+        },
+        applyPendingRouteSelection() {
+            if (!this.pendingRouteTaskId) return;
+            const targetTask = this.tasks.find(item => item.ID === this.pendingRouteTaskId);
+            if (!targetTask) {
+                this.pendingRouteTaskId = null;
+                this.pendingRouteFindingId = null;
+                return;
+            }
+            const taskId = this.pendingRouteTaskId;
+            this.pendingRouteTaskId = null;
+            this.selectTask(targetTask);
+            this.selectedTaskId = taskId;
+        },
+        handleLocationChange() {
+            const state = this.readRouteStateFromURL();
+            if (state.tab !== this.activeTab) {
+                this.activeTab = state.tab;
+            }
+            this.pendingRouteTaskId = state.taskId;
+            this.pendingRouteFindingId = state.findingId;
+            if (!state.taskId) {
+                this.clearTaskSelection();
+                return;
+            }
+            if (this.selectedTaskId && this.selectedTaskId === state.taskId) {
+                if (state.findingId && this.selectedFindingId !== state.findingId) {
+                    const targetFinding = this.taskFindings.find(item => item.ID === state.findingId);
+                    if (targetFinding) {
+                        this.selectFinding(targetFinding);
+                    }
+                }
+                return;
+            }
+            this.applyPendingRouteSelection();
+        },
+        initAuth() {
+            axios.get('/api/auth/me').then(res => {
+                this.isAuthenticated = true;
+                if (res && res.data && res.data.username) {
+                    this.loginForm.username = res.data.username;
+                }
+                this.fetchData();
+            }).catch(() => {
+                this.isAuthenticated = false;
+            }).finally(() => {
+                this.authReady = true;
+            });
+        },
+        login() {
+            if (!this.loginForm.username || !this.loginForm.password) {
+                this.notifyError(this.t('request_failed'));
+                return;
+            }
+            this.loginSubmitting = true;
+            axios.post('/api/auth/login', {
+                username: this.loginForm.username,
+                password: this.loginForm.password
+            }).then(() => {
+                this.isAuthenticated = true;
+                this.loginForm.password = '';
+                this.notifySuccess(this.t('login') + ' OK');
+                this.fetchData();
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            }).finally(() => {
+                this.loginSubmitting = false;
+            });
+        },
+        logout() {
+            axios.post('/api/auth/logout').finally(() => {
+                this.handleUnauthorized();
+            });
+        },
+        handleUnauthorized() {
+            this.isAuthenticated = false;
+            this.selectedTaskId = null;
+            this.selectedTask = null;
+            this.taskDetail = null;
+            this.taskFindings = [];
+            this.selectedFindingId = null;
+            this.selectedFinding = null;
+            this.loginForm.password = '';
         },
         sumCloudPrices(items) {
             return (items || []).reduce((sum, item) => {
@@ -2119,6 +2341,7 @@ new Vue({
             this.fetchSqlmapDefaults();
             axios.get('/api/tasks').then(res => {
                 this.tasks = res.data;
+                this.applyPendingRouteSelection();
                 if (this.selectedTaskId) {
                     const current = this.tasks.find(item => item.ID === this.selectedTaskId);
                     if (current) {
@@ -2547,6 +2770,7 @@ new Vue({
             });
         },
         selectTask(task) {
+            this.pendingRouteTaskId = null;
             this.selectedTaskId = task.ID;
             this.selectedTask = task;
             this.resetTreeExpandState();
@@ -2560,6 +2784,8 @@ new Vue({
             this.loadTaskDetail(task.ID);
         },
         clearTaskSelection() {
+            this.pendingRouteTaskId = null;
+            this.pendingRouteFindingId = null;
             this.selectedTaskId = null;
             this.selectedTask = null;
             this.resetTreeExpandState();
@@ -2593,6 +2819,14 @@ new Vue({
                         return;
                     }
                 }
+                if (this.pendingRouteFindingId) {
+                    const routeFinding = this.taskFindings.find(item => item.ID === this.pendingRouteFindingId);
+                    this.pendingRouteFindingId = null;
+                    if (routeFinding) {
+                        this.selectFinding(routeFinding);
+                        return;
+                    }
+                }
                 const firstFinding = this.taskFindings[0];
                 if (firstFinding) {
                     this.selectFinding(firstFinding);
@@ -2622,6 +2856,14 @@ new Vue({
                         } else if (!this.findingHasSqlmapBinding(currentFinding)) {
                             this.taskDetail = null;
                         }
+                        return;
+                    }
+                }
+                if (this.pendingRouteFindingId) {
+                    const routeFinding = this.taskFindings.find(item => item.ID === this.pendingRouteFindingId);
+                    this.pendingRouteFindingId = null;
+                    if (routeFinding) {
+                        this.selectFinding(routeFinding);
                         return;
                     }
                 }
