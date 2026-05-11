@@ -1700,7 +1700,10 @@ func ensureSqlmapAgentProxyURL(db *gorm.DB, agent *models.SqlmapAgent) {
 	if agent == nil {
 		return
 	}
-	if strings.TrimSpace(agent.ProxyURL) != "" || agent.ProxyAgentID == 0 {
+	if strings.TrimSpace(agent.ProxyURL) != "" {
+		return
+	}
+	if strings.TrimSpace(agent.Name) == "" {
 		return
 	}
 	agent.ProxyURL = fmt.Sprintf("http://proxy-gateway-%s:18080", sanitizeContainerName(agent.Name))

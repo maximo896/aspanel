@@ -51,7 +51,7 @@ func (api *API) ensureSqlmapAgentProxyURL(agent *models.SqlmapAgent) {
 	if strings.TrimSpace(agent.ProxyURL) != "" {
 		return
 	}
-	if agent.ProxyAgentID == 0 {
+	if strings.TrimSpace(agent.Name) == "" {
 		return
 	}
 	agent.ProxyURL = fmt.Sprintf("http://proxy-gateway-%s:18080", sanitizeProxyContainerName(agent.Name))
