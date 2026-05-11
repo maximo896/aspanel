@@ -766,7 +766,7 @@
                         <th>{{ t('token') }}</th>
                         <th>{{ t('awvs_username') }}</th>
                         <th>{{ t('awvs_password') }}</th>
-                        <th>{{ t('limit') }}</th>
+                        <th>{{ t('running') }} / {{ t('limit') }}</th>
                         <th>{{ t('status') }}</th>
                         <th>{{ t('last_checked') }}</th>
                         <th>{{ t('action') }}</th>
@@ -779,7 +779,7 @@
                         <td><small class="text-muted">{{ (server.api_key || '').substring(0,8) + '...' }}</small></td>
                         <td><small class="text-muted">{{ server.awvs_username || '-' }}</small></td>
                         <td><small class="text-muted">{{ server.awvs_password || '-' }}</small></td>
-                        <td>{{ server.max_concurrency }}</td>
+                        <td><span class="text-info fw-bold">{{ server.current_running }}</span> / {{ server.max_concurrency }}</td>
                         <td><span class="badge" :class="server.is_active ? 'bg-success' : 'bg-secondary'">{{ server.is_active ? t('online') : t('offline') }}</span></td>
                         <td><small class="text-muted">{{ formatUnixTime(server.last_checked_at) }}</small></td>
                         <td>
@@ -866,9 +866,8 @@
                         <th>{{ t('name') }}</th>
                         <th>{{ t('label_url') }}</th>
                         <th>{{ t('token') }}</th>
-                        <th>{{ t('running') }}</th>
+                        <th>{{ t('running') }} / {{ t('limit') }}</th>
                         <th>{{ t('queued') }}</th>
-                        <th>{{ t('limit') }}</th>
                         <th>{{ t('default_use_proxy') }}</th>
                         <th>{{ t('share_by_domain') }}</th>
                         <th>{{ t('status') }}</th>
@@ -880,9 +879,8 @@
                         <td class="text-white">{{ agent.name }}</td>
                         <td><small class="text-muted">{{ agent.url }}</small></td>
                         <td><small class="text-muted">{{ agent.api_key.substring(0,8) + '...' }}</small></td>
-                        <td><span class="text-info fw-bold">{{ agent.current_running }}</span></td>
+                        <td><span class="text-info fw-bold">{{ agent.current_running }}</span> / {{ agent.max_concurrency }}</td>
                         <td><span class="text-warning fw-bold">{{ agent.current_queued }}</span></td>
-                        <td>{{ agent.max_concurrency }}</td>
                         <td><span class="badge" :class="agent.default_use_proxy ? 'bg-success' : 'bg-secondary'">{{ agent.default_use_proxy ? t('yes') : t('no') }}</span></td>
                         <td><span class="badge" :class="agent.share_by_domain !== false ? 'bg-success' : 'bg-secondary'">{{ agent.share_by_domain !== false ? t('yes') : t('no') }}</span></td>
                         <td><span class="badge" :class="agent.is_active ? 'bg-success' : 'bg-secondary'">{{ agent.is_active ? t('online') : t('offline') }}</span></td>

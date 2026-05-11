@@ -123,7 +123,20 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 func (api *API) GetServers(c *gin.Context) {
 	var servers []models.AWVSServer
 	api.DB.Order("id desc").Find(&servers)
-	c.JSON(200, servers)
+	type awvsServerView struct {
+		models.AWVSServer
+		CurrentRunning int `json:"current_running"`
+	}
+	resp := make([]awvsServerView, 0, len(servers))
+	for _, server := range servers {
+		count := int64(0)
+		api.DB.Model(&models.Task{}).Where("awvs_server_id = ? AND status IN ?", server.ID, []string{"running", "scanning"}).Count(&count)
+		resp = append(resp, awvsServerView{
+			AWVSServer:     server,
+			CurrentRunning: int(count),
+		})
+	}
+	c.JSON(200, resp)
 }
 
 func (api *API) AddServer(c *gin.Context) {
