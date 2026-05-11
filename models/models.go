@@ -86,6 +86,14 @@ type TaskFinding struct {
 	SqlmapOptions    string `json:"sqlmap_options" gorm:"type:text"`
 }
 
+type DomainSQLMapCache struct {
+	gorm.Model
+	Domain      string `json:"domain" gorm:"index:idx_domain_force_ssl,unique"`
+	ForceSSL    bool   `json:"force_ssl" gorm:"index:idx_domain_force_ssl,unique"`
+	ContentJSON string `json:"content_json" gorm:"type:text"`
+	TreeJSON    string `json:"tree_json" gorm:"type:text"`
+}
+
 type ProxyAgent struct {
 	gorm.Model
 	Name           string `json:"name"`

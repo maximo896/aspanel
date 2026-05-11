@@ -3126,7 +3126,32 @@ new Vue({
             return this.getTaskDetailValue(this.taskDetail, ['content', 'techniques']) || [];
         },
         getTreeDatabases() {
-            return this.getTaskDetailValue(this.taskDetail, ['tree', 'databases']) || [];
+            const treeDatabases = this.getTaskDetailValue(this.taskDetail, ['tree', 'databases']);
+            if (Array.isArray(treeDatabases) && treeDatabases.length) {
+                return treeDatabases;
+            }
+            return this.buildFallbackTreeDatabases();
+        },
+        buildFallbackTreeDatabases() {
+            const content = this.getTaskDetailValue(this.taskDetail, ['content']) || {};
+            const names = [];
+            const currentDb = content.current_db;
+            if (currentDb) {
+                names.push(currentDb);
+            }
+            if (Array.isArray(content.dbs)) {
+                content.dbs.forEach(name => {
+                    if (name) {
+                        names.push(name);
+                    }
+                });
+            }
+            const uniqueNames = Array.from(new Set(names.filter(Boolean)));
+            return uniqueNames.map(name => ({
+                name: name,
+                priority_table: '',
+                tables: []
+            }));
         },
         getActionDbOptions() {
             return this.getTreeDatabases().map(item => item.name).filter(Boolean);

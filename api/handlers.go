@@ -3,6 +3,7 @@ package api
 import (
 	"awvs-sqlmap-panel/awvs"
 	"awvs-sqlmap-panel/cloud/tencent"
+	"awvs-sqlmap-panel/domaincache"
 	"awvs-sqlmap-panel/models"
 	"awvs-sqlmap-panel/scheduler"
 	"bytes"
@@ -949,6 +950,9 @@ func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 	if err := json.Unmarshal(body, &scan); err != nil {
 		writeSqlmapUpstreamResponse(c, resp.StatusCode, body, "parsing finding detail")
 		return
+	}
+	if mergedScan, err := domaincache.ApplySnapshot(api.DB, scan); err == nil {
+		scan = mergedScan
 	}
 
 	c.JSON(200, gin.H{

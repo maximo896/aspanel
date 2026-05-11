@@ -44,6 +44,7 @@ func main() {
 		&models.SqlmapAgent{},
 		&models.Task{},
 		&models.TaskFinding{},
+		&models.DomainSQLMapCache{},
 		&models.ProxyAgent{},
 		&models.CloudSettings{},
 		&models.CloudInstance{},

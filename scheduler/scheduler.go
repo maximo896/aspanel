@@ -5,12 +5,14 @@ import (
 	"awvs-sqlmap-panel/cloud/bootstrap"
 	"awvs-sqlmap-panel/cloud/interact"
 	"awvs-sqlmap-panel/cloud/tencent"
+	"awvs-sqlmap-panel/domaincache"
 	"awvs-sqlmap-panel/models"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -831,6 +833,11 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 					continue
 				}
 
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					continue
+				}
 				var detail struct {
 					Status     string `json:"status"`
 					ShellProbe struct {
@@ -840,11 +847,13 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 					DumpedTables []interface{}          `json:"dumped_tables"`
 					Content      map[string]interface{} `json:"content"`
 				}
-				if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
-					resp.Body.Close()
+				if err := json.Unmarshal(body, &detail); err != nil {
 					continue
 				}
-				resp.Body.Close()
+				var detailMap map[string]interface{}
+				if err := json.Unmarshal(body, &detailMap); err == nil {
+					_ = domaincache.UpsertSnapshot(db, detailMap)
+				}
 
 				changed := false
 				if detail.Status != "" && task.SqlmapStatus != detail.Status {
@@ -902,7 +911,12 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 				continue
 			}
 
-			var detail struct {
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					continue
+				}
+				var detail struct {
 				Status     string `json:"status"`
 				ShellProbe struct {
 					OK     bool   `json:"ok"`
@@ -911,11 +925,13 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 				DumpedTables []interface{}          `json:"dumped_tables"`
 				Content      map[string]interface{} `json:"content"`
 			}
-			if err := json.NewDecoder(resp.Body).Decode(&detail); err != nil {
-				resp.Body.Close()
+				if err := json.Unmarshal(body, &detail); err != nil {
 				continue
 			}
-			resp.Body.Close()
+				var detailMap map[string]interface{}
+				if err := json.Unmarshal(body, &detailMap); err == nil {
+					_ = domaincache.UpsertSnapshot(db, detailMap)
+				}
 
 			changed := false
 			if detail.Status != "" && finding.SqlmapStatus != detail.Status {
