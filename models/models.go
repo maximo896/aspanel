@@ -9,6 +9,8 @@ type AWVSServer struct {
 	Name            string `json:"name"`
 	URL             string `json:"url"`
 	APIKey          string `json:"api_key"`
+	ManagerURL      string `json:"manager_url"`
+	ManagerToken    string `json:"-"`
 	AWVSUsername    string `json:"awvs_username"`
 	AWVSPassword    string `json:"awvs_password"`
 	MaxConcurrency  int    `json:"max_concurrency"`
@@ -28,6 +30,9 @@ type SqlmapAgent struct {
 	Name            string `json:"name"`
 	URL             string `json:"url"`
 	APIKey          string `json:"api_key"`
+	ManagerURL      string `json:"manager_url"`
+	ManagerToken    string `json:"-"`
+	AgentVersion    string `json:"agent_version"`
 	MaxConcurrency  int    `json:"max_concurrency"`
 	DefaultUseProxy bool   `json:"default_use_proxy" gorm:"default:true"`
 	ShareByDomain   bool   `json:"share_by_domain" gorm:"default:true"`

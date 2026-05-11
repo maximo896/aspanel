@@ -26,6 +26,23 @@ sanitize_name() {
   echo "$n"
 }
 
+check_port_free() {
+  local port="$1"
+  if docker ps --format '{{.Ports}}' | grep -q ":${port}->"; then
+    return 1
+  fi
+  if command -v nc >/dev/null 2>&1; then
+    if nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+      return 1
+    fi
+  else
+    if (echo >/dev/tcp/127.0.0.1/"$port") >/dev/null 2>&1; then
+      return 1
+    fi
+  fi
+  return 0
+}
+
 if ! command -v curl >/dev/null 2>&1; then
   apt-get update && apt-get install -y curl
 fi
@@ -47,8 +64,51 @@ GATEWAY_CN="proxy-gateway-${SAFE_NAME}"
 DATA_ROOT="${DATA_ROOT_BASE}/${SAFE_NAME}"
 OUTPUT_DIR_HOST="${DATA_ROOT}/output"
 TOKEN_FILE="${DATA_ROOT}/api_token"
+MANAGER_TOKEN_FILE="${DATA_ROOT}/manager_token"
+MANAGER_PORT_FILE="${DATA_ROOT}/manager_port"
+MANAGER_CONFIG_FILE="${DATA_ROOT}/manager_config.json"
+MANAGER_BIN_FILE="${DATA_ROOT}/docker-manager"
+MANAGER_PID_FILE="${DATA_ROOT}/docker-manager.pid"
+MANAGER_STATE_FILE="${DATA_ROOT}/docker-manager.state.json"
+MANAGER_LOG_FILE="${DATA_ROOT}/docker-manager.log"
+UPDATE_SCRIPT_FILE="${DATA_ROOT}/update-agent.sh"
+UPDATE_LOG_FILE="${DATA_ROOT}/update-agent.log"
 mkdir -p "$OUTPUT_DIR_HOST"
 mkdir -p "$DATA_ROOT"
+
+detect_manager_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64)
+      echo "amd64"
+      ;;
+    aarch64|arm64)
+      echo "arm64"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
+install_manager_binary() {
+  local arch
+  local url
+  local tmp_file
+  arch="$(detect_manager_arch)"
+  if [ -z "$arch" ]; then
+    echo "unsupported architecture: $(uname -m)"
+    exit 1
+  fi
+  url="https://github.com/maximo896/aspanel/releases/latest/download/docker-manager-linux-${arch}"
+  tmp_file="${MANAGER_BIN_FILE}.new"
+  curl -fsSL "$url" -o "$tmp_file"
+  chmod +x "$tmp_file"
+  mv "$tmp_file" "$MANAGER_BIN_FILE"
+}
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
 
 if [ -f "$TOKEN_FILE" ]; then
   API_TOKEN="$(cat "$TOKEN_FILE" | tr -d ' \t\r\n')"
@@ -62,6 +122,31 @@ if [ -z "$API_TOKEN" ]; then
   exit 1
 fi
 
+if [ -f "$MANAGER_TOKEN_FILE" ]; then
+  MANAGER_TOKEN="$(cat "$MANAGER_TOKEN_FILE" | tr -d ' \t\r\n')"
+else
+  MANAGER_TOKEN="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  echo "$MANAGER_TOKEN" > "$MANAGER_TOKEN_FILE"
+fi
+
+MANAGER_PORT=""
+if [ -f "$MANAGER_PORT_FILE" ]; then
+  MANAGER_PORT="$(cat "$MANAGER_PORT_FILE" | tr -d ' \t\r\n')"
+fi
+if ! echo "$MANAGER_PORT" | grep -Eq '^[0-9]+$'; then
+  MANAGER_PORT=""
+fi
+if [ -n "$MANAGER_PORT" ] && [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ] && ! check_port_free "$MANAGER_PORT"; then
+  MANAGER_PORT=""
+fi
+while [ -z "$MANAGER_PORT" ]; do
+  CANDIDATE_PORT="$((30000 + RANDOM % 10001))"
+  if check_port_free "$CANDIDATE_PORT"; then
+    MANAGER_PORT="$CANDIDATE_PORT"
+  fi
+done
+echo "$MANAGER_PORT" > "$MANAGER_PORT_FILE"
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 curl -fsSL https://github.com/maximo896/as/archive/refs/heads/main.tar.gz | tar xz -C "$TMP" --strip-components=1
@@ -70,6 +155,7 @@ PUBLIC_HOST=$(curl -fsSL https://api.ipify.org 2>/dev/null || true)
 if [ -z "$PUBLIC_HOST" ]; then
   PUBLIC_HOST=$(hostname -I | awk '{print $1}')
 fi
+MANAGER_URL="http://${PUBLIC_HOST}:${MANAGER_PORT}"
 
 IMAGE="sqlmap-agent:${SAFE_NAME}"
 docker build --pull --no-cache -t "$IMAGE" "$TMP"
@@ -95,6 +181,30 @@ if [ -n "$PROXY_AGENT_LINK" ]; then
     bash -s -- -n "$AGENT_NAME" -l "$PROXY_AGENT_LINK" -N "$NETWORK_NAME"
 fi
 
+cat > "$MANAGER_CONFIG_FILE" <<EOF
+{"containers":["$SQLMAP_CN"$( [ -n "$PROXY_AGENT_LINK" ] && printf ',"%s"' "$GATEWAY_CN" )],"update_script":"$UPDATE_SCRIPT_FILE","update_log":"$UPDATE_LOG_FILE","command_timeout_sec":600}
+EOF
+install_manager_binary
+{
+  echo '#!/bin/bash'
+  echo 'set -euo pipefail'
+  echo 'sleep 1'
+  printf 'MANAGER_ALLOW_REUSE_PORT=1 curl -fsSL https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/sqlmap-agent-entrypoint.sh | bash -s -- -n %q -p %q -c %q -d %q' "$AGENT_NAME" "$AGENT_PORT" "$MAX_CONCURRENT" "$DATA_ROOT_BASE"
+  if [ -n "$PROXY_AGENT_LINK" ]; then
+    printf ' -l %q' "$PROXY_AGENT_LINK"
+  fi
+  echo
+} > "$UPDATE_SCRIPT_FILE"
+chmod +x "$UPDATE_SCRIPT_FILE"
+if [ -f "$MANAGER_PID_FILE" ]; then
+  OLD_PID="$(cat "$MANAGER_PID_FILE" 2>/dev/null || true)"
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" >/dev/null 2>&1; then
+    kill "$OLD_PID" >/dev/null 2>&1 || true
+  fi
+fi
+nohup "$MANAGER_BIN_FILE" --port "$MANAGER_PORT" --token "$MANAGER_TOKEN" --config "$MANAGER_CONFIG_FILE" --state-file "$MANAGER_STATE_FILE" >> "$MANAGER_LOG_FILE" 2>&1 &
+echo $! > "$MANAGER_PID_FILE"
+
 echo ""
 echo "[*] Waiting for sqlmapagent:// link..."
 PROTO=""
@@ -113,7 +223,15 @@ echo "=========================================="
 echo "[+] Persistent output dir: $OUTPUT_DIR_HOST"
 echo ""
 if [ -n "$PROTO" ]; then
-  echo "$PROTO"
+  PREFIX="sqlmapagent://"
+  RAW_PROTO="${PROTO#${PREFIX}}"
+  DECODED_PROTO="$(printf '%s' "$RAW_PROTO" | base64 -d 2>/dev/null || true)"
+  if [ -n "$DECODED_PROTO" ] && [ "$DECODED_PROTO" != "$RAW_PROTO" ]; then
+    UPDATED_PROTO="$(printf '%s' "$DECODED_PROTO" | sed "s/}[[:space:]]*$/,\"manager_url\":\"$(json_escape "$MANAGER_URL")\",\"manager_token\":\"$(json_escape "$MANAGER_TOKEN")\"}/")"
+    printf '%s%s\n' "$PREFIX" "$(printf '%s' "$UPDATED_PROTO" | base64 | tr -d '\n')"
+  else
+    echo "$PROTO"
+  fi
 else
   echo "[!] Protocol link not found in logs, showing last 80 lines:"
   docker logs --tail 80 "$SQLMAP_CN"

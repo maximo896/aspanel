@@ -649,3 +649,18 @@ func (c *Client) TerminateInstances(region string, ids []string) error {
 	_, err = client.TerminateInstances(req)
 	return err
 }
+
+func (c *Client) RebootInstances(region string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	client, err := c.cvmClient(region)
+	if err != nil {
+		return err
+	}
+	req := cvm.NewRebootInstancesRequest()
+	req.InstanceIds = common.StringPtrs(ids)
+	req.StopType = common.StringPtr("SOFT_FIRST")
+	_, err = client.RebootInstances(req)
+	return err
+}

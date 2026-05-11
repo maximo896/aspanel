@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"gorm.io/gorm"
 )
@@ -106,12 +107,14 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 				RunningCount  int `json:"running_count"`
 				QueuedCount   int `json:"queued_count"`
 				MaxConcurrent int `json:"max_concurrent"`
+				Version       string `json:"version"`
 			}
 			json.NewDecoder(resp.Body).Decode(&statusResp)
 			resp.Body.Close()
 			agent.CurrentRunning = statusResp.RunningCount
 			agent.CurrentQueued = statusResp.QueuedCount
 			agent.MaxConcurrency = statusResp.MaxConcurrent
+			agent.AgentVersion = strings.TrimSpace(statusResp.Version)
 			agent.LastHeartbeatAt = time.Now().Unix()
 			agent.IsActive = true
 			db.Save(&agent)
@@ -300,6 +303,11 @@ func encodeReplacementLikeOriginal(originalSegment, replacement string) string {
 	return b.String()
 }
 
+func shouldConsumeTrailingCommentSpace(matched string) bool {
+	trimmed := strings.TrimRightFunc(matched, unicode.IsSpace)
+	return strings.HasSuffix(trimmed, "--")
+}
+
 func replacePayloadUsingOriginalValue(rawRequest, payload, originalValue string) string {
 	rawRequest = strings.ReplaceAll(rawRequest, "\r\n", "\n")
 	rawRequest = strings.ReplaceAll(rawRequest, "\r", "\n")
@@ -323,6 +331,14 @@ func replacePayloadUsingOriginalValue(rawRequest, payload, originalValue string)
 			continue
 		}
 		matchEnd := matchAt + len(candidate)
+		if matchEnd > len(decodedRequest.Spans) {
+			continue
+		}
+		if shouldConsumeTrailingCommentSpace(candidate) {
+			for matchEnd < len(decodedRequest.Decoded) && unicode.IsSpace(rune(decodedRequest.Decoded[matchEnd])) {
+				matchEnd++
+			}
+		}
 		if matchEnd > len(decodedRequest.Spans) {
 			continue
 		}
@@ -1242,7 +1258,7 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 		if workload == "awvs" {
 			awvsInstall = fmt.Sprintf(`curl -fsSL https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/awvs-agent-entrypoint.sh | bash -s -- -n "awvs-%s" -p %d -c %d`, token, awvsPort, awvsConcurrency)
 		} else {
-			sqlmapInstall = fmt.Sprintf(`curl -fsSL https://github.com/maximo896/as/raw/refs/heads/main/entrypoint.sh | bash -s -- -n "sqlmap-%s" -p %d -c %d`, token, sqlmapPort, sqlmapConcurrency)
+			sqlmapInstall = fmt.Sprintf(`curl -fsSL https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/sqlmap-agent-entrypoint.sh | bash -s -- -n "sqlmap-%s" -p %d -c %d`, token, sqlmapPort, sqlmapConcurrency)
 			if cloudProxyLink != "" {
 				sqlmapInstall = fmt.Sprintf(`%s -l %q`, sqlmapInstall, cloudProxyLink)
 			}
@@ -1537,6 +1553,8 @@ func registerAWVSFromProto(db *gorm.DB, sig interact.Signal, inst *models.CloudI
 		existing.InstanceID = inst.InstanceID
 		existing.Provider = "tencent"
 		existing.Name = cloudAgentName("awvs", inst.InstanceID, cfg.Name)
+		existing.ManagerURL = strings.TrimRight(strings.TrimSpace(cfg.ManagerURL), "/")
+		existing.ManagerToken = strings.TrimSpace(cfg.ManagerToken)
 		if u := strings.TrimSpace(cfg.AWVSUsername); u != "" {
 			existing.AWVSUsername = u
 		}
@@ -1553,6 +1571,8 @@ func registerAWVSFromProto(db *gorm.DB, sig interact.Signal, inst *models.CloudI
 		Name:            cloudAgentName("awvs", inst.InstanceID, cfg.Name),
 		URL:             strings.TrimRight(cfg.URL, "/"),
 		APIKey:          cfg.APIKey,
+		ManagerURL:      strings.TrimRight(strings.TrimSpace(cfg.ManagerURL), "/"),
+		ManagerToken:    strings.TrimSpace(cfg.ManagerToken),
 		AWVSUsername:    strings.TrimSpace(cfg.AWVSUsername),
 		AWVSPassword:    strings.TrimSpace(cfg.AWVSPassword),
 		MaxConcurrency:  maxInt(1, cfg.MaxConcurrency),
@@ -1583,6 +1603,8 @@ func registerSQLMapFromProto(db *gorm.DB, sig interact.Signal, inst *models.Clou
 		existing.Provider = "tencent"
 		existing.IsActive = true
 		existing.Name = cloudAgentName("sqlmap", inst.InstanceID, cfg.Name)
+		existing.ManagerURL = strings.TrimRight(strings.TrimSpace(cfg.ManagerURL), "/")
+		existing.ManagerToken = strings.TrimSpace(cfg.ManagerToken)
 		existing.DefaultUseProxy = sqlmapAgentDefaultUseProxy(db)
 		if strings.TrimSpace(existing.ProxyURL) == "" {
 			bindCloudProxyToSqlmapAgent(db, &existing)
@@ -1597,6 +1619,8 @@ func registerSQLMapFromProto(db *gorm.DB, sig interact.Signal, inst *models.Clou
 		Name:            cloudAgentName("sqlmap", inst.InstanceID, cfg.Name),
 		URL:             strings.TrimRight(cfg.URL, "/"),
 		APIKey:          cfg.APIKey,
+		ManagerURL:      strings.TrimRight(strings.TrimSpace(cfg.ManagerURL), "/"),
+		ManagerToken:    strings.TrimSpace(cfg.ManagerToken),
 		MaxConcurrency:  maxInt(1, cfg.MaxConcurrency),
 		DefaultUseProxy: sqlmapAgentDefaultUseProxy(db),
 		ShareByDomain:   true,
@@ -1743,6 +1767,8 @@ type protoCfg struct {
 	Name           string `json:"name"`
 	URL            string `json:"url"`
 	APIKey         string `json:"api_key"`
+	ManagerURL     string `json:"manager_url"`
+	ManagerToken   string `json:"manager_token"`
 	AWVSUsername   string `json:"awvs_username"`
 	AWVSPassword   string `json:"awvs_password"`
 	MaxConcurrency int    `json:"max_concurrency"`

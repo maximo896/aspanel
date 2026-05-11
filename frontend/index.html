@@ -753,6 +753,7 @@
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>{{ t('awvs_nodes') }}</span>
                 <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-warning" v-if="selectedAwvsServerIds.length > 0" @click="restartDockerNodes('awvs')">{{ t('batch_restart_docker') }} ({{ selectedAwvsServerIds.length }})</button>
                     <button class="btn btn-outline-warning" @click="cleanupOfflineNodes('awvs')">{{ t('cleanup_offline_nodes') }}</button>
                     <button class="btn btn-outline-secondary" @click="fetchData">{{ t('refresh') }}</button>
                 </div>
@@ -761,6 +762,7 @@
                 <table class="table table-hover align-middle mb-0">
                     <thead>
                     <tr>
+                        <th><input class="form-check-input" type="checkbox" @change="toggleAllAwvsServers" :checked="selectedAwvsServerIds.length === servers.length && servers.length > 0"></th>
                         <th>{{ t('name') }}</th>
                         <th>{{ t('label_url') }}</th>
                         <th>{{ t('token') }}</th>
@@ -774,6 +776,7 @@
                     </thead>
                     <tbody>
                     <tr v-for="server in servers" :key="server.ID">
+                        <td><input class="form-check-input" type="checkbox" :value="server.ID" v-model="selectedAwvsServerIds"></td>
                         <td class="text-white">{{ server.name || '-' }}</td>
                         <td><small class="text-muted">{{ server.url }}</small></td>
                         <td><small class="text-muted">{{ (server.api_key || '').substring(0,8) + '...' }}</small></td>
@@ -786,12 +789,13 @@
                             <div class="btn-group btn-group-sm">
                                 <button class="btn btn-outline-secondary" @click="openEditAWVS(server)">{{ t('edit') }}</button>
                                 <button class="btn btn-outline-primary" @click="refreshAWVS(server.ID)">{{ t('refresh') }}</button>
+                                <button class="btn btn-outline-warning" @click="restartDockerNodes('awvs', [server.ID])">{{ t('restart_docker') }}</button>
                                 <button class="btn btn-outline-danger" @click="deleteAWVS(server.ID)">{{ t('del') }}</button>
                             </div>
                         </td>
                     </tr>
                     <tr v-if="servers.length === 0">
-                        <td colspan="9" class="text-center muted py-5">{{ t('no_awvs_nodes') }}</td>
+                        <td colspan="10" class="text-center muted py-5">{{ t('no_awvs_nodes') }}</td>
                     </tr>
                     </tbody>
                 </table>
@@ -855,6 +859,7 @@
                 <span>{{ t('managed_agents') }}</span>
                 <div class="btn-group btn-group-sm">
                     <button class="btn btn-outline-primary" @click="openGlobalSqlmapOptionsModal">{{ t('sqlmap_global_defaults') }}</button>
+                    <button class="btn btn-outline-warning" v-if="selectedSqlmapAgentIds.length > 0" @click="restartDockerNodes('sqlmap')">{{ t('batch_restart_docker') }} ({{ selectedSqlmapAgentIds.length }})</button>
                     <button class="btn btn-outline-warning" @click="cleanupOfflineNodes('sqlmap')">{{ t('cleanup_offline_nodes') }}</button>
                     <button class="btn btn-outline-secondary" @click="fetchAgents">{{ t('refresh') }}</button>
                 </div>
@@ -863,9 +868,11 @@
                 <table class="table table-hover align-middle mb-0">
                     <thead>
                     <tr>
+                        <th><input class="form-check-input" type="checkbox" @change="toggleAllSqlmapAgents" :checked="selectedSqlmapAgentIds.length === agents.length && agents.length > 0"></th>
                         <th>{{ t('name') }}</th>
                         <th>{{ t('label_url') }}</th>
                         <th>{{ t('token') }}</th>
+                        <th>{{ t('version') }}</th>
                         <th>{{ t('running') }} / {{ t('limit') }}</th>
                         <th>{{ t('queued') }}</th>
                         <th>{{ t('default_use_proxy') }}</th>
@@ -876,9 +883,14 @@
                     </thead>
                     <tbody>
                     <tr v-for="agent in agents" :key="agent.ID">
+                        <td><input class="form-check-input" type="checkbox" :value="agent.ID" v-model="selectedSqlmapAgentIds"></td>
                         <td class="text-white">{{ agent.name }}</td>
                         <td><small class="text-muted">{{ agent.url }}</small></td>
                         <td><small class="text-muted">{{ agent.api_key.substring(0,8) + '...' }}</small></td>
+                        <td>
+                            <span class="text-white">{{ formatSqlmapAgentVersion(agent.agent_version) }}</span>
+                            <span class="badge bg-danger ms-2" v-if="!isSqlmapAgentLatest(agent.agent_version)">{{ t('outdated') }}</span>
+                        </td>
                         <td><span class="text-info fw-bold">{{ agent.current_running }}</span> / {{ agent.max_concurrency }}</td>
                         <td><span class="text-warning fw-bold">{{ agent.current_queued }}</span></td>
                         <td><span class="badge" :class="agent.default_use_proxy ? 'bg-success' : 'bg-secondary'">{{ agent.default_use_proxy ? t('yes') : t('no') }}</span></td>
@@ -888,12 +900,14 @@
                             <div class="btn-group btn-group-sm">
                                 <button class="btn btn-outline-secondary" @click="openEditAgent(agent)">{{ t('edit') }}</button>
                                 <button class="btn btn-outline-primary" @click="refreshAgent(agent.ID)">{{ t('sync') }}</button>
+                                <button class="btn btn-outline-success" v-if="canUpdateSqlmapAgent(agent)" @click="updateSqlmapAgent(agent)">{{ t('update') }}</button>
+                                <button class="btn btn-outline-warning" @click="restartDockerNodes('sqlmap', [agent.ID])">{{ t('restart_docker') }}</button>
                                 <button class="btn btn-outline-danger" @click="deleteAgent(agent.ID)">{{ t('del') }}</button>
                             </div>
                         </td>
                     </tr>
                     <tr v-if="agents.length === 0">
-                        <td colspan="10" class="text-center muted py-5">{{ t('no_sqlmap_agents') }}</td>
+                        <td colspan="11" class="text-center muted py-5">{{ t('no_sqlmap_agents') }}</td>
                     </tr>
                     </tbody>
                 </table>
@@ -1079,14 +1093,17 @@
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <span>{{ t('awvs_instances') }}</span>
-                        <span class="text-muted small">{{ t('hourly_total') }}: {{ formatUSD(awvsCloudHourlyTotalUSD) }} USD/h</span>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-warning" v-if="selectedAwvsCloudInstanceIds.length > 0" @click="rebootCloudInstances('awvs')">{{ t('batch_reboot_server') }} ({{ selectedAwvsCloudInstanceIds.length }})</button>
+                            <span class="text-muted small align-self-center">{{ t('hourly_total') }}: {{ formatUSD(awvsCloudHourlyTotalUSD) }} USD/h</span>
+                        </div>
                     </div>
                     <div class="card-body p-0 table-responsive">
                         <table class="table table-hover align-middle mb-0">
-                            <thead><tr><th>ID</th><th>{{ t('instance') }}</th><th>{{ t('region_zone') }}</th><th>{{ t('spec') }}</th><th>{{ t('status') }}</th><th>{{ t('price') }}</th><th>{{ t('heartbeat') }}</th><th>{{ t('failure_reason') }}</th></tr></thead>
+                            <thead><tr><th><input class="form-check-input" type="checkbox" @change="toggleAllCloudInstances('awvs', $event)" :checked="selectedAwvsCloudInstanceIds.length === awvsCloudInstances.length && awvsCloudInstances.length > 0"></th><th>ID</th><th>{{ t('instance') }}</th><th>{{ t('region_zone') }}</th><th>{{ t('spec') }}</th><th>{{ t('status') }}</th><th>{{ t('price') }}</th><th>{{ t('recycle_countdown') }}</th><th>{{ t('heartbeat') }}</th><th>{{ t('failure_reason') }}</th><th>{{ t('action') }}</th></tr></thead>
                             <tbody>
-                            <tr v-for="item in awvsCloudInstances" :key="'awvs-'+item.ID"><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td><div class="small">Total: {{ formatUSD(item.spot_price_usd) }}</div><div class="small text-muted">Instance: {{ formatUSD(item.instance_price_usd || item.spot_price_usd) }}</div><div class="small text-muted">Extra: {{ formatUSD(item.extra_price_usd) }}</div><div class="small text-muted">Public IP est: {{ formatUSD(item.public_traffic_price_usd) }}</div></td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td></tr>
-                            <tr v-if="awvsCloudInstances.length===0"><td colspan="8" class="text-center muted py-4">{{ t('no_cloud_instances') }}</td></tr>
+                            <tr v-for="item in awvsCloudInstances" :key="'awvs-'+item.ID"><td><input class="form-check-input" type="checkbox" :value="item.ID" v-model="selectedAwvsCloudInstanceIds"></td><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td><div class="small">Total: {{ formatUSD(item.spot_price_usd) }}</div><div class="small text-muted">Instance: {{ formatUSD(item.instance_price_usd || item.spot_price_usd) }}</div><div class="small text-muted">Extra: {{ formatUSD(item.extra_price_usd) }}</div><div class="small text-muted">Public IP est: {{ formatUSD(item.public_traffic_price_usd) }}</div></td><td><small class="text-muted">{{ formatRecycleCountdown(item.expires_at) }}</small></td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td><td><button class="btn btn-outline-warning btn-sm" @click="rebootCloudInstances('awvs', [item.ID])">{{ t('reboot_server') }}</button></td></tr>
+                            <tr v-if="awvsCloudInstances.length===0"><td colspan="11" class="text-center muted py-4">{{ t('no_cloud_instances') }}</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -1096,14 +1113,17 @@
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <span>{{ t('sqlmap_instances') }}</span>
-                        <span class="text-muted small">{{ t('hourly_total') }}: {{ formatUSD(sqlmapCloudHourlyTotalUSD) }} USD/h</span>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-warning" v-if="selectedSqlmapCloudInstanceIds.length > 0" @click="rebootCloudInstances('sqlmap')">{{ t('batch_reboot_server') }} ({{ selectedSqlmapCloudInstanceIds.length }})</button>
+                            <span class="text-muted small align-self-center">{{ t('hourly_total') }}: {{ formatUSD(sqlmapCloudHourlyTotalUSD) }} USD/h</span>
+                        </div>
                     </div>
                     <div class="card-body p-0 table-responsive">
                         <table class="table table-hover align-middle mb-0">
-                            <thead><tr><th>ID</th><th>{{ t('instance') }}</th><th>{{ t('region_zone') }}</th><th>{{ t('spec') }}</th><th>{{ t('status') }}</th><th>{{ t('price') }}</th><th>{{ t('heartbeat') }}</th><th>{{ t('failure_reason') }}</th></tr></thead>
+                            <thead><tr><th><input class="form-check-input" type="checkbox" @change="toggleAllCloudInstances('sqlmap', $event)" :checked="selectedSqlmapCloudInstanceIds.length === sqlmapCloudInstances.length && sqlmapCloudInstances.length > 0"></th><th>ID</th><th>{{ t('instance') }}</th><th>{{ t('region_zone') }}</th><th>{{ t('spec') }}</th><th>{{ t('status') }}</th><th>{{ t('price') }}</th><th>{{ t('recycle_countdown') }}</th><th>{{ t('heartbeat') }}</th><th>{{ t('failure_reason') }}</th><th>{{ t('action') }}</th></tr></thead>
                             <tbody>
-                            <tr v-for="item in sqlmapCloudInstances" :key="'sqlmap-'+item.ID"><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td><div class="small">Total: {{ formatUSD(item.spot_price_usd) }}</div><div class="small text-muted">Instance: {{ formatUSD(item.instance_price_usd || item.spot_price_usd) }}</div><div class="small text-muted">Extra: {{ formatUSD(item.extra_price_usd) }}</div><div class="small text-muted">Public IP est: {{ formatUSD(item.public_traffic_price_usd) }}</div></td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td></tr>
-                            <tr v-if="sqlmapCloudInstances.length===0"><td colspan="8" class="text-center muted py-4">{{ t('no_cloud_instances') }}</td></tr>
+                            <tr v-for="item in sqlmapCloudInstances" :key="'sqlmap-'+item.ID"><td><input class="form-check-input" type="checkbox" :value="item.ID" v-model="selectedSqlmapCloudInstanceIds"></td><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td><div class="small">Total: {{ formatUSD(item.spot_price_usd) }}</div><div class="small text-muted">Instance: {{ formatUSD(item.instance_price_usd || item.spot_price_usd) }}</div><div class="small text-muted">Extra: {{ formatUSD(item.extra_price_usd) }}</div><div class="small text-muted">Public IP est: {{ formatUSD(item.public_traffic_price_usd) }}</div></td><td><small class="text-muted">{{ formatRecycleCountdown(item.expires_at) }}</small></td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td><td><button class="btn btn-outline-warning btn-sm" @click="rebootCloudInstances('sqlmap', [item.ID])">{{ t('reboot_server') }}</button></td></tr>
+                            <tr v-if="sqlmapCloudInstances.length===0"><td colspan="11" class="text-center muted py-4">{{ t('no_cloud_instances') }}</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -1371,6 +1391,10 @@ const I18N = {
         managed_agents: 'Managed Agents',
         name: 'Name',
         token: 'Token',
+        version: 'Version',
+        latest: 'Latest',
+        outdated: 'Outdated',
+        update: 'Update',
         running: 'Running',
         queued: 'Queued',
         limit: 'Limit',
@@ -1464,10 +1488,22 @@ const I18N = {
         region_zone: 'Region/Zone',
         spec: 'Spec',
         price: 'Price',
+        recycle_countdown: 'Recycle In',
         heartbeat: 'Heartbeat',
         failure_reason: 'Failure Reason',
         hourly_total: 'Hourly Total',
-        no_cloud_instances: 'No cloud instances yet.'
+        no_cloud_instances: 'No cloud instances yet.',
+        reboot_server: 'Reboot Server',
+        batch_reboot_server: 'Batch Reboot',
+        restart_docker: 'Restart Docker',
+        batch_restart_docker: 'Batch Docker Restart',
+        confirm_reboot_instance: 'Reboot this cloud instance now?',
+        confirm_batch_reboot_instances: 'Reboot {count} cloud instances now?',
+        confirm_restart_awvs_docker: 'Restart docker for this AWVS node now?',
+        confirm_batch_restart_awvs_docker: 'Restart docker for {count} AWVS nodes now?',
+        confirm_restart_sqlmap_docker: 'Restart docker for this sqlmap node now?',
+        confirm_batch_restart_sqlmap_docker: 'Restart docker for {count} sqlmap nodes now?',
+        confirm_update_sqlmap_agent: 'Update this sqlmap agent to the latest version now?'
         ,
         summary_awvs_node: 'AWVS Node',
         summary_awvs_status: 'AWVS Status',
@@ -1624,6 +1660,10 @@ const I18N = {
         label_url: 'URL',
         label_key: '\u5bc6\u94a5',
         max_concurrency: '\u6700\u5927\u5e76\u53d1',
+        version: '\u7248\u672c',
+        latest: '\u6700\u65b0',
+        outdated: '\u9700\u66f4\u65b0',
+        update: '\u66f4\u65b0',
         last_checked: '\u4e0a\u6b21\u68c0\u67e5',
         edit: '\u7f16\u8f91',
         del: '\u5220\u9664',
@@ -1728,10 +1768,22 @@ const I18N = {
         region_zone: '\u533a\u57df/\u53ef\u7528\u533a',
         spec: '\u89c4\u683c',
         price: '\u4ef7\u683c',
+        recycle_countdown: '\u56de\u6536\u5012\u8ba1\u65f6',
         heartbeat: '\u5fc3\u8df3',
         failure_reason: '\u5931\u8d25\u539f\u56e0',
         hourly_total: 'Hourly Total',
-        no_cloud_instances: '\u5f53\u524d\u6ca1\u6709\u4e91\u5b9e\u4f8b\u3002'
+        no_cloud_instances: '\u5f53\u524d\u6ca1\u6709\u4e91\u5b9e\u4f8b\u3002',
+        reboot_server: '\u91cd\u542f\u670d\u52a1\u5668',
+        batch_reboot_server: '\u6279\u91cf\u91cd\u542f',
+        restart_docker: '\u91cd\u542f Docker',
+        batch_restart_docker: '\u6279\u91cf\u91cd\u542f Docker',
+        confirm_reboot_instance: '\u73b0\u5728\u91cd\u542f\u8fd9\u53f0\u4e91\u5b9e\u4f8b\u5417\uff1f',
+        confirm_batch_reboot_instances: '\u73b0\u5728\u6279\u91cf\u91cd\u542f {count} \u53f0\u4e91\u5b9e\u4f8b\u5417\uff1f',
+        confirm_restart_awvs_docker: '\u73b0\u5728\u91cd\u542f\u8fd9\u4e2a AWVS \u8282\u70b9\u7684 Docker \u5417\uff1f',
+        confirm_batch_restart_awvs_docker: '\u73b0\u5728\u6279\u91cf\u91cd\u542f {count} \u4e2a AWVS \u8282\u70b9\u7684 Docker \u5417\uff1f',
+        confirm_restart_sqlmap_docker: '\u73b0\u5728\u91cd\u542f\u8fd9\u4e2a sqlmap \u8282\u70b9\u7684 Docker \u5417\uff1f',
+        confirm_batch_restart_sqlmap_docker: '\u73b0\u5728\u6279\u91cf\u91cd\u542f {count} \u4e2a sqlmap \u8282\u70b9\u7684 Docker \u5417\uff1f',
+        confirm_update_sqlmap_agent: '\u73b0\u5728\u5c06\u8fd9\u4e2a sqlmap \u4ee3\u7406\u66f4\u65b0\u5230\u6700\u65b0\u7248\u672c\u5417\uff1f'
         ,
         summary_awvs_node: 'AWVS \u8282\u70b9',
         summary_awvs_status: 'AWVS \u72b6\u6001',
@@ -1816,6 +1868,7 @@ new Vue({
         language: 'en',
         servers: [],
         agents: [],
+        sqlmapLatestAgentVersion: '2.1.0',
         tasks: [],
         newUrls: '',
         newAWVS: { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 },
@@ -1856,6 +1909,10 @@ new Vue({
         findingFilter: 'all',
         selectedTech: '',
         selectedTaskIds: [],
+        selectedAwvsServerIds: [],
+        selectedSqlmapAgentIds: [],
+        selectedAwvsCloudInstanceIds: [],
+        selectedSqlmapCloudInstanceIds: [],
         retrySqlmapAgentId: 0,
         requestEditMode: false,
         requestDraft: '',
@@ -1863,6 +1920,10 @@ new Vue({
         pageSize: 20,
         findingPage: 1,
         findingPageSize: 20,
+        currentUnixTs: Math.floor(Date.now() / 1000),
+        fetchDataTimer: null,
+        taskRefreshTimer: null,
+        recycleCountdownTimer: null,
         cloud: {
             max_price_usd_per_hour: 0.02,
             hourly_budget_usd: 0,
@@ -2100,15 +2161,21 @@ new Vue({
                 }
             );
             this.initAuth();
-            setInterval(() => {
+            this.fetchDataTimer = setInterval(() => {
                 if (this.isAuthenticated) this.fetchData();
             }, 15000);
-            setInterval(() => {
+            this.taskRefreshTimer = setInterval(() => {
                 if (this.isAuthenticated) this.refreshSelectedTaskSilently();
             }, 10000);
+            this.recycleCountdownTimer = setInterval(() => {
+                this.currentUnixTs = Math.floor(Date.now() / 1000);
+            }, 1000);
             window.addEventListener('popstate', this.handleLocationChange);
         },
         beforeDestroy() {
+            if (this.fetchDataTimer) clearInterval(this.fetchDataTimer);
+            if (this.taskRefreshTimer) clearInterval(this.taskRefreshTimer);
+            if (this.recycleCountdownTimer) clearInterval(this.recycleCountdownTimer);
             window.removeEventListener('popstate', this.handleLocationChange);
         },
     methods: {
@@ -2360,6 +2427,23 @@ new Vue({
                 };
             });
         },
+        normalizeSqlmapAgentVersion(version) {
+            return String(version || '').trim().replace(/^v/i, '');
+        },
+        formatSqlmapAgentVersion(version) {
+            const normalized = this.normalizeSqlmapAgentVersion(version);
+            return normalized || '-';
+        },
+        isSqlmapAgentLatest(version) {
+            const normalized = this.normalizeSqlmapAgentVersion(version);
+            const latest = this.normalizeSqlmapAgentVersion(this.sqlmapLatestAgentVersion);
+            return !!normalized && normalized === latest;
+        },
+        canUpdateSqlmapAgent(agent) {
+            if (!agent) return false;
+            if (!String(agent.manager_url || '').trim()) return false;
+            return !this.isSqlmapAgentLatest(agent.agent_version);
+        },
         resolveConfirm(accepted) {
             const resolver = this.confirmDialog && this.confirmDialog.resolver;
             this.confirmDialog = { visible: false, message: '', resolver: null };
@@ -2573,6 +2657,52 @@ new Vue({
                 this.notifyError(this.extractError(err));
             });
         },
+        async rebootCloudInstances(workload, ids) {
+            const kind = workload || 'awvs';
+            const selected = (ids && ids.length ? ids : (kind === 'sqlmap' ? this.selectedSqlmapCloudInstanceIds : this.selectedAwvsCloudInstanceIds)).slice();
+            if (!selected.length) return;
+            const confirmKey = selected.length > 1 ? 'confirm_batch_reboot_instances' : 'confirm_reboot_instance';
+            const confirmText = selected.length > 1 ? this.tf(confirmKey, { count: selected.length }) : this.t(confirmKey);
+            if (!(await this.askConfirm(confirmText))) return;
+            axios.post('/api/cloud/instances/reboot?workload=' + encodeURIComponent(kind), { ids: selected }).then(res => {
+                this.notifySuccess((res.data.message || 'ok') + ' (' + (res.data.succeeded_count || 0) + '/' + selected.length + ')');
+                if (kind === 'sqlmap') {
+                    this.selectedSqlmapCloudInstanceIds = [];
+                } else {
+                    this.selectedAwvsCloudInstanceIds = [];
+                }
+                this.fetchCloud();
+                this.fetchData();
+                this.fetchAgents();
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        async restartDockerNodes(kind, ids) {
+            const target = kind === 'sqlmap' ? 'sqlmap' : 'awvs';
+            const selected = (ids && ids.length ? ids : (target === 'sqlmap' ? this.selectedSqlmapAgentIds : this.selectedAwvsServerIds)).slice();
+            if (!selected.length) return;
+            let confirmText = '';
+            if (target === 'sqlmap') {
+                confirmText = selected.length > 1 ? this.tf('confirm_batch_restart_sqlmap_docker', { count: selected.length }) : this.t('confirm_restart_sqlmap_docker');
+            } else {
+                confirmText = selected.length > 1 ? this.tf('confirm_batch_restart_awvs_docker', { count: selected.length }) : this.t('confirm_restart_awvs_docker');
+            }
+            if (!(await this.askConfirm(confirmText))) return;
+            const url = target === 'sqlmap' ? '/api/sqlmap/agents/restart-docker' : '/api/servers/restart-docker';
+            axios.post(url, { ids: selected }).then(res => {
+                this.notifySuccess((res.data.message || 'ok') + ' (' + (res.data.succeeded_count || 0) + '/' + selected.length + ')');
+                if (target === 'sqlmap') {
+                    this.selectedSqlmapAgentIds = [];
+                    this.fetchAgents();
+                } else {
+                    this.selectedAwvsServerIds = [];
+                    this.fetchData();
+                }
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
         async cleanupOfflineNodes(kind) {
             const target = kind === 'sqlmap' ? 'sqlmap' : 'awvs';
             const confirmKey = target === 'sqlmap' ? 'confirm_cleanup_offline_sqlmap' : 'confirm_cleanup_offline_awvs';
@@ -2668,6 +2798,21 @@ new Vue({
                 this.selectedTaskIds = this.paginatedTasks.map(t => t.ID);
             } else {
                 this.selectedTaskIds = [];
+            }
+        },
+        toggleAllAwvsServers(e) {
+            this.selectedAwvsServerIds = e.target.checked ? this.servers.map(item => item.ID) : [];
+        },
+        toggleAllSqlmapAgents(e) {
+            this.selectedSqlmapAgentIds = e.target.checked ? this.agents.map(item => item.ID) : [];
+        },
+        toggleAllCloudInstances(workload, e) {
+            const items = workload === 'sqlmap' ? this.sqlmapCloudInstances : this.awvsCloudInstances;
+            const ids = e.target.checked ? items.map(item => item.ID) : [];
+            if (workload === 'sqlmap') {
+                this.selectedSqlmapCloudInstanceIds = ids;
+            } else {
+                this.selectedAwvsCloudInstanceIds = ids;
             }
         },
         addAWVS() {
@@ -2816,6 +2961,20 @@ new Vue({
         },
         refreshAgent(id) {
             axios.post('/api/sqlmap/agents/' + id + '/refresh').then(() => this.fetchAgents());
+        },
+        async updateSqlmapAgent(agent) {
+            if (!agent || !agent.ID) return;
+            if (!(await this.askConfirm(this.t('confirm_update_sqlmap_agent')))) {
+                return;
+            }
+            axios.post('/api/sqlmap/agents/' + agent.ID + '/update').then(res => {
+                const targetVersion = (res.data && res.data.target_version) || this.sqlmapLatestAgentVersion;
+                this.notifySuccess((res.data && res.data.message ? res.data.message : 'ok') + ' -> ' + targetVersion);
+                this.fetchAgents();
+                setTimeout(() => this.fetchAgents(), 8000);
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
         },
         testAgent(agent) {
             axios.post('/api/sqlmap/agents/test', { url: agent.url, api_key: agent.api_key }).then(res => {
@@ -3273,6 +3432,15 @@ new Vue({
         formatUnixTime(value) {
             if (!value) return '-';
             return new Date(value * 1000).toLocaleString();
+        },
+        formatRecycleCountdown(value) {
+            const expiresAt = Number(value || 0);
+            if (!expiresAt) return '-';
+            const remain = Math.max(0, expiresAt - this.currentUnixTs);
+            const hours = Math.floor(remain / 3600);
+            const minutes = Math.floor((remain % 3600) / 60);
+            const seconds = remain % 60;
+            return hours + '\u5c0f\u65f6' + minutes + '\u5206\u949f' + seconds + '\u79d2';
         },
         formatJson(value) {
             if (value === undefined || value === null || value === '') return '-';

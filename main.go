@@ -109,6 +109,7 @@ func main() {
 	r.GET("/api/cloud/instances", h.GetCloudInstances)
 	r.POST("/api/cloud/scale/start", h.StartCloudScale)
 	r.POST("/api/cloud/scale/stop", h.StopCloudScale)
+	r.POST("/api/cloud/instances/reboot", h.RebootCloudInstances)
 	r.POST("/api/cloud/instances/cleanup", h.CleanupCloudInstances)
 
 	r.GET("/api/sqlmap/agents", h.GetSqlmapAgents)
@@ -119,9 +120,12 @@ func main() {
 	r.PUT("/api/sqlmap/agents/:id", h.UpdateSqlmapAgent)
 	r.DELETE("/api/sqlmap/agents/:id", h.DeleteSqlmapAgent)
 	r.POST("/api/sqlmap/agents/cleanup-offline", h.CleanupOfflineSqlmapAgents)
+	r.POST("/api/sqlmap/agents/restart-docker", h.RestartSQLMapDocker)
+	r.POST("/api/sqlmap/agents/:id/update", h.UpdateSqlmapAgentVersion)
 	r.GET("/api/sqlmap/agents/:id/status", h.GetSqlmapAgentStatus)
 	r.POST("/api/sqlmap/agents/:id/refresh", h.RefreshSqlmapAgentStatus)
 	r.POST("/api/sqlmap/agents/test", h.TestSqlmapAgent)
+	r.POST("/api/servers/restart-docker", h.RestartAWVSDocker)
 
 	r.GET("/api/tasks", h.GetTasks)
 	r.POST("/api/tasks", h.AddTasks)

@@ -205,6 +205,8 @@ func (api *API) RegisterAWVSFromProtocol(c *gin.Context) {
 		Name:           cfg.Name,
 		URL:            normalizeBaseURL(cfg.URL),
 		APIKey:         strings.TrimSpace(cfg.APIKey),
+		ManagerURL:     normalizeBaseURL(cfg.ManagerURL),
+		ManagerToken:   strings.TrimSpace(cfg.ManagerToken),
 		AWVSUsername:   strings.TrimSpace(cfg.AWVSUsername),
 		AWVSPassword:   strings.TrimSpace(cfg.AWVSPassword),
 		MaxConcurrency: cfg.MaxConcurrency,
@@ -338,7 +340,7 @@ func (api *API) CleanupOfflineAWVSServers(c *gin.Context) {
 
 func (api *API) GetSqlmapAgents(c *gin.Context) {
 	var agents []models.SqlmapAgent
-	api.DB.Find(&agents)
+	api.DB.Order("id desc").Find(&agents)
 	c.JSON(200, agents)
 }
 
@@ -443,15 +445,26 @@ func (api *API) RegisterAgentFromProtocol(c *gin.Context) {
 		c.JSON(400, gin.H{"error": fmt.Sprintf("Agent returned status %d", resp.StatusCode)})
 		return
 	}
+	var statusResp sqlmapAgentStatusPayload
+	_ = json.NewDecoder(resp.Body).Decode(&statusResp)
 
 	agent := models.SqlmapAgent{
 		Name:            cfg.Name,
 		URL:             baseURL,
 		APIKey:          strings.TrimSpace(cfg.APIKey),
+		ManagerURL:      normalizeBaseURL(cfg.ManagerURL),
+		ManagerToken:    strings.TrimSpace(cfg.ManagerToken),
+		AgentVersion:    strings.TrimSpace(statusResp.Version),
 		MaxConcurrency:  cfg.MaxConcurrency,
 		DefaultUseProxy: api.getSqlmapAgentDefaultUseProxy(),
 		ShareByDomain:   true,
 		IsActive:        true,
+		CurrentRunning:  statusResp.RunningCount,
+		CurrentQueued:   statusResp.QueuedCount,
+		LastCheckedAt:   time.Now().Unix(),
+	}
+	if statusResp.MaxConcurrent > 0 {
+		agent.MaxConcurrency = statusResp.MaxConcurrent
 	}
 	api.DB.Create(&agent)
 	// Force-write bool value to avoid DB default overriding false on create.
@@ -522,6 +535,14 @@ func (api *API) UpdateSqlmapAgent(c *gin.Context) {
 	}
 
 	agent.IsActive = true
+	var statusResp sqlmapAgentStatusPayload
+	_ = json.NewDecoder(resp.Body).Decode(&statusResp)
+	agent.CurrentRunning = statusResp.RunningCount
+	agent.CurrentQueued = statusResp.QueuedCount
+	if statusResp.MaxConcurrent > 0 {
+		agent.MaxConcurrency = statusResp.MaxConcurrent
+	}
+	agent.AgentVersion = strings.TrimSpace(statusResp.Version)
 	agent.LastCheckedAt = time.Now().Unix()
 	api.DB.Save(&agent)
 	c.JSON(200, gin.H{"message": "sqlmap agent updated", "agent": agent})
@@ -627,25 +648,55 @@ func (api *API) RefreshSqlmapAgentStatus(c *gin.Context) {
 	if resp.StatusCode != 200 {
 		agent.CurrentRunning = -1
 		agent.CurrentQueued = -1
+		agent.AgentVersion = ""
 		agent.IsActive = false
 		api.DB.Save(&agent)
 		c.JSON(200, gin.H{"agent": agent, "error": fmt.Sprintf("status %d", resp.StatusCode)})
 		return
 	}
 
-	var statusResp struct {
-		RunningCount  int `json:"running_count"`
-		QueuedCount   int `json:"queued_count"`
-		MaxConcurrent int `json:"max_concurrent"`
-	}
-	json.NewDecoder(resp.Body).Decode(&statusResp)
+	var statusResp sqlmapAgentStatusPayload
+	_ = json.NewDecoder(resp.Body).Decode(&statusResp)
 	agent.CurrentRunning = statusResp.RunningCount
 	agent.CurrentQueued = statusResp.QueuedCount
 	agent.MaxConcurrency = statusResp.MaxConcurrent
+	agent.AgentVersion = strings.TrimSpace(statusResp.Version)
 	agent.IsActive = true
 	agent.LastCheckedAt = time.Now().Unix()
 	api.DB.Save(&agent)
 	c.JSON(200, agent)
+}
+
+func (api *API) UpdateSqlmapAgentVersion(c *gin.Context) {
+	var agent models.SqlmapAgent
+	if err := api.DB.First(&agent, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "sqlmap agent not found"})
+		return
+	}
+	if isLatestSQLMapAgentVersion(agent.AgentVersion) {
+		c.JSON(200, gin.H{
+			"message":         "sqlmap agent is already latest",
+			"agent_id":        agent.ID,
+			"current_version": agent.AgentVersion,
+			"target_version":  latestSQLMapAgentVersion,
+		})
+		return
+	}
+	if err := api.callNodeManager(agent.ManagerURL, agent.ManagerToken, "update"); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	api.DB.Model(&models.SqlmapAgent{}).Where("id = ?", agent.ID).Updates(map[string]interface{}{
+		"is_active":         false,
+		"last_checked_at":   time.Now().Unix(),
+		"last_heartbeat_at": 0,
+	})
+	c.JSON(200, gin.H{
+		"message":         "sqlmap agent update requested",
+		"agent_id":        agent.ID,
+		"current_version": agent.AgentVersion,
+		"target_version":  latestSQLMapAgentVersion,
+	})
 }
 
 func (api *API) TestSqlmapAgent(c *gin.Context) {
@@ -1770,9 +1821,29 @@ type agentConfig struct {
 	Name           string `json:"name"`
 	URL            string `json:"url"`
 	APIKey         string `json:"api_key"`
+	ManagerURL     string `json:"manager_url"`
+	ManagerToken   string `json:"manager_token"`
 	AWVSUsername   string `json:"awvs_username"`
 	AWVSPassword   string `json:"awvs_password"`
 	MaxConcurrency int    `json:"max_concurrency"`
+}
+
+type sqlmapAgentStatusPayload struct {
+	RunningCount  int    `json:"running_count"`
+	QueuedCount   int    `json:"queued_count"`
+	MaxConcurrent int    `json:"max_concurrent"`
+	Version       string `json:"version"`
+}
+
+const latestSQLMapAgentVersion = "2.1.0"
+
+func normalizeAgentVersionValue(version string) string {
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(version), "v"))
+}
+
+func isLatestSQLMapAgentVersion(version string) bool {
+	normalized := normalizeAgentVersionValue(version)
+	return normalized != "" && normalized == normalizeAgentVersionValue(latestSQLMapAgentVersion)
 }
 
 func generateDockerCommand(name string, maxConcurrency int, agentPort int) string {
@@ -2205,6 +2276,191 @@ func (api *API) GetCloudInstances(c *gin.Context) {
 	}
 	query.Find(&instances)
 	c.JSON(200, instances)
+}
+
+func (api *API) loadCloudClient() (*tencent.Client, error) {
+	var settings models.CloudSettings
+	if err := api.DB.Order("id desc").First(&settings).Error; err != nil {
+		return nil, fmt.Errorf("cloud settings not found")
+	}
+	if strings.TrimSpace(settings.SecretID) == "" || strings.TrimSpace(settings.SecretKey) == "" {
+		return nil, fmt.Errorf("cloud credentials are required")
+	}
+	if strings.Contains(settings.SecretKey, "*") {
+		return nil, fmt.Errorf("cloud secret key looks masked, please re-enter the real key and save")
+	}
+	return tencent.NewClient(tencent.Settings{
+		SecretID:  strings.TrimSpace(settings.SecretID),
+		SecretKey: strings.TrimSpace(settings.SecretKey),
+	}), nil
+}
+
+func (api *API) callNodeManager(managerURL, managerToken, action string) error {
+	managerURL = normalizeBaseURL(managerURL)
+	managerToken = strings.TrimSpace(managerToken)
+	if managerURL == "" || managerToken == "" {
+		return fmt.Errorf("manager api is not configured for this node")
+	}
+	body, _ := json.Marshal(map[string]string{"action": strings.TrimSpace(action)})
+	req, _ := http.NewRequest("POST", managerURL+"/docker/control", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Manager-Token", managerToken)
+	resp, err := httpClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		message := strings.TrimSpace(string(respBody))
+		if message == "" {
+			message = fmt.Sprintf("manager api returned %d", resp.StatusCode)
+		}
+		return fmt.Errorf("%s", message)
+	}
+	return nil
+}
+
+func (api *API) RebootCloudInstances(c *gin.Context) {
+	var req struct {
+		IDs []uint `json:"ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	workload := strings.TrimSpace(strings.ToLower(c.Query("workload")))
+	if workload != "" && workload != "awvs" && workload != "sqlmap" {
+		c.JSON(400, gin.H{"error": "invalid workload, expected awvs/sqlmap"})
+		return
+	}
+	tc, err := api.loadCloudClient()
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	var instances []models.CloudInstance
+	query := api.DB.Where("id IN ?", req.IDs)
+	if workload != "" {
+		query = query.Where("workload = ?", workload)
+	}
+	if err := query.Find(&instances).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	if len(instances) == 0 {
+		c.JSON(404, gin.H{"error": "cloud instances not found"})
+		return
+	}
+	succeeded := 0
+	failed := make([]map[string]interface{}, 0)
+	for _, inst := range instances {
+		if strings.TrimSpace(inst.InstanceID) == "" || strings.TrimSpace(inst.Region) == "" {
+			failed = append(failed, gin.H{"id": inst.ID, "instance_id": inst.InstanceID, "error": "instance_id or region is empty"})
+			continue
+		}
+		if err := tc.RebootInstances(inst.Region, []string{inst.InstanceID}); err != nil {
+			failed = append(failed, gin.H{"id": inst.ID, "instance_id": inst.InstanceID, "error": err.Error()})
+			continue
+		}
+		inst.Status = "rebooting"
+		inst.FailureReason = ""
+		api.DB.Save(&inst)
+		if inst.AWVSServerID != 0 {
+			api.DB.Model(&models.AWVSServer{}).Where("id = ?", inst.AWVSServerID).Updates(map[string]interface{}{
+				"is_active":  false,
+				"last_error": "manual server reboot requested",
+			})
+		}
+		if inst.SqlmapAgentID != 0 {
+			api.DB.Model(&models.SqlmapAgent{}).Where("id = ?", inst.SqlmapAgentID).Update("is_active", false)
+		}
+		succeeded++
+	}
+	c.JSON(200, gin.H{
+		"message":         "cloud instances reboot requested",
+		"succeeded_count": succeeded,
+		"failed_count":    len(failed),
+		"failed":          failed,
+	})
+}
+
+func (api *API) RestartAWVSDocker(c *gin.Context) {
+	var req struct {
+		IDs []uint `json:"ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	var servers []models.AWVSServer
+	if err := api.DB.Where("id IN ?", req.IDs).Find(&servers).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	if len(servers) == 0 {
+		c.JSON(404, gin.H{"error": "awvs nodes not found"})
+		return
+	}
+	succeeded := 0
+	failed := make([]map[string]interface{}, 0)
+	for _, server := range servers {
+		if err := api.callNodeManager(server.ManagerURL, server.ManagerToken, "restart"); err != nil {
+			failed = append(failed, gin.H{"id": server.ID, "name": server.Name, "error": err.Error()})
+			continue
+		}
+		api.DB.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
+			"is_active":       false,
+			"last_checked_at": time.Now().Unix(),
+			"last_error":      "manual docker restart requested",
+		})
+		succeeded++
+	}
+	c.JSON(200, gin.H{
+		"message":         "awvs docker restart requested",
+		"succeeded_count": succeeded,
+		"failed_count":    len(failed),
+		"failed":          failed,
+	})
+}
+
+func (api *API) RestartSQLMapDocker(c *gin.Context) {
+	var req struct {
+		IDs []uint `json:"ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	var agents []models.SqlmapAgent
+	if err := api.DB.Where("id IN ?", req.IDs).Find(&agents).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	if len(agents) == 0 {
+		c.JSON(404, gin.H{"error": "sqlmap agents not found"})
+		return
+	}
+	succeeded := 0
+	failed := make([]map[string]interface{}, 0)
+	for _, agent := range agents {
+		if err := api.callNodeManager(agent.ManagerURL, agent.ManagerToken, "restart"); err != nil {
+			failed = append(failed, gin.H{"id": agent.ID, "name": agent.Name, "error": err.Error()})
+			continue
+		}
+		api.DB.Model(&models.SqlmapAgent{}).Where("id = ?", agent.ID).Updates(map[string]interface{}{
+			"is_active":        false,
+			"last_checked_at":  time.Now().Unix(),
+			"last_heartbeat_at": 0,
+		})
+		succeeded++
+	}
+	c.JSON(200, gin.H{
+		"message":         "sqlmap docker restart requested",
+		"succeeded_count": succeeded,
+		"failed_count":    len(failed),
+		"failed":          failed,
+	})
 }
 
 func (api *API) StartCloudScale(c *gin.Context) {
