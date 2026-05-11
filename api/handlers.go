@@ -40,7 +40,33 @@ func (api *API) getFindingAgent(finding *models.TaskFinding) (*models.SqlmapAgen
 	if err := api.DB.First(&agent, finding.SqlmapAgentID).Error; err != nil {
 		return nil, err
 	}
+	api.ensureSqlmapAgentProxyURL(&agent)
 	return &agent, nil
+}
+
+func (api *API) ensureSqlmapAgentProxyURL(agent *models.SqlmapAgent) {
+	if agent == nil {
+		return
+	}
+	if strings.TrimSpace(agent.ProxyURL) != "" {
+		return
+	}
+	if agent.ProxyAgentID == 0 {
+		return
+	}
+	agent.ProxyURL = fmt.Sprintf("http://proxy-gateway-%s:18080", sanitizeProxyContainerName(agent.Name))
+	api.DB.Model(&models.SqlmapAgent{}).Where("id = ?", agent.ID).Update("proxy_url", agent.ProxyURL)
+}
+
+func sanitizeProxyContainerName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	re := regexp.MustCompile(`[^a-z0-9_.-]+`)
+	name = re.ReplaceAllString(name, "-")
+	name = strings.Trim(name, "-_.")
+	if name == "" {
+		return "agent"
+	}
+	return name
 }
 
 func httpClient() *http.Client {
@@ -1063,6 +1089,54 @@ func (api *API) RetryTaskSqlmapPush(c *gin.Context) {
 		"succeeded_count": succeeded,
 		"failed_count":    failed,
 		"log_file":        "data/panel.log",
+	})
+}
+
+func (api *API) BatchRetryTaskSqlmapPush(c *gin.Context) {
+	var req struct {
+		IDs           []uint `json:"ids" binding:"required"`
+		SqlmapAgentID uint   `json:"sqlmap_agent_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if len(req.IDs) == 0 {
+		c.JSON(400, gin.H{"error": "ids cannot be empty"})
+		return
+	}
+
+	succeededTasks := 0
+	failedTasks := 0
+	totalFindingSucceeded := 0
+	totalFindingFailed := 0
+	failedDetails := make([]gin.H, 0)
+
+	for _, taskID := range req.IDs {
+		succeeded, failed, err := scheduler.RetryTaskFindingsFromLocal(api.DB, taskID, req.SqlmapAgentID)
+		if err != nil {
+			failedTasks++
+			failedDetails = append(failedDetails, gin.H{
+				"task_id": taskID,
+				"error":   err.Error(),
+			})
+			continue
+		}
+		succeededTasks++
+		totalFindingSucceeded += succeeded
+		totalFindingFailed += failed
+	}
+
+	c.JSON(200, gin.H{
+		"message":                 "batch task retry pushed from sqlite",
+		"task_count":              len(req.IDs),
+		"succeeded_task_count":    succeededTasks,
+		"failed_task_count":       failedTasks,
+		"succeeded_finding_count": totalFindingSucceeded,
+		"failed_finding_count":    totalFindingFailed,
+		"sqlmap_agent_id":         req.SqlmapAgentID,
+		"failed_tasks":            failedDetails,
+		"log_file":                "data/panel.log",
 	})
 }
 

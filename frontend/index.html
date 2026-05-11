@@ -246,6 +246,7 @@
                             </div>
                             <div class="btn-group btn-group-sm">
                                 <button class="btn btn-outline-danger" v-if="selectedTaskIds.length > 0" @click="batchDeleteTasks" :title="t('title_delete_selected')">{{ t('delete_selected') }} ({{ selectedTaskIds.length }})</button>
+                                <button class="btn btn-outline-warning" v-if="selectedTaskIds.length > 0" @click="batchRetryTaskPush" :title="t('title_batch_retry_push')">{{ t('batch_retry_push') }} ({{ selectedTaskIds.length }})</button>
                                 <button class="btn btn-outline-light" @click="cleanupTasks" :title="t('title_clean_empty')">{{ t('clean_empty_sqli') }}</button>
                                 <button class="btn btn-outline-light" @click="cleanupNoVulnTasks" :title="t('title_clean_0_vuln')">{{ t('clean_0_vuln') }}</button>
                             </div>
@@ -1294,6 +1295,8 @@ const I18N = {
         filter_has_finding: 'Has Finding',
         title_delete_selected: 'Delete selected tasks',
         delete_selected: 'Delete Selected',
+        title_batch_retry_push: 'Batch retry selected tasks to sqlmap',
+        batch_retry_push: 'Batch Retry Push',
         title_clean_empty: 'Delete tasks with NO DATA, NO SHELL, and sqlmap NOT RUNNING',
         clean_empty_sqli: 'Clean Empty SQLi',
         title_clean_0_vuln: 'Delete tasks where AWVS finished but found 0 vulnerabilities',
@@ -1316,6 +1319,7 @@ const I18N = {
         confirm_cleanup_empty: 'This will delete tasks that have NO DATA, NO SHELL, and sqlmap is NOT RUNNING, and will also delete their targets from AWVS. Continue?',
         confirm_cleanup_0_vuln: 'This will delete tasks where AWVS finished scanning but found ZERO vulnerabilities. Their AWVS targets will also be removed. Continue?',
         confirm_batch_delete: 'Are you sure you want to delete {count} selected tasks and their associated AWVS targets?',
+        confirm_batch_retry_push: 'Retry push {count} selected tasks to sqlmap now?',
         one_click_cleanup: 'One-click Cleanup',
         cleanup_offline_nodes: 'Cleanup Offline',
         confirm_cloud_cleanup_awvs: 'This will stop AWVS autoscale and terminate all AWVS spot instances now. Continue?',
@@ -1560,6 +1564,8 @@ const I18N = {
         filter_has_finding: '\u6709 Finding',
         title_delete_selected: '\u5220\u9664\u9009\u4e2d\u4efb\u52a1',
         delete_selected: '\u5220\u9664\u9009\u4e2d',
+        title_batch_retry_push: '\u6279\u91cf\u91cd\u65b0\u6295\u9012\u9009\u4e2d\u4efb\u52a1\u5230 sqlmap',
+        batch_retry_push: '\u6279\u91cf\u91cd\u6295',
         title_clean_empty: '\u6e05\u7406\u6ca1\u6709\u6570\u636e\u3001\u6ca1\u6709 Shell \u4e14 sqlmap \u4e0d\u5728\u8fd0\u884c\u7684\u4efb\u52a1',
         clean_empty_sqli: '\u6e05\u7406\u7a7a SQLi',
         title_clean_0_vuln: '\u6e05\u7406 AWVS \u5df2\u5b8c\u6210\u4f46\u6ca1\u6709\u6f0f\u6d1e\u7684\u4efb\u52a1',
@@ -1582,6 +1588,7 @@ const I18N = {
         confirm_cleanup_empty: '\u5c06\u5220\u9664\u6ca1\u6709\u6570\u636e\u3001\u6ca1\u6709 Shell \u4e14 sqlmap \u4e0d\u5728\u8fd0\u884c\u7684\u4efb\u52a1\uff0c\u540c\u65f6\u4f1a\u5220\u9664\u5176 AWVS target\u3002\u7ee7\u7eed\u5417\uff1f',
         confirm_cleanup_0_vuln: '\u5c06\u5220\u9664 AWVS \u626b\u63cf\u5df2\u5b8c\u6210\u4f46\u6ca1\u6709\u4efb\u4f55\u6f0f\u6d1e\u7684\u4efb\u52a1\uff0c\u540c\u65f6\u4f1a\u5220\u9664\u5176 AWVS target\u3002\u7ee7\u7eed\u5417\uff1f',
         confirm_batch_delete: '\u786e\u5b9a\u5220\u9664\u9009\u4e2d\u7684 {count} \u4e2a\u4efb\u52a1\u53ca\u5176\u5bf9\u5e94\u7684 AWVS target \u5417\uff1f',
+        confirm_batch_retry_push: '\u73b0\u5728\u5c06\u9009\u4e2d\u7684 {count} \u4e2a\u4efb\u52a1\u6279\u91cf\u91cd\u65b0\u6295\u9012\u5230 sqlmap \u5417\uff1f',
         one_click_cleanup: 'One-click Cleanup',
         cleanup_offline_nodes: '\u6e05\u7406\u79bb\u7ebf\u8282\u70b9',
         confirm_cloud_cleanup_awvs: 'This will stop AWVS autoscale and terminate all AWVS spot instances now. Continue?',
@@ -2633,6 +2640,29 @@ new Vue({
                 this.fetchData();
             }).catch(err => {
                 this.notifyError(this.extractError(err));
+            });
+        },
+        async batchRetryTaskPush() {
+            if (!this.selectedTaskIds.length) return;
+            if (!(await this.askConfirm(this.tf('confirm_batch_retry_push', { count: this.selectedTaskIds.length })))) {
+                return;
+            }
+            this.taskActionBusy = true;
+            axios.post('/api/tasks/batch-retry-push', {
+                ids: this.selectedTaskIds,
+                sqlmap_agent_id: this.retrySqlmapAgentId || 0
+            }).then(res => {
+                const msg = (res.data && res.data.message ? res.data.message : 'ok') +
+                    ' | tasks: ' + (res.data.succeeded_task_count || 0) + '/' + (res.data.task_count || this.selectedTaskIds.length) +
+                    ' | findings: ' + (res.data.succeeded_finding_count || 0);
+                this.notifySuccess(msg);
+                this.selectedTaskIds = [];
+                this.fetchData();
+                this.refreshSelectedTaskSilently();
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            }).finally(() => {
+                this.taskActionBusy = false;
             });
         },
         toggleAllTasks(e) {

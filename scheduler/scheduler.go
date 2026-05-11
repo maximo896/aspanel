@@ -64,8 +64,7 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 				db.Save(&server)
 				if isServerStale(server.LastHeartbeatAt) {
 					requeueAWVSServerTasks(db, server.ID, "awvs_heartbeat_timeout")
-					db.Delete(&server)
-					log.Printf("[awvs][heartbeat] deleted stale awvs server id=%d name=%s", server.ID, server.Name)
+					log.Printf("[awvs][heartbeat] marked stale awvs server offline id=%d name=%s", server.ID, server.Name)
 				}
 				continue
 			}
@@ -97,8 +96,7 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 				db.Save(&agent)
 				if isServerStale(agent.LastHeartbeatAt) {
 					requeueSqlmapAgentTasks(db, agent.ID, "sqlmap_heartbeat_timeout")
-					db.Delete(&agent)
-					log.Printf("[sqlmap][heartbeat] deleted stale sqlmap agent id=%d name=%s", agent.ID, agent.Name)
+					log.Printf("[sqlmap][heartbeat] marked stale sqlmap agent offline id=%d name=%s", agent.ID, agent.Name)
 				}
 				continue
 			}
@@ -183,8 +181,7 @@ func checkAWVSStatus(db *gorm.DB) {
 				log.Printf("Failed to get scan status for task %d: %v", task.ID, err)
 				if isServerStale(srv.LastHeartbeatAt) {
 					requeueAWVSServerTasks(db, srv.ID, "awvs_heartbeat_timeout")
-					db.Delete(&srv)
-					log.Printf("[awvs][heartbeat] deleted stale awvs server id=%d name=%s", srv.ID, srv.Name)
+					log.Printf("[awvs][heartbeat] marked stale awvs server offline during status check id=%d name=%s", srv.ID, srv.Name)
 				}
 				continue
 			}
@@ -624,6 +621,7 @@ func sendToSqlmapAgent(task models.Task, domain, vulnID, requestData string, for
 		log.Printf("All sqlmap agents are at capacity")
 		return "", 0, "", "", false, false
 	}
+	ensureSqlmapAgentProxyURL(db, &selectedAgent)
 
 	effectiveUseProxy := selectedAgent.DefaultUseProxy
 	if useProxy != nil {
@@ -1567,6 +1565,19 @@ func bindCloudProxyToSqlmapAgent(db *gorm.DB, agent *models.SqlmapAgent) {
 	}
 	agent.ProxyAgentID = selected.ID
 	agent.ProxyURL = fmt.Sprintf("http://proxy-gateway-%s:18080", sanitizeContainerName(agent.Name))
+}
+
+func ensureSqlmapAgentProxyURL(db *gorm.DB, agent *models.SqlmapAgent) {
+	if agent == nil {
+		return
+	}
+	if strings.TrimSpace(agent.ProxyURL) != "" || agent.ProxyAgentID == 0 {
+		return
+	}
+	agent.ProxyURL = fmt.Sprintf("http://proxy-gateway-%s:18080", sanitizeContainerName(agent.Name))
+	if db != nil && agent.ID != 0 {
+		db.Model(&models.SqlmapAgent{}).Where("id = ?", agent.ID).Update("proxy_url", agent.ProxyURL)
+	}
 }
 
 func sanitizeContainerName(name string) string {
