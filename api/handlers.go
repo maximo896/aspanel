@@ -103,31 +103,39 @@ func testAWVSConnection(baseURL, apiKey string) (map[string]interface{}, error) 
 	return client.TestConnection()
 }
 
+func (api *API) countAWVSBoundRunningTasks(serverID uint) int {
+	var count int64
+	api.DB.Model(&models.Task{}).
+		Where("awvs_server_id = ? AND status IN ?", serverID, []string{"running", "scanning"}).
+		Count(&count)
+	return int(count)
+}
+
 func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]interface{}, error) {
 	info, err := testAWVSConnection(server.URL, server.APIKey)
 	server.LastCheckedAt = time.Now().Unix()
 	if err != nil {
 		server.IsActive = false
-		server.CurrentRunning = 0
 		server.LastError = err.Error()
 		api.DB.Save(server)
+		server.CurrentRunning = api.countAWVSBoundRunningTasks(server.ID)
 		return nil, err
 	}
 
 	server.URL = normalizeBaseURL(server.URL)
 	server.IsActive = true
 	server.LastError = ""
-	client := awvs.NewClient(server.URL, strings.TrimSpace(server.APIKey))
-	if activeCount, err := client.CountActiveScans(); err == nil {
-		server.CurrentRunning = activeCount
-	}
 	api.DB.Save(server)
+	server.CurrentRunning = api.countAWVSBoundRunningTasks(server.ID)
 	return info, nil
 }
 
 func (api *API) GetServers(c *gin.Context) {
 	var servers []models.AWVSServer
 	api.DB.Order("id desc").Find(&servers)
+	for i := range servers {
+		servers[i].CurrentRunning = api.countAWVSBoundRunningTasks(servers[i].ID)
+	}
 	c.JSON(200, servers)
 }
 
