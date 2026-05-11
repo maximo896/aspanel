@@ -129,11 +129,16 @@ func (api *API) GetServers(c *gin.Context) {
 	}
 	resp := make([]awvsServerView, 0, len(servers))
 	for _, server := range servers {
-		count := int64(0)
-		api.DB.Model(&models.Task{}).Where("awvs_server_id = ? AND status IN ?", server.ID, []string{"running", "scanning"}).Count(&count)
+		currentRunning := 0
+		if strings.TrimSpace(server.URL) != "" && strings.TrimSpace(server.APIKey) != "" {
+			client := awvs.NewClient(normalizeBaseURL(server.URL), strings.TrimSpace(server.APIKey))
+			if activeCount, err := client.CountActiveScans(); err == nil {
+				currentRunning = activeCount
+			}
+		}
 		resp = append(resp, awvsServerView{
 			AWVSServer:     server,
-			CurrentRunning: int(count),
+			CurrentRunning: currentRunning,
 		})
 	}
 	c.JSON(200, resp)

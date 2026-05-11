@@ -174,6 +174,34 @@ func (c *Client) GetLatestScanID(targetID string) (string, error) {
 	return "", fmt.Errorf("scan not found")
 }
 
+func (c *Client) CountActiveScans() (int, error) {
+	res, err := c.doReq("GET", "/api/v1/scans?l=1000", nil)
+	if err != nil {
+		return 0, err
+	}
+
+	var data struct {
+		Scans []struct {
+			CurrentSession struct {
+				Status string `json:"status"`
+			} `json:"current_session"`
+		} `json:"scans"`
+	}
+	if err := json.Unmarshal(res, &data); err != nil {
+		return 0, err
+	}
+
+	active := 0
+	for _, scan := range data.Scans {
+		status := strings.ToLower(strings.TrimSpace(scan.CurrentSession.Status))
+		switch status {
+		case "processing", "in_progress", "in progress":
+			active++
+		}
+	}
+	return active, nil
+}
+
 func (c *Client) GetScanStatus(scanID string) (string, error) {
 	res, err := c.doReq("GET", "/api/v1/scans/"+scanID, nil)
 	if err != nil {
