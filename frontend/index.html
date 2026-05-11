@@ -469,11 +469,24 @@
                             <option value="T">{{ t('tech_t') }}</option>
                             <option value="Q">{{ t('tech_q') }}</option>
                         </select>
+                        <input class="form-control form-control-sm w-auto bg-dark border-secondary text-white" style="min-width: 200px;" list="db-options" v-model.trim="selectedActionDb" placeholder="DB">
+                        <datalist id="db-options">
+                            <option v-for="dbName in getActionDbOptions()" :key="'db-opt-' + dbName" :value="dbName">{{ dbName }}</option>
+                        </datalist>
+                        <input class="form-control form-control-sm w-auto bg-dark border-secondary text-white" style="min-width: 200px;" list="table-options" v-model.trim="selectedActionTable" placeholder="Table">
+                        <datalist id="table-options">
+                            <option v-for="tableName in getActionTableOptions()" :key="'tbl-opt-' + tableName" :value="tableName">{{ tableName }}</option>
+                        </datalist>
                         <button class="btn btn-outline-primary btn-sm" :disabled="taskActionBusy" @click="runTaskAction('get_current_db')">{{ t('btn_current_db') }}</button>
                         <button class="btn btn-outline-primary btn-sm" :disabled="taskActionBusy" @click="runTaskAction('get_dbs')">{{ t('btn_databases') }}</button>
-                        <button class="btn btn-outline-primary btn-sm" :disabled="taskActionBusy" @click="runTaskAction('get_tables')">{{ t('btn_tables') }}</button>
-                        <button class="btn btn-outline-primary btn-sm" :disabled="taskActionBusy" @click="runTaskAction('get_columns')">{{ t('btn_columns') }}</button>
-                        <button class="btn btn-outline-success btn-sm" :disabled="taskActionBusy" @click="runTaskAction('dump_table_data', { limit_start: 1, limit_stop: 20 })">{{ t('btn_dump_data') }}</button>
+                        <button class="btn btn-outline-primary btn-sm" :disabled="taskActionBusy || !selectedActionDb" @click="runTaskAction('get_tables', { db: selectedActionDb })">{{ t('btn_tables') }}</button>
+                        <button class="btn btn-outline-primary btn-sm" :disabled="taskActionBusy || !selectedActionDb || !selectedActionTable" @click="runTaskAction('get_columns', { db: selectedActionDb, table: selectedActionTable })">{{ t('btn_columns') }}</button>
+                        <select class="form-select form-select-sm w-auto bg-dark border-secondary text-white" v-model="dumpLimitMode">
+                            <option value="head">Head</option>
+                            <option value="tail">Tail</option>
+                        </select>
+                        <input class="form-control form-control-sm w-auto bg-dark border-secondary text-white" style="max-width: 100px;" type="number" min="1" v-model.number="dumpLimitRows" placeholder="N">
+                        <button class="btn btn-outline-success btn-sm" :disabled="taskActionBusy || !selectedActionDb || !selectedActionTable" @click="runTaskAction('dump_table_data', buildDumpPayload())">{{ t('btn_dump_data') }}</button>
                         <button class="btn btn-outline-danger btn-sm" :disabled="taskActionBusy" @click="runTaskAction('probe_shell')">{{ t('btn_probe_shell') }}</button>
                         <button class="btn btn-outline-warning btn-sm" :disabled="taskActionBusy || !selectedFindingId" @click="retryTaskPush">{{ t('force_retry_push') }}</button>
                     </div>
@@ -503,7 +516,7 @@
                             <div class="tree-box h-100">
                                 <div class="d-flex justify-content-between align-items-center mb-3">
                                     <h6 class="mb-0">{{ t('search') }}</h6>
-                                    <button class="btn btn-sm btn-primary" :disabled="searchBusy || !searchQuery" @click="searchTaskTree">{{ t('search') }}</button>
+                                    <button class="btn btn-sm btn-primary" :disabled="searchBusy || !searchQuery || !selectedActionDb" @click="searchTaskTree">{{ t('search') }}</button>
                                 </div>
                                 <div class="input-group mb-3">
                                     <input class="form-control" v-model="searchQuery" :placeholder="t('search_placeholder')" @keyup.enter="searchTaskTree">
@@ -1073,7 +1086,7 @@
                         <table class="table table-hover align-middle mb-0">
                             <thead><tr><th>ID</th><th>{{ t('instance') }}</th><th>{{ t('region_zone') }}</th><th>{{ t('spec') }}</th><th>{{ t('status') }}</th><th>{{ t('price') }}</th><th>{{ t('heartbeat') }}</th><th>{{ t('failure_reason') }}</th></tr></thead>
                             <tbody>
-                            <tr v-for="item in awvsCloudInstances" :key="'awvs-'+item.ID"><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td>{{ item.spot_price_usd }}</td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td></tr>
+                            <tr v-for="item in awvsCloudInstances" :key="'awvs-'+item.ID"><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td><div class="small">Total: {{ formatUSD(item.spot_price_usd) }}</div><div class="small text-muted">Instance: {{ formatUSD(item.instance_price_usd || item.spot_price_usd) }}</div><div class="small text-muted">Extra: {{ formatUSD(item.extra_price_usd) }}</div><div class="small text-muted">Public IP est: {{ formatUSD(item.public_traffic_price_usd) }}</div></td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td></tr>
                             <tr v-if="awvsCloudInstances.length===0"><td colspan="8" class="text-center muted py-4">{{ t('no_cloud_instances') }}</td></tr>
                             </tbody>
                         </table>
@@ -1090,7 +1103,7 @@
                         <table class="table table-hover align-middle mb-0">
                             <thead><tr><th>ID</th><th>{{ t('instance') }}</th><th>{{ t('region_zone') }}</th><th>{{ t('spec') }}</th><th>{{ t('status') }}</th><th>{{ t('price') }}</th><th>{{ t('heartbeat') }}</th><th>{{ t('failure_reason') }}</th></tr></thead>
                             <tbody>
-                            <tr v-for="item in sqlmapCloudInstances" :key="'sqlmap-'+item.ID"><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td>{{ item.spot_price_usd }}</td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td></tr>
+                            <tr v-for="item in sqlmapCloudInstances" :key="'sqlmap-'+item.ID"><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td><div class="small">Total: {{ formatUSD(item.spot_price_usd) }}</div><div class="small text-muted">Instance: {{ formatUSD(item.instance_price_usd || item.spot_price_usd) }}</div><div class="small text-muted">Extra: {{ formatUSD(item.extra_price_usd) }}</div><div class="small text-muted">Public IP est: {{ formatUSD(item.public_traffic_price_usd) }}</div></td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td></tr>
                             <tr v-if="sqlmapCloudInstances.length===0"><td colspan="8" class="text-center muted py-4">{{ t('no_cloud_instances') }}</td></tr>
                             </tbody>
                         </table>
@@ -1830,6 +1843,10 @@ new Vue({
         searchQuery: '',
         searchResults: [],
         searchBusy: false,
+        selectedActionDb: '',
+        selectedActionTable: '',
+        dumpLimitMode: 'head',
+        dumpLimitRows: 20,
         taskFilter: 'all',
         findingFilter: 'all',
         selectedTech: '',
@@ -2052,6 +2069,16 @@ new Vue({
                 const total = this.findingTotalPages || 1;
                 if (this.findingPage > total) {
                     this.findingPage = total;
+                }
+            },
+            selectedActionDb() {
+                const tableOptions = this.getActionTableOptions();
+                if (!tableOptions.length) {
+                    this.selectedActionTable = '';
+                    return;
+                }
+                if (!this.selectedActionTable || tableOptions.indexOf(this.selectedActionTable) < 0) {
+                    this.selectedActionTable = tableOptions[0];
                 }
             }
         },
@@ -2912,6 +2939,7 @@ new Vue({
             }
             axios.get('/api/findings/' + findingId + '/sqlmap').then(res => {
                 this.taskDetail = res.data.scan || res.data;
+                this.syncActionSelectors();
                 if (!this.requestEditMode) {
                     this.requestDraft = (this.taskDetail && this.taskDetail.request_content) ? this.taskDetail.request_content : '';
                 }
@@ -2920,6 +2948,8 @@ new Vue({
                 }
             }).catch(err => {
                 this.taskDetail = null;
+                this.selectedActionDb = '';
+                this.selectedActionTable = '';
                 if (!silent) {
                     this.taskDetailError = this.extractError(err);
                 }
@@ -2953,6 +2983,12 @@ new Vue({
             this.taskActionBusy = true;
             this.taskActionMessage = '';
             const payload = Object.assign({ action: action }, extraPayload || {});
+            if (!payload.db && this.selectedActionDb) {
+                payload.db = this.selectedActionDb;
+            }
+            if (!payload.table && this.selectedActionTable) {
+                payload.table = this.selectedActionTable;
+            }
             if (this.selectedTech) {
                 payload.technique = this.selectedTech;
             }
@@ -2967,8 +3003,13 @@ new Vue({
             });
         },
         searchTaskTree() {
-            if (!this.selectedFindingId || !this.searchQuery) return;
+            if (!this.selectedFindingId || !this.searchQuery || !this.selectedActionDb) return;
             this.searchBusy = true;
+            this.runTaskAction('search_column', {
+                db: this.selectedActionDb,
+                table: this.selectedActionTable || '',
+                column: this.searchQuery
+            });
             axios.get('/api/findings/' + this.selectedFindingId + '/sqlmap/search?q=' + encodeURIComponent(this.searchQuery)).then(res => {
                 this.searchResults = res.data.results || [];
             }).catch(err => {
@@ -3058,6 +3099,71 @@ new Vue({
         },
         getTreeDatabases() {
             return this.getTaskDetailValue(this.taskDetail, ['tree', 'databases']) || [];
+        },
+        getActionDbOptions() {
+            return this.getTreeDatabases().map(item => item.name).filter(Boolean);
+        },
+        getActionTableOptions() {
+            const dbs = this.getTreeDatabases();
+            if (this.selectedActionDb) {
+                const match = dbs.find(item => item.name === this.selectedActionDb);
+                if (!match || !Array.isArray(match.tables)) return [];
+                return match.tables.map(item => item.name).filter(Boolean);
+            }
+            const out = [];
+            dbs.forEach(db => {
+                (db.tables || []).forEach(tbl => {
+                    if (tbl && tbl.name) out.push(tbl.name);
+                });
+            });
+            return Array.from(new Set(out));
+        },
+        syncActionSelectors() {
+            const dbOptions = this.getActionDbOptions();
+            if (!dbOptions.length) {
+                this.selectedActionDb = '';
+                this.selectedActionTable = '';
+                return;
+            }
+            if (!this.selectedActionDb || dbOptions.indexOf(this.selectedActionDb) < 0) {
+                this.selectedActionDb = dbOptions[0];
+            }
+            const tableOptions = this.getActionTableOptions();
+            if (!tableOptions.length) {
+                this.selectedActionTable = '';
+                return;
+            }
+            if (!this.selectedActionTable || tableOptions.indexOf(this.selectedActionTable) < 0) {
+                this.selectedActionTable = tableOptions[0];
+            }
+        },
+        getSelectedTableEstimatedCount() {
+            const countRaw = this.getTaskDetailValue(this.taskDetail, ['content', 'count']);
+            if (!countRaw || typeof countRaw !== 'object') return 0;
+            const dbMap = countRaw[this.selectedActionDb];
+            if (!dbMap || typeof dbMap !== 'object') return 0;
+            const value = Number(dbMap[this.selectedActionTable]);
+            return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+        },
+        buildDumpPayload() {
+            const rows = Math.max(1, Number(this.dumpLimitRows) || 20);
+            if (this.dumpLimitMode === 'tail') {
+                const total = this.getSelectedTableEstimatedCount();
+                if (total > rows) {
+                    return {
+                        db: this.selectedActionDb,
+                        table: this.selectedActionTable,
+                        limit_start: total - rows + 1,
+                        limit_stop: total
+                    };
+                }
+            }
+            return {
+                db: this.selectedActionDb,
+                table: this.selectedActionTable,
+                limit_start: 1,
+                limit_stop: rows
+            };
         },
         resetTreeExpandState() {
             this.treeRootExpanded = false;

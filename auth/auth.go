@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"net/http"
@@ -23,8 +24,9 @@ import (
 const (
 	defaultAdminUsername = "admin"
 	defaultAdminPassword = "admin123456"
-	sessionCookieName    = "panel_session"
+	sessionCookieName    = "panel_session" // legacy fallback
 	sessionTTL           = 7 * 24 * time.Hour
+	sessionRefreshWindow = 24 * time.Hour
 )
 
 func EnsureDefaultAdminCredential(db *gorm.DB) error {
@@ -106,7 +108,7 @@ func SessionAuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		rawToken, err := c.Cookie(sessionCookieName)
+		rawToken, err := getSessionTokenFromRequest(c)
 		if err != nil || strings.TrimSpace(rawToken) == "" {
 			abortUnauthorized(c)
 			return
@@ -115,7 +117,11 @@ func SessionAuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 		tokenHash := hashToken(rawToken)
 		var sess models.AdminSession
 		if err := db.Where("token_hash = ?", tokenHash).First(&sess).Error; err != nil {
-			abortUnauthorized(c)
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				abortUnauthorized(c)
+				return
+			}
+			abortAuthStorageError(c)
 			return
 		}
 		if sess.ExpiresAt > 0 && time.Now().Unix() >= sess.ExpiresAt {
@@ -131,6 +137,10 @@ func SessionAuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 
 func abortUnauthorized(c *gin.Context) {
 	c.AbortWithStatusJSON(401, gin.H{"error": "authentication required"})
+}
+
+func abortAuthStorageError(c *gin.Context) {
+	c.AbortWithStatusJSON(503, gin.H{"error": "auth storage unavailable"})
 }
 
 func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
@@ -179,7 +189,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
 	})
 
 	r.POST("/api/auth/logout", func(c *gin.Context) {
-		rawToken, _ := c.Cookie(sessionCookieName)
+		rawToken, _ := getSessionTokenFromRequest(c)
 		if strings.TrimSpace(rawToken) != "" {
 			db.Where("token_hash = ?", hashToken(rawToken)).Delete(&models.AdminSession{})
 		}
@@ -188,7 +198,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
 	})
 
 	r.GET("/api/auth/me", func(c *gin.Context) {
-		rawToken, err := c.Cookie(sessionCookieName)
+		rawToken, err := getSessionTokenFromRequest(c)
 		if err != nil || strings.TrimSpace(rawToken) == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 			return
@@ -196,8 +206,12 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
 		tokenHash := hashToken(rawToken)
 		var sess models.AdminSession
 		if err := db.Where("token_hash = ?", tokenHash).First(&sess).Error; err != nil {
-			clearSessionCookie(c)
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				clearSessionCookie(c)
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+				return
+			}
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "auth storage unavailable"})
 			return
 		}
 		if sess.ExpiresAt > 0 && time.Now().Unix() >= sess.ExpiresAt {
@@ -231,11 +245,13 @@ func hashToken(token string) string {
 
 func setSessionCookie(c *gin.Context, token string) {
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(sessionCookieName, token, int(sessionTTL.Seconds()), "/", "", false, true)
+	c.SetCookie(sessionCookieNameByRequest(c), token, int(sessionTTL.Seconds()), "/", "", false, true)
 }
 
 func clearSessionCookie(c *gin.Context) {
 	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(sessionCookieNameByRequest(c), "", -1, "/", "", false, true)
+	// Clear legacy cookie key as well.
 	c.SetCookie(sessionCookieName, "", -1, "/", "", false, true)
 }
 
@@ -243,10 +259,34 @@ func extendSession(db *gorm.DB, sess *models.AdminSession) {
 	if sess == nil {
 		return
 	}
-	newExpires := time.Now().Add(sessionTTL).Unix()
+	now := time.Now()
+	remaining := time.Unix(sess.ExpiresAt, 0).Sub(now)
+	if sess.ExpiresAt > 0 && remaining > sessionRefreshWindow {
+		return
+	}
+	newExpires := now.Add(sessionTTL).Unix()
 	if newExpires == sess.ExpiresAt {
 		return
 	}
 	sess.ExpiresAt = newExpires
-	db.Model(sess).Update("expires_at", newExpires)
+	_ = db.Model(sess).Update("expires_at", newExpires).Error
+}
+
+func sessionCookieNameByRequest(c *gin.Context) string {
+	host := strings.TrimSpace(c.Request.Host)
+	if host == "" {
+		return sessionCookieName
+	}
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(strings.ToLower(host)))
+	return fmt.Sprintf("%s_%08x", sessionCookieName, hasher.Sum32())
+}
+
+func getSessionTokenFromRequest(c *gin.Context) (string, error) {
+	// 1) Prefer host-scoped cookie name to avoid cross-instance overwrite.
+	if token, err := c.Cookie(sessionCookieNameByRequest(c)); err == nil && strings.TrimSpace(token) != "" {
+		return token, nil
+	}
+	// 2) Backward compatibility for legacy fixed-name cookie.
+	return c.Cookie(sessionCookieName)
 }

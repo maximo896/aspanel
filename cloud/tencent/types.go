@@ -19,8 +19,24 @@ type SpotOffer struct {
 	Zone         string
 	InstanceType string
 	PriceUSD     float64
-	CPU          int
-	MemoryGB     int
+	// Base instance spot price from zone offer.
+	InstancePriceUSD float64
+	// Extra configured price beyond base instance price (for example system disk).
+	ExtraPriceUSD float64
+	// Estimated public traffic cost.
+	PublicTrafficPriceUSD float64
+	// Total configured hourly price.
+	ConfigPriceUSD float64
+	CPU            int
+	MemoryGB       int
+}
+
+type SpotPriceInquiryRequest struct {
+	Region       string
+	Zone         string
+	InstanceType string
+	ImageID      string
+	MaxPriceUSD  float64
 }
 
 type LaunchRequest struct {

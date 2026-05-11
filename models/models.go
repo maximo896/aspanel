@@ -144,25 +144,29 @@ type CloudSettings struct {
 
 type CloudInstance struct {
 	gorm.Model
-	Provider         string  `json:"provider" gorm:"default:'tencent'"`
-	InstanceID       string  `json:"instance_id" gorm:"uniqueIndex"`
-	Region           string  `json:"region"`
-	Zone             string  `json:"zone"`
-	InstanceType     string  `json:"instance_type"`
-	CPU              int     `json:"cpu"`
-	MemoryGB         int     `json:"memory_gb"`
-	Status           string  `json:"status"`
-	FailureReason    string  `json:"failure_reason"`
-	SpotPriceUSD     float64 `json:"spot_price_usd"`
-	LaunchedAt       int64   `json:"launched_at"`
-	ExpiresAt        int64   `json:"expires_at"`
-	LastHeartbeatAt  int64   `json:"last_heartbeat_at"`
-	AWVSServerID     uint    `json:"awvs_server_id"`
-	SqlmapAgentID    uint    `json:"sqlmap_agent_id"`
-	AWVSProtocolSeen bool    `json:"awvs_protocol_seen"`
-	SQLProtocolSeen  bool    `json:"sql_protocol_seen"`
-	InteractToken    string  `json:"interact_token" gorm:"index"`
-	Workload         string  `json:"workload" gorm:"default:'mixed'"`
+	Provider              string  `json:"provider" gorm:"default:'tencent'"`
+	InstanceID            string  `json:"instance_id" gorm:"uniqueIndex"`
+	Region                string  `json:"region"`
+	Zone                  string  `json:"zone"`
+	InstanceType          string  `json:"instance_type"`
+	CPU                   int     `json:"cpu"`
+	MemoryGB              int     `json:"memory_gb"`
+	Status                string  `json:"status"`
+	FailureReason         string  `json:"failure_reason"`
+	SpotPriceUSD          float64 `json:"spot_price_usd"`
+	InstancePriceUSD      float64 `json:"instance_price_usd"`
+	ExtraPriceUSD         float64 `json:"extra_price_usd"`
+	PublicTrafficPriceUSD float64 `json:"public_traffic_price_usd"`
+	ConfigPriceUSD        float64 `json:"config_price_usd"`
+	LaunchedAt            int64   `json:"launched_at"`
+	ExpiresAt             int64   `json:"expires_at"`
+	LastHeartbeatAt       int64   `json:"last_heartbeat_at"`
+	AWVSServerID          uint    `json:"awvs_server_id"`
+	SqlmapAgentID         uint    `json:"sqlmap_agent_id"`
+	AWVSProtocolSeen      bool    `json:"awvs_protocol_seen"`
+	SQLProtocolSeen       bool    `json:"sql_protocol_seen"`
+	InteractToken         string  `json:"interact_token" gorm:"index"`
+	Workload              string  `json:"workload" gorm:"default:'mixed'"`
 }
 
 type AdminCredential struct {

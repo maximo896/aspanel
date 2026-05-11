@@ -854,6 +854,26 @@ func (api *API) GetTaskFindings(c *gin.Context) {
 	c.JSON(200, gin.H{"task": task, "findings": findings})
 }
 
+func writeSqlmapUpstreamResponse(c *gin.Context, statusCode int, body []byte, action string) {
+	if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+		c.JSON(400, gin.H{
+			"error":  fmt.Sprintf("sqlmap agent auth failed while %s", action),
+			"status": statusCode,
+			"detail": string(body),
+		})
+		return
+	}
+	if statusCode >= 300 {
+		c.JSON(400, gin.H{
+			"error":  fmt.Sprintf("sqlmap agent request failed while %s", action),
+			"status": statusCode,
+			"detail": string(body),
+		})
+		return
+	}
+	c.Data(statusCode, "application/json", body)
+}
+
 func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 	finding, err := api.getFinding(c)
 	if err != nil {
@@ -882,13 +902,13 @@ func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		c.Data(resp.StatusCode, "application/json", body)
+		writeSqlmapUpstreamResponse(c, resp.StatusCode, body, "loading finding detail")
 		return
 	}
 
 	var scan map[string]interface{}
 	if err := json.Unmarshal(body, &scan); err != nil {
-		c.Data(resp.StatusCode, "application/json", body)
+		writeSqlmapUpstreamResponse(c, resp.StatusCode, body, "parsing finding detail")
 		return
 	}
 
@@ -937,7 +957,7 @@ func (api *API) RunFindingSqlmapAction(c *gin.Context) {
 		finding.SqlmapStatus = "queued"
 		api.DB.Save(finding)
 	}
-	c.Data(resp.StatusCode, "application/json", respBody)
+	writeSqlmapUpstreamResponse(c, resp.StatusCode, respBody, "running task action")
 }
 
 func (api *API) SearchFindingSqlmap(c *gin.Context) {
@@ -968,7 +988,7 @@ func (api *API) SearchFindingSqlmap(c *gin.Context) {
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	c.Data(resp.StatusCode, "application/json", body)
+	writeSqlmapUpstreamResponse(c, resp.StatusCode, body, "searching finding tree")
 }
 
 func (api *API) UpdateFindingSqlmapRequest(c *gin.Context) {
@@ -1010,7 +1030,7 @@ func (api *API) UpdateFindingSqlmapRequest(c *gin.Context) {
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	c.Data(resp.StatusCode, "application/json", respBody)
+	writeSqlmapUpstreamResponse(c, resp.StatusCode, respBody, "updating request content")
 }
 
 func (api *API) RetryTaskSqlmapPush(c *gin.Context) {

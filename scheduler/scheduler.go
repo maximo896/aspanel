@@ -29,6 +29,7 @@ const (
 	bootstrapCallbackTimeoutSec = 480
 	agentHeartbeatIntervalSec   = 60
 	agentHeartbeatTimeoutSec    = 1200
+	estimatedPublicTrafficUSD   = 0.02
 )
 
 func StartScheduler(db *gorm.DB) {
@@ -960,6 +961,57 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 		}
 		filtered = append(filtered, offer)
 	}
+	// Enrich offer price with configured runtime price so budgeting includes disk/bandwidth.
+	imageCache := map[string]string{}
+	for i := range filtered {
+		region := filtered[i].Region
+		imageID := ""
+		if cached, ok := imageCache[region]; ok {
+			imageID = cached
+		} else {
+			autoImage, err := tClient.ResolveUbuntuImageID(region)
+			if err != nil {
+				log.Printf("[cloud][autoscale][%s] inquiry skip resolve image failed region=%s err=%v", workload, region, err)
+				continue
+			}
+			imageID = autoImage
+			imageCache[region] = imageID
+		}
+		baseInstancePrice := filtered[i].PriceUSD
+		trafficEstimate := estimatedPublicTrafficUSD
+		instancePrice, _, totalPrice, err := tClient.InquirySpotConfiguredPrice(tencent.SpotPriceInquiryRequest{
+			Region:       filtered[i].Region,
+			Zone:         filtered[i].Zone,
+			InstanceType: filtered[i].InstanceType,
+			ImageID:      imageID,
+			MaxPriceUSD:  maxPrice,
+		})
+		if err != nil || totalPrice <= 0 {
+			if err != nil {
+				log.Printf("[cloud][autoscale][%s] inquiry configured price failed region=%s zone=%s type=%s err=%v", workload, filtered[i].Region, filtered[i].Zone, filtered[i].InstanceType, err)
+			}
+			configTotal := baseInstancePrice + trafficEstimate
+			filtered[i].InstancePriceUSD = baseInstancePrice
+			filtered[i].ExtraPriceUSD = trafficEstimate
+			filtered[i].PublicTrafficPriceUSD = trafficEstimate
+			filtered[i].ConfigPriceUSD = configTotal
+			filtered[i].PriceUSD = configTotal
+			continue
+		}
+		if instancePrice <= 0 {
+			instancePrice = baseInstancePrice
+		}
+		configTotal := totalPrice + trafficEstimate
+		extra := configTotal - baseInstancePrice
+		if extra < 0 {
+			extra = 0
+		}
+		filtered[i].InstancePriceUSD = instancePrice
+		filtered[i].ExtraPriceUSD = extra
+		filtered[i].PublicTrafficPriceUSD = trafficEstimate
+		filtered[i].ConfigPriceUSD = configTotal
+		filtered[i].PriceUSD = configTotal
+	}
 	offers = tencent.FilterAndSortOffers(filtered, maxPrice)
 	if len(offers) == 0 {
 		log.Printf("[cloud][autoscale][%s] no offer under thresholds", workload)
@@ -986,7 +1038,6 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 	}
 	log.Printf("[cloud][autoscale][%s] capacity decision current_hourly_cost=%.4f remaining_budget=%.4f planned_create=%d", workload, currentHourlyCost, remainingBudget, len(plan))
 
-	imageCache := map[string]string{}
 	networkCache := map[string][2]string{}
 	securityCache := map[string]string{}
 	awvsConcurrency := maxInt(1, settings.AWVSMaxConcurrency)
@@ -1079,19 +1130,23 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 			continue
 		}
 		db.Create(&models.CloudInstance{
-			Provider:      "tencent",
-			InstanceID:    ids[0],
-			Region:        offer.Region,
-			Zone:          offer.Zone,
-			InstanceType:  offer.InstanceType,
-			CPU:           offer.CPU,
-			MemoryGB:      offer.MemoryGB,
-			Status:        "creating",
-			FailureReason: "",
-			SpotPriceUSD:  offer.PriceUSD,
-			LaunchedAt:    time.Now().Unix(),
-			InteractToken: token,
-			Workload:      workload,
+			Provider:              "tencent",
+			InstanceID:            ids[0],
+			Region:                offer.Region,
+			Zone:                  offer.Zone,
+			InstanceType:          offer.InstanceType,
+			CPU:                   offer.CPU,
+			MemoryGB:              offer.MemoryGB,
+			Status:                "creating",
+			FailureReason:         "",
+			SpotPriceUSD:          offer.PriceUSD,
+			InstancePriceUSD:      offer.InstancePriceUSD,
+			ExtraPriceUSD:         offer.ExtraPriceUSD,
+			PublicTrafficPriceUSD: offer.PublicTrafficPriceUSD,
+			ConfigPriceUSD:        offer.ConfigPriceUSD,
+			LaunchedAt:            time.Now().Unix(),
+			InteractToken:         token,
+			Workload:              workload,
 			ExpiresAt: func() int64 {
 				if budgetHours <= 0 {
 					return 0

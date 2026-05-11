@@ -149,15 +149,72 @@ func (c *Client) ListSpotOffers(region, instanceType string) ([]SpotOffer, error
 			continue
 		}
 		offers = append(offers, SpotOffer{
-			Region:       region,
-			Zone:         zone,
-			InstanceType: it,
-			PriceUSD:     priceCNY,
-			CPU:          cpu,
-			MemoryGB:     mem,
+			Region:           region,
+			Zone:             zone,
+			InstanceType:     it,
+			PriceUSD:         priceCNY,
+			InstancePriceUSD: priceCNY,
+			ExtraPriceUSD:    0,
+			ConfigPriceUSD:   priceCNY,
+			CPU:              cpu,
+			MemoryGB:         mem,
 		})
 	}
 	return offers, nil
+}
+
+func pickItemUnitPrice(price *cvm.ItemPrice) float64 {
+	if price == nil {
+		return 0
+	}
+	if price.UnitPriceDiscount != nil && *price.UnitPriceDiscount > 0 {
+		return *price.UnitPriceDiscount
+	}
+	if price.UnitPrice != nil && *price.UnitPrice > 0 {
+		return *price.UnitPrice
+	}
+	return 0
+}
+
+func (c *Client) InquirySpotConfiguredPrice(req SpotPriceInquiryRequest) (instancePriceUSD, bandwidthPriceUSD, totalPriceUSD float64, err error) {
+	client, err := c.cvmClient(req.Region)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	inquiryReq := cvm.NewInquiryPriceRunInstancesRequest()
+	inquiryReq.Placement = &cvm.Placement{
+		Zone: common.StringPtr(req.Zone),
+	}
+	inquiryReq.ImageId = common.StringPtr(req.ImageID)
+	inquiryReq.InstanceChargeType = common.StringPtr("SPOTPAID")
+	inquiryReq.InstanceType = common.StringPtr(req.InstanceType)
+	inquiryReq.InstanceCount = common.Int64Ptr(1)
+	inquiryReq.InternetAccessible = &cvm.InternetAccessible{
+		PublicIpAssigned:        common.BoolPtr(true),
+		InternetChargeType:      common.StringPtr("TRAFFIC_POSTPAID_BY_HOUR"),
+		InternetMaxBandwidthOut: common.Int64Ptr(100),
+	}
+	inquiryReq.InstanceMarketOptions = &cvm.InstanceMarketOptionsRequest{
+		MarketType: common.StringPtr("spot"),
+		SpotOptions: &cvm.SpotMarketOptions{
+			MaxPrice:         common.StringPtr(fmt.Sprintf("%.4f", req.MaxPriceUSD)),
+			SpotInstanceType: common.StringPtr("one-time"),
+		},
+	}
+	resp, err := client.InquiryPriceRunInstances(inquiryReq)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if resp == nil || resp.Response == nil || resp.Response.Price == nil {
+		return 0, 0, 0, fmt.Errorf("empty inquiry price response")
+	}
+	instancePriceUSD = pickItemUnitPrice(resp.Response.Price.InstancePrice)
+	bandwidthPriceUSD = pickItemUnitPrice(resp.Response.Price.BandwidthPrice)
+	totalPriceUSD = instancePriceUSD + bandwidthPriceUSD
+	if totalPriceUSD <= 0 {
+		totalPriceUSD = instancePriceUSD
+	}
+	return instancePriceUSD, bandwidthPriceUSD, totalPriceUSD, nil
 }
 
 func (c *Client) RunSpotInstances(req LaunchRequest) ([]string, error) {
