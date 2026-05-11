@@ -108,6 +108,7 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 	server.LastCheckedAt = time.Now().Unix()
 	if err != nil {
 		server.IsActive = false
+		server.CurrentRunning = 0
 		server.LastError = err.Error()
 		api.DB.Save(server)
 		return nil, err
@@ -116,6 +117,10 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 	server.URL = normalizeBaseURL(server.URL)
 	server.IsActive = true
 	server.LastError = ""
+	client := awvs.NewClient(server.URL, strings.TrimSpace(server.APIKey))
+	if activeCount, err := client.CountActiveScans(); err == nil {
+		server.CurrentRunning = activeCount
+	}
 	api.DB.Save(server)
 	return info, nil
 }
@@ -123,25 +128,7 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 func (api *API) GetServers(c *gin.Context) {
 	var servers []models.AWVSServer
 	api.DB.Order("id desc").Find(&servers)
-	type awvsServerView struct {
-		models.AWVSServer
-		CurrentRunning int `json:"current_running"`
-	}
-	resp := make([]awvsServerView, 0, len(servers))
-	for _, server := range servers {
-		currentRunning := 0
-		if strings.TrimSpace(server.URL) != "" && strings.TrimSpace(server.APIKey) != "" {
-			client := awvs.NewClient(normalizeBaseURL(server.URL), strings.TrimSpace(server.APIKey))
-			if activeCount, err := client.CountActiveScans(); err == nil {
-				currentRunning = activeCount
-			}
-		}
-		resp = append(resp, awvsServerView{
-			AWVSServer:     server,
-			CurrentRunning: currentRunning,
-		})
-	}
-	c.JSON(200, resp)
+	c.JSON(200, servers)
 }
 
 func (api *API) AddServer(c *gin.Context) {

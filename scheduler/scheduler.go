@@ -60,6 +60,7 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 			server.LastCheckedAt = time.Now().Unix()
 			if err != nil {
 				server.IsActive = false
+				server.CurrentRunning = 0
 				server.LastError = err.Error()
 				db.Save(&server)
 				if isServerStale(server.LastHeartbeatAt) {
@@ -72,6 +73,9 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 			server.IsActive = true
 			server.LastHeartbeatAt = time.Now().Unix()
 			server.LastError = ""
+			if activeCount, err := client.CountActiveScans(); err == nil {
+				server.CurrentRunning = activeCount
+			}
 			db.Save(&server)
 		}
 	}

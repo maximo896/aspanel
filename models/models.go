@@ -12,6 +12,7 @@ type AWVSServer struct {
 	AWVSUsername    string `json:"awvs_username"`
 	AWVSPassword    string `json:"awvs_password"`
 	MaxConcurrency  int    `json:"max_concurrency"`
+	CurrentRunning  int    `json:"current_running"`
 	IsActive        bool   `json:"is_active" gorm:"default:true"`
 	LastCheckedAt   int64  `json:"last_checked_at"`
 	LastHeartbeatAt int64  `json:"last_heartbeat_at"`
