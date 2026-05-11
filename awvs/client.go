@@ -1,0 +1,219 @@
+package awvs
+
+import (
+	"bytes"
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"net/http"
+	"strings"
+	"time"
+)
+
+const defaultSQLInjectionProfileID = "11111111-1111-1111-1111-111111111113"
+
+type Client struct {
+	BaseURL string
+	APIKey  string
+	HTTP    *http.Client
+}
+
+func NewClient(baseURL, apiKey string) *Client {
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		Proxy:           nil,
+	}
+	return &Client{
+		BaseURL: strings.TrimRight(baseURL, "/"),
+		APIKey:  apiKey,
+		HTTP:    &http.Client{Transport: tr, Timeout: 10 * time.Second},
+	}
+}
+
+func (c *Client) TestConnection() (map[string]interface{}, error) {
+	res, err := c.doReq("GET", "/api/v1/me", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var data map[string]interface{}
+	if len(res) == 0 {
+		return map[string]interface{}{}, nil
+	}
+	if err := json.Unmarshal(res, &data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func (c *Client) doReq(method, path string, body interface{}) ([]byte, error) {
+	var reqBody []byte
+	if body != nil {
+		reqBody, _ = json.Marshal(body)
+	}
+
+	req, err := http.NewRequest(method, c.BaseURL+path, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("X-Auth", c.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("API error: %d", resp.StatusCode)
+	}
+
+	return ioutil.ReadAll(resp.Body)
+}
+
+func (c *Client) CreateTarget(url string) (string, error) {
+	body := map[string]interface{}{
+		"address":     url,
+		"description": "added by sqlmap-panel",
+		"type":        "default",
+		"criticality": 10,
+	}
+
+	res, err := c.doReq("POST", "/api/v1/targets", body)
+	if err != nil {
+		return "", err
+	}
+
+	var data struct {
+		TargetID string `json:"target_id"`
+	}
+	json.Unmarshal(res, &data)
+	return data.TargetID, nil
+}
+
+func (c *Client) StartScan(targetID string) (string, error) {
+	profileID, err := c.getSQLInjectionProfileID()
+	if err != nil {
+		return "", err
+	}
+
+	body := map[string]interface{}{
+		"target_id":  targetID,
+		"profile_id": profileID,
+		"schedule": map[string]interface{}{
+			"disable":        false,
+			"start_date":     nil,
+			"time_sensitive": false,
+		},
+	}
+
+	_, err = c.doReq("POST", "/api/v1/scans", body)
+	if err != nil {
+		return "", err
+	}
+
+	// response could be 201 Created and a header Location, or returns json
+	// Usually returns JSON with profile_id, target_id, etc. Let's get scan_id.
+	// Actually, AWVS returns an empty body sometimes or a JSON with scan ID.
+	// AWVS 13+ returns empty body and Location header for scan creation.
+	// Let's just fetch scans for this target to get the latest scan ID.
+	return c.GetLatestScanID(targetID)
+}
+
+func (c *Client) getSQLInjectionProfileID() (string, error) {
+	res, err := c.doReq("GET", "/api/v1/scanning_profiles", nil)
+	if err != nil {
+		return defaultSQLInjectionProfileID, nil
+	}
+
+	var data struct {
+		ScanningProfiles []struct {
+			Name      string `json:"name"`
+			ProfileID string `json:"profile_id"`
+		} `json:"scanning_profiles"`
+	}
+
+	if err := json.Unmarshal(res, &data); err != nil {
+		return "", err
+	}
+
+	for _, profile := range data.ScanningProfiles {
+		if strings.EqualFold(strings.TrimSpace(profile.Name), "SQL Injection") && profile.ProfileID != "" {
+			return profile.ProfileID, nil
+		}
+	}
+
+	for _, profile := range data.ScanningProfiles {
+		name := strings.ToLower(strings.TrimSpace(profile.Name))
+		if strings.Contains(name, "sql") && strings.Contains(name, "inject") && profile.ProfileID != "" {
+			return profile.ProfileID, nil
+		}
+	}
+
+	return defaultSQLInjectionProfileID, nil
+}
+
+func (c *Client) GetLatestScanID(targetID string) (string, error) {
+	res, err := c.doReq("GET", fmt.Sprintf("/api/v1/scans?q=target_id:%s", targetID), nil)
+	if err != nil {
+		return "", err
+	}
+
+	var data struct {
+		Scans []struct {
+			ScanID string `json:"scan_id"`
+		} `json:"scans"`
+	}
+	json.Unmarshal(res, &data)
+	if len(data.Scans) > 0 {
+		return data.Scans[0].ScanID, nil
+	}
+	return "", fmt.Errorf("scan not found")
+}
+
+func (c *Client) GetScanStatus(scanID string) (string, error) {
+	res, err := c.doReq("GET", "/api/v1/scans/"+scanID, nil)
+	if err != nil {
+		return "", err
+	}
+
+	var data struct {
+		CurrentSession struct {
+			Status string `json:"status"`
+		} `json:"current_session"`
+	}
+	json.Unmarshal(res, &data)
+	return data.CurrentSession.Status, nil
+}
+
+func (c *Client) GetVulnerabilities(targetID string) ([]map[string]interface{}, error) {
+	res, err := c.doReq("GET", "/api/v1/vulnerabilities?q=status:!ignored;status:!fixed;target_id:"+targetID, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var data struct {
+		Vulnerabilities []map[string]interface{} `json:"vulnerabilities"`
+	}
+	json.Unmarshal(res, &data)
+	return data.Vulnerabilities, nil
+}
+
+func (c *Client) GetVulnerabilityDetails(vulnID string) (map[string]interface{}, error) {
+	res, err := c.doReq("GET", "/api/v1/vulnerabilities/"+vulnID, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var data map[string]interface{}
+	json.Unmarshal(res, &data)
+	return data, nil
+}
+
+func (c *Client) DeleteTarget(targetID string) error {
+	_, err := c.doReq("DELETE", "/api/v1/targets/"+targetID, nil)
+	return err
+}

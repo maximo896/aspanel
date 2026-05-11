@@ -1,0 +1,2888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AWVS Sqlmap Panel</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base: #09090b;
+            --bg-card: #18181b;
+            --bg-card-hover: #27272a;
+            --border-subtle: #27272a;
+            --border-focus: #3f3f46;
+            --text-main: #f4f4f5;
+            --text-muted: #a1a1aa;
+            --accent-blue: #3b82f6;
+            --accent-blue-hover: #2563eb;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-yellow: #f59e0b;
+            --accent-purple: #8b5cf6;
+        }
+        body { 
+            background: var(--bg-base); 
+            color: var(--text-main); 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        h2 { font-weight: 700; letter-spacing: -0.02em; margin-bottom: 1.5rem; }
+        h6 { font-weight: 600; letter-spacing: -0.01em; color: #e4e4e7; }
+        
+        .card { 
+            background: var(--bg-card); 
+            border: 1px solid var(--border-subtle); 
+            margin-bottom: 24px; 
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            overflow: hidden;
+        }
+        .card-header { 
+            background: rgba(255,255,255,0.02); 
+            border-bottom: 1px solid var(--border-subtle); 
+            padding: 16px 20px;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+        .card-body { padding: 20px; }
+        
+        .form-control, .form-select { 
+            background: var(--bg-base); 
+            border: 1px solid var(--border-subtle); 
+            color: var(--text-main); 
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+        }
+        .form-control:focus, .form-select:focus { 
+            background: var(--bg-base); 
+            color: var(--text-main); 
+            border-color: var(--accent-blue); 
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2); 
+        }
+        .form-control::placeholder { color: #52525b; }
+        .form-control:disabled, .form-select:disabled {
+            background: var(--bg-base);
+            color: #a1a1aa;
+            border-color: var(--border-subtle);
+            opacity: 1;
+            -webkit-text-fill-color: #a1a1aa;
+        }
+        
+        .btn {
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        .btn-sm { padding: 6px 12px; font-size: 0.85rem; }
+        
+        .btn-primary { background: var(--accent-blue); border-color: var(--accent-blue); }
+        .btn-primary:hover { background: var(--accent-blue-hover); border-color: var(--accent-blue-hover); }
+        .btn-outline-primary { color: var(--accent-blue); border-color: var(--border-focus); }
+        .btn-outline-primary:hover { background: rgba(59, 130, 246, 0.1); border-color: var(--accent-blue); color: var(--accent-blue); }
+        
+        .btn-outline-success { color: var(--accent-green); border-color: var(--border-focus); }
+        .btn-outline-success:hover { background: rgba(16, 185, 129, 0.1); border-color: var(--accent-green); color: var(--accent-green); }
+
+        .btn-outline-danger { color: var(--accent-red); border-color: var(--border-focus); }
+        .btn-outline-danger:hover { background: rgba(239, 68, 68, 0.1); border-color: var(--accent-red); color: var(--accent-red); }
+
+        .btn-outline-secondary { color: var(--text-muted); border-color: var(--border-focus); }
+        .btn-outline-secondary:hover { background: var(--bg-card-hover); color: var(--text-main); border-color: var(--text-muted); }
+        
+        .table { color: var(--text-main); margin-bottom: 0; font-size: 0.9rem; }
+        .table th { border-bottom: 1px solid var(--border-subtle); font-weight: 600; color: var(--text-muted); text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; padding: 12px 16px; }
+        .table td { border-bottom: 1px solid var(--border-subtle); padding: 12px 16px; vertical-align: middle; }
+        .table-hover tbody tr:hover td { background: rgba(255,255,255,0.03); color: var(--text-main); }
+        
+        .nav-tabs { border-bottom: 1px solid var(--border-subtle); gap: 8px; }
+        .nav-tabs .nav-link { color: var(--text-muted); border: none; border-radius: 8px 8px 0 0; padding: 10px 16px; font-weight: 500; transition: all 0.2s; }
+        .nav-tabs .nav-link:hover { color: var(--text-main); background: rgba(255,255,255,0.02); }
+        .nav-tabs .nav-link.active { color: var(--accent-blue); background: var(--bg-card); border-bottom: 2px solid var(--accent-blue); }
+        
+        .install-box, .code-box, .log-box { 
+            background: var(--bg-base); 
+            border: 1px solid var(--border-subtle); 
+            border-radius: 8px; 
+            padding: 16px; 
+            font-family: 'JetBrains Mono', 'Fira Code', monospace; 
+            font-size: 0.85rem;
+            line-height: 1.5;
+            color: #d4d4d8;
+        }
+        .log-box { max-height: 320px; overflow-y: auto; white-space: pre-wrap; }
+        
+        .summary-box { 
+            background: rgba(255,255,255,0.02); 
+            border: 1px solid var(--border-subtle); 
+            border-radius: 10px; 
+            padding: 16px; 
+            height: 100%; 
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .summary-title { color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 8px; }
+        .summary-value { font-size: 1.25rem; font-weight: 600; color: var(--text-main); }
+        
+        .tree-box { 
+            background: rgba(255,255,255,0.02); 
+            border: 1px solid var(--border-subtle); 
+            border-radius: 10px; 
+            padding: 20px; 
+        }
+        
+        .selected-row td { background: rgba(59, 130, 246, 0.1) !important; border-left: 2px solid var(--accent-blue); }
+        .muted { color: var(--text-muted); }
+        
+        .badge { font-weight: 600; padding: 5px 8px; border-radius: 6px; font-size: 0.7rem; letter-spacing: 0.02em; }
+        .badge-soft { background: rgba(255,255,255,0.1); color: var(--text-main); }
+        .badge-data { background: rgba(16, 185, 129, 0.15); color: var(--accent-green); border: 1px solid rgba(16, 185, 129, 0.2); }
+        .badge-shell { background: rgba(139, 92, 246, 0.15); color: var(--accent-purple); border: 1px solid rgba(139, 92, 246, 0.2); }
+        
+        .tree-database { background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+        .tree-table { border-left: 2px solid var(--border-focus); margin-left: 8px; padding-left: 16px; margin-top: 16px; }
+        .tree-columns { margin-left: 0; margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+        
+        .preview-table { font-size: 0.8rem; background: var(--bg-base); border-radius: 6px; overflow: hidden; border-style: hidden; box-shadow: 0 0 0 1px var(--border-subtle); }
+        .preview-table th { background: rgba(255,255,255,0.02); }
+        
+        .filter-group { display: flex; gap: 8px; align-items: center; }
+        .filter-btn { background: transparent; border: 1px solid var(--border-subtle); color: var(--text-muted); padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; cursor: pointer; transition: all 0.2s; }
+        .filter-btn:hover { color: var(--text-main); border-color: var(--text-muted); }
+        .filter-btn.active { background: var(--text-main); color: var(--bg-base); border-color: var(--text-main); font-weight: 500; }
+        
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-base); }
+        ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+    </style>
+</head>
+<body>
+<div id="app" class="container-fluid py-4 px-xl-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">AWVS <span style="color:var(--accent-blue)">Sqlmap</span> Panel</h2>
+        <div class="d-flex align-items-center gap-3">
+            <div class="text-muted small">{{ t('tagline') }}</div>
+            <select class="form-select form-select-sm w-auto bg-dark border-secondary text-white" v-model="language" @change="persistLanguage">
+                <option value="en">{{ t('lang_en') }}</option>
+                <option value="zh">{{ t('lang_zh') }}</option>
+            </select>
+        </div>
+    </div>
+
+    <ul class="nav nav-tabs mb-4">
+        <li class="nav-item">
+            <a class="nav-link" :class="{active: activeTab==='tasks'}" href="#" @click.prevent="activeTab='tasks'">{{ t('tab_tasks') }}</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" :class="{active: activeTab==='awvs'}" href="#" @click.prevent="activeTab='awvs'">{{ t('tab_awvs') }}</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" :class="{active: activeTab==='sqlmap'}" href="#" @click.prevent="activeTab='sqlmap'">{{ t('tab_sqlmap') }}</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" :class="{active: activeTab==='proxy'}" href="#" @click.prevent="activeTab='proxy'">{{ t('tab_proxy') }}</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" :class="{active: activeTab==='cloud'}" href="#" @click.prevent="activeTab='cloud'">{{ t('tab_cloud') }}</a>
+        </li>
+    </ul>
+
+    <div v-show="activeTab==='tasks'">
+        <div class="row">
+            <div class="col-lg-4 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">{{ t('add_targets') }}</div>
+                    <div class="card-body d-flex flex-column">
+                        <textarea class="form-control flex-grow-1 mb-3" v-model="newUrls" :placeholder="t('targets_placeholder')"></textarea>
+                        <button class="btn btn-primary" @click="addTasks">{{ t('submit_targets') }}</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-8 mb-4">
+                <div class="card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>{{ t('task_list') }}</span>
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="filter-group">
+                                <button class="filter-btn" :class="{active: taskFilter === 'all'}" @click="taskFilter = 'all'">{{ t('filter_all') }}</button>
+                                <button class="filter-btn" :class="{active: taskFilter === 'has_data'}" @click="taskFilter = 'has_data'">{{ t('filter_has_data') }}</button>
+                                <button class="filter-btn" :class="{active: taskFilter === 'has_shell'}" @click="taskFilter = 'has_shell'">{{ t('filter_has_shell') }}</button>
+                                <button class="filter-btn" :class="{active: taskFilter === 'has_injection'}" @click="taskFilter = 'has_injection'">{{ t('filter_has_injection') }}</button>
+                                <button class="filter-btn" :class="{active: taskFilter === 'has_finding'}" @click="taskFilter = 'has_finding'">{{ t('filter_has_finding') }}</button>
+                            </div>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-danger" v-if="selectedTaskIds.length > 0" @click="batchDeleteTasks" :title="t('title_delete_selected')">{{ t('delete_selected') }} ({{ selectedTaskIds.length }})</button>
+                                <button class="btn btn-outline-light" @click="cleanupTasks" :title="t('title_clean_empty')">{{ t('clean_empty_sqli') }}</button>
+                                <button class="btn btn-outline-light" @click="cleanupNoVulnTasks" :title="t('title_clean_0_vuln')">{{ t('clean_0_vuln') }}</button>
+                            </div>
+                            <button class="btn btn-sm btn-outline-light" @click="fetchData">{{ t('refresh') }}</button>
+                        </div>
+                    </div>
+                    <div class="card-body p-0 table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead>
+                            <tr>
+                                <th style="width: 40px">
+                                    <input class="form-check-input" type="checkbox" @change="toggleAllTasks" :checked="selectedTaskIds.length === paginatedTasks.length && paginatedTasks.length > 0">
+                                </th>
+                                <th>ID</th>
+                                <th>{{ t('target') }}</th>
+                                <th>AWVS</th>
+                                <th>Sqlmap</th>
+                                <th>{{ t('results') }}</th>
+                                <th>{{ t('action') }}</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <tr v-for="task in paginatedTasks" :key="task.ID" :class="{ 'selected-row': selectedTaskId === task.ID }">
+                                <td>
+                                    <input class="form-check-input" type="checkbox" :value="task.ID" v-model="selectedTaskIds">
+                                </td>
+                                <td>{{ task.ID }}</td>
+                                <td><a :href="task.url" target="_blank" style="color:var(--accent-blue); text-decoration:none">{{ task.url }}</a></td>
+                                <td>
+                                    <span class="badge" :class="getStatusBadgeClass(task.status)">{{ task.status }}</span>
+                                    <div class="mt-1" v-if="task.awvs_server_id"><small class="text-muted" style="font-size: 0.7rem">{{ getServerName(task.awvs_server_id) }}</small></div>
+                                </td>
+                                <td>
+                                    <span class="badge" :class="getSqlmapBadgeClass(task.sqlmap_status)">{{ task.sqlmap_status || 'none' }}</span>
+                                    <div class="mt-1" v-if="task.sqlmap_agent_id"><small class="text-muted" style="font-size: 0.7rem">{{ getAgentName(task.sqlmap_agent_id) }}</small></div>
+                                </td>
+                                <td>
+                                    <span v-if="task.has_data" class="badge badge-data me-1">{{ t('badge_data') }}</span>
+                                    <span v-if="task.has_shell" class="badge badge-shell me-1">{{ t('badge_shell') }}</span>
+                                    <span v-if="task.has_injection" class="badge bg-primary">{{ t('badge_injection') }}</span>
+                                    <span v-if="!task.has_data && !task.has_shell && !task.has_injection" class="text-muted small">-</span>
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-primary" @click="selectTask(task)">{{ t('details') }}</button>
+                                </td>
+                            </tr>
+                            <tr v-if="paginatedTasks.length === 0">
+                                <td colspan="7" class="text-center muted py-4">{{ t('no_tasks') }}</td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Pagination Controls -->
+                    <div class="d-flex justify-content-between align-items-center p-3 border-top" style="border-color: var(--border-subtle) !important">
+                        <div class="d-flex align-items-center gap-2">
+                            <select class="form-select form-select-sm w-auto bg-dark border-secondary text-white" v-model="pageSize" @change="currentPage = 1; selectedTaskIds = []">
+                                <option :value="5">5 / {{ t('per_page') }}</option>
+                                <option :value="10">10 / {{ t('per_page') }}</option>
+                                <option :value="20">20 / {{ t('per_page') }}</option>
+                                <option :value="50">50 / {{ t('per_page') }}</option>
+                                <option :value="200">200 / {{ t('per_page') }}</option>
+                            </select>
+                            <span class="text-muted small">{{ t('total') }}: {{ filteredTasks.length }}</span>
+                        </div>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary" :disabled="currentPage === 1" @click="currentPage--">{{ t('prev') }}</button>
+                            <button class="btn btn-outline-secondary" v-if="currentPage > 3" @click="currentPage = 1">1</button>
+                            <button class="btn btn-outline-secondary" v-if="currentPage > 4" disabled>...</button>
+                            <button
+                                v-for="page in visiblePageNumbers"
+                                :key="'task-page-' + page"
+                                class="btn"
+                                :class="page === currentPage ? 'btn-primary' : 'btn-outline-secondary'"
+                                @click="currentPage = page"
+                            >{{ page }}</button>
+                            <button class="btn btn-outline-secondary" v-if="currentPage < totalPages - 3" disabled>...</button>
+                            <button class="btn btn-outline-secondary" v-if="currentPage < totalPages - 2" @click="currentPage = totalPages">{{ totalPages }}</button>
+                            <button class="btn btn-outline-secondary" :disabled="currentPage === totalPages || totalPages === 0" @click="currentPage++">{{ t('next') }}</button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <div class="card border-primary" style="border-color: var(--border-focus) !important" v-if="selectedTask">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-bold">{{ t('task_detail') }}: #{{ selectedTask.ID }}</span>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-primary" @click="loadTaskDetail(selectedTask.ID)">{{ t('refresh_detail') }}</button>
+                    <button class="btn btn-outline-secondary" @click="clearTaskSelection">{{ t('close') }}</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 mb-4">
+                    <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_awvs_node') }}</div><div class="summary-value text-truncate" style="font-size: 1rem;" :title="getServerName(selectedTask.awvs_server_id)">{{ getServerName(selectedTask.awvs_server_id) }}</div></div></div>
+                    <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_awvs_status') }}</div><div class="summary-value">{{ selectedTask.status || '-' }}</div></div></div>
+                    <div class="col-md-4"><div class="summary-box"><div class="summary-title">{{ t('summary_target') }}</div><div class="summary-value" style="font-size: 1rem; word-break: break-all;">{{ selectedTask.url || '-' }}</div></div></div>
+                    <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_findings') }}</div><div class="summary-value text-primary">{{ taskFindings.length }}</div></div></div>
+                    <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_selected_vuln') }}</div><div class="summary-value">{{ selectedFinding ? selectedFinding.vuln_id.substring(0,8)+'...' : '-' }}</div></div></div>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-end mb-3">
+                    <div class="filter-group">
+                        <span class="text-muted small text-uppercase fw-bold me-2" style="letter-spacing: 0.05em">{{ t('sqli_findings') }}</span>
+                        <button class="filter-btn" :class="{active: findingFilter === 'all'}" @click="findingFilter = 'all'">{{ t('filter_all') }}</button>
+                        <button class="filter-btn" :class="{active: findingFilter === 'has_data'}" @click="findingFilter = 'has_data'">{{ t('filter_has_data') }}</button>
+                        <button class="filter-btn" :class="{active: findingFilter === 'has_shell'}" @click="findingFilter = 'has_shell'">{{ t('filter_has_shell') }}</button>
+                        <button class="filter-btn" :class="{active: findingFilter === 'has_injection'}" @click="findingFilter = 'has_injection'">{{ t('filter_has_injection') }}</button>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <select class="form-select form-select-sm w-auto bg-dark border-secondary text-white" v-model.number="retrySqlmapAgentId">
+                            <option :value="0">{{ t('retry_target_auto') }}</option>
+                            <option v-for="a in agents" :key="'retry-task-agent-' + a.ID" :value="a.ID">{{ a.name }}</option>
+                        </select>
+                        <button class="btn btn-outline-warning btn-sm" :disabled="taskActionBusy || !selectedTaskId" @click="retryTaskLevelPush">{{ t('force_retry_task_push') }}</button>
+                    </div>
+                </div>
+
+                <div class="tree-box mb-4 p-0 overflow-hidden">
+                    <div v-if="filteredFindings.length === 0" class="muted p-4 text-center">{{ t('no_findings') }}</div>
+                    <div v-else class="table-responsive">
+                        <table class="table table-hover align-middle mb-0 border-0">
+                            <thead>
+                            <tr>
+                                <th>{{ t('th_vuln_id') }}</th>
+                                <th>{{ t('th_url_path') }}</th>
+                                <th>{{ t('th_sent') }}</th>
+                                <th>{{ t('th_agent') }}</th>
+                                <th>{{ t('th_sqlmap_status') }}</th>
+                                <th>{{ t('th_sqlmap_techniques') }}</th>
+                                <th>{{ t('use_proxy') }}</th>
+                                <th>{{ t('results') }}</th>
+                                <th>{{ t('action') }}</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <tr v-for="finding in paginatedFindings" :key="finding.ID" :class="{ 'selected-row': selectedFindingId === finding.ID }">
+                                <td class="font-monospace"><small>{{ finding.vuln_id }}</small></td>
+                                <td><small class="text-truncate d-inline-block" style="max-width: 150px;" :title="finding.affects_url">{{ finding.affects_url || '-' }}</small></td>
+                                <td><span class="badge" :class="finding.sent_to_sqlmap ? 'bg-success' : 'bg-secondary'">{{ finding.sent_to_sqlmap ? t('yes') : t('no') }}</span></td>
+                                <td><small class="text-muted text-truncate d-inline-block" style="max-width: 100px;" :title="getAgentName(finding.sqlmap_agent_id)">{{ getAgentName(finding.sqlmap_agent_id) }}</small></td>
+                                <td><span class="badge" :class="getSqlmapBadgeClass(finding.sqlmap_status || 'none')">{{ finding.sqlmap_status || 'none' }}</span></td>
+                                <td>
+                                    <span v-if="getFindingTechniqueList(finding).length === 0" class="text-muted small">-</span>
+                                    <span v-for="tech in getFindingTechniqueList(finding)" :key="finding.ID + ':' + tech" class="badge bg-info text-dark me-1">{{ tech }}</span>
+                                </td>
+                                <td>
+                                    <input class="form-check-input" type="checkbox" :checked="finding.use_proxy" @change="updateFindingProxy(finding, $event.target.checked)">
+                                </td>
+                                <td>
+                                    <span v-if="finding.has_data" class="badge badge-data me-1">{{ t('badge_data') }}</span>
+                                    <span v-if="finding.has_shell" class="badge badge-shell me-1">{{ t('badge_shell') }}</span>
+                                    <span v-if="finding.has_injection" class="badge bg-primary">{{ t('badge_injection') }}</span>
+                                    <span v-if="!finding.has_data && !finding.has_shell && !finding.has_injection" class="text-muted small">-</span>
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-outline-primary" @click="selectFinding(finding)">{{ t('inspect') }}</button>
+                                </td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center p-3 border-top" style="border-color: var(--border-subtle) !important">
+                        <div class="d-flex align-items-center gap-2">
+                            <select class="form-select form-select-sm w-auto bg-dark border-secondary text-white" v-model.number="findingPageSize" @change="findingPage = 1">
+                                <option :value="5">5 / {{ t('per_page') }}</option>
+                                <option :value="10">10 / {{ t('per_page') }}</option>
+                                <option :value="20">20 / {{ t('per_page') }}</option>
+                                <option :value="50">50 / {{ t('per_page') }}</option>
+                                <option :value="200">200 / {{ t('per_page') }}</option>
+                            </select>
+                            <span class="text-muted small">{{ t('total') }}: {{ filteredFindings.length }}</span>
+                        </div>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary" :disabled="findingPage === 1" @click="findingPage--">{{ t('prev') }}</button>
+                            <button class="btn btn-outline-secondary" v-if="findingPage > 3" @click="findingPage = 1">1</button>
+                            <button class="btn btn-outline-secondary" v-if="findingPage > 4" disabled>...</button>
+                            <button
+                                v-for="page in findingVisiblePageNumbers"
+                                :key="'finding-page-' + page"
+                                class="btn"
+                                :class="page === findingPage ? 'btn-primary' : 'btn-outline-secondary'"
+                                @click="findingPage = page"
+                            >{{ page }}</button>
+                            <button class="btn btn-outline-secondary" v-if="findingPage < findingTotalPages - 3" disabled>...</button>
+                            <button class="btn btn-outline-secondary" v-if="findingPage < findingTotalPages - 2" @click="findingPage = findingTotalPages">{{ findingTotalPages }}</button>
+                            <button class="btn btn-outline-secondary" :disabled="findingPage === findingTotalPages || findingTotalPages === 0" @click="findingPage++">{{ t('next') }}</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="taskDetailError" class="alert alert-danger" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--accent-red)">
+                    {{ taskDetailError }}
+                </div>
+                <div v-else-if="taskDetail">
+                    <div class="alert mb-4" style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); color: var(--text-main)">
+                        <div><strong>{{ t('proxy_requested') }}:</strong> <span class="font-monospace">{{ taskDetail.requested_proxy || '-' }}</span></div>
+                        <div><strong>{{ t('proxy_effective') }}:</strong> <span class="font-monospace">{{ taskDetail.runtime_proxy || '-' }}</span></div>
+                        <div><strong>{{ t('proxy_config_file') }}:</strong> <span class="font-monospace">{{ taskDetail.runtime_proxy_file || '-' }}</span></div>
+                    </div>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_status') }}</div><div class="summary-value" style="color:var(--accent-blue)">{{ taskDetail.status || '-' }}</div></div></div>
+                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_phase') }}</div><div class="summary-value">{{ taskDetail.phase || '-' }}</div></div></div>
+                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_action') }}</div><div class="summary-value">{{ taskDetail.latest_action || '-' }}</div></div></div>
+                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">DBMS</div><div class="summary-value">{{ getTaskDetailValue(taskDetail, ['session', 'dbms']) || '-' }}</div></div></div>
+                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">OS</div><div class="summary-value">{{ getTaskDetailValue(taskDetail, ['session', 'os']) || '-' }}</div></div></div>
+                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('summary_current_db') }}</div><div class="summary-value text-success">{{ getTaskDetailValue(taskDetail, ['content', 'current_db']) || '-' }}</div></div></div>
+                    </div>
+
+                    <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+                        <span class="text-muted small text-uppercase fw-bold me-2">{{ t('actions_label') }}:</span>
+                        <button class="btn btn-outline-info btn-sm" :disabled="!selectedFindingId" @click="openFindingSqlmapOptionsModal">{{ t('finding_sqlmap_config') }}</button>
+                        <select class="form-select form-select-sm w-auto bg-dark border-secondary text-white" v-model="selectedTech" :title="t('title_force_tech')">
+                            <option value="">{{ t('auto_tech') }}</option>
+                            <option value="B">{{ t('tech_b') }}</option>
+                            <option value="E">{{ t('tech_e') }}</option>
+                            <option value="U">{{ t('tech_u') }}</option>
+                            <option value="S">{{ t('tech_s') }}</option>
+                            <option value="T">{{ t('tech_t') }}</option>
+                            <option value="Q">{{ t('tech_q') }}</option>
+                        </select>
+                        <button class="btn btn-outline-primary btn-sm" :disabled="taskActionBusy" @click="runTaskAction('get_current_db')">{{ t('btn_current_db') }}</button>
+                        <button class="btn btn-outline-primary btn-sm" :disabled="taskActionBusy" @click="runTaskAction('get_dbs')">{{ t('btn_databases') }}</button>
+                        <button class="btn btn-outline-primary btn-sm" :disabled="taskActionBusy" @click="runTaskAction('get_tables')">{{ t('btn_tables') }}</button>
+                        <button class="btn btn-outline-primary btn-sm" :disabled="taskActionBusy" @click="runTaskAction('get_columns')">{{ t('btn_columns') }}</button>
+                        <button class="btn btn-outline-success btn-sm" :disabled="taskActionBusy" @click="runTaskAction('dump_table_data', { limit_start: 1, limit_stop: 20 })">{{ t('btn_dump_data') }}</button>
+                        <button class="btn btn-outline-danger btn-sm" :disabled="taskActionBusy" @click="runTaskAction('probe_shell')">{{ t('btn_probe_shell') }}</button>
+                        <button class="btn btn-outline-warning btn-sm" :disabled="taskActionBusy || !selectedFindingId" @click="retryTaskPush">{{ t('force_retry_push') }}</button>
+                    </div>
+
+                    <div v-if="taskActionMessage" class="alert alert-info" style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); color: var(--accent-blue)">
+                        {{ taskActionMessage }}
+                    </div>
+
+                    <div class="row g-4">
+                        <div class="col-lg-6">
+                            <div class="tree-box h-100">
+                                <h6 class="mb-3">{{ t('injection_points') }}</h6>
+                                <div v-if="!getTaskTechniques().length" class="muted">{{ t('no_injection_data') }}</div>
+                                <div v-for="item in getTaskTechniques()" :key="item.place + ':' + item.parameter" class="mb-3">
+                                    <div><strong class="text-white">{{ item.parameter }}</strong> <span class="badge bg-secondary ms-2">{{ item.place }}</span></div>
+                                    <div class="muted small mt-1" v-if="item.dbms || item.os">DBMS: {{ item.dbms || '-' }} | OS: {{ item.os || '-' }}</div>
+                                    <div v-for="entry in item.entries" :key="entry.type + ':' + entry.title" class="code-box mt-2 p-2">
+                                        <div class="text-info">{{ entry.type }}</div>
+                                        <div class="small text-muted mt-1">{{ entry.title }}</div>
+                                        <div class="mt-2 text-warning text-break">{{ entry.payload }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-lg-6">
+                            <div class="tree-box h-100">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <h6 class="mb-0">{{ t('search') }}</h6>
+                                    <button class="btn btn-sm btn-primary" :disabled="searchBusy || !searchQuery" @click="searchTaskTree">{{ t('search') }}</button>
+                                </div>
+                                <div class="input-group mb-3">
+                                    <input class="form-control" v-model="searchQuery" :placeholder="t('search_placeholder')" @keyup.enter="searchTaskTree">
+                                    <button class="btn btn-outline-secondary" :disabled="!searchQuery" @click="clearSearch">{{ t('clear') }}</button>
+                                </div>
+                                <div v-if="searchResults.length === 0" class="muted small">{{ t('no_search_results') }}</div>
+                                <div v-for="(result, index) in searchResults" :key="result.kind + ':' + index" class="code-box mt-2 p-2">
+                                    <div class="text-success">{{ result.kind }}</div>
+                                    <div class="small mt-1 text-muted">
+                                        <span v-if="result.database">{{ t('label_db') }}: {{ result.database }} </span>
+                                        <span v-if="result.table">| {{ t('label_tbl') }}: {{ result.table }} </span>
+                                        <span v-if="result.column">| {{ t('label_col') }}: {{ result.column }}</span>
+                                    </div>
+                                    <div class="mt-2 text-white">{{ result.value || '-' }}</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="tree-box">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <h6 class="mb-0">{{ t('database_tree') }}</h6>
+                                    <button class="btn btn-sm btn-outline-primary" :disabled="taskActionBusy" @click="runTaskAction('get_dbs')">{{ t('auto_run_databases') }}</button>
+                                </div>
+                                <div v-if="getTreeDatabases().length === 0" class="muted text-center py-4">{{ t('no_db_tree_data') }}</div>
+                                <div v-else>
+                                    <div class="d-flex justify-content-between align-items-center p-2 mb-2 rounded" style="background: rgba(148,163,184,0.08); border: 1px solid rgba(148,163,184,0.2);">
+                                        <div>
+                                            <button class="btn btn-sm btn-outline-light me-2" @click="toggleTreeRoot">
+                                                {{ treeRootExpanded ? '-' : '+' }}
+                                            </button>
+                                            <strong class="text-white">{{ t('all_databases_root') }}</strong>
+                                            <span class="badge badge-soft ms-2">{{ getTreeDatabases().length }}</span>
+                                        </div>
+                                        <span class="text-muted small">{{ treeRootExpanded ? t('collapse') : t('expand') }}</span>
+                                    </div>
+
+                                    <div v-if="treeRootExpanded">
+                                        <div v-for="database in getTreeDatabases()" :key="database.name" class="tree-database">
+                                            <div class="d-flex justify-content-between align-items-start">
+                                                <div>
+                                                    <button class="btn btn-sm btn-outline-light me-2" @click="toggleDatabaseExpand(database.name)">
+                                                        {{ isDatabaseExpanded(database.name) ? '-' : '+' }}
+                                                    </button>
+                                                    <strong class="fs-5 text-white">{{ database.name }}</strong>
+                                                    <span v-if="database.priority_table" class="badge badge-soft ms-2">{{ t('priority') }}: {{ database.priority_table }}</span>
+                                                </div>
+                                                <div class="tree-actions">
+                                                    <button class="btn btn-sm btn-outline-secondary" :disabled="taskActionBusy" @click="runTaskAction('get_tables', { db: database.name })">{{ t('run_tables') }}</button>
+                                                </div>
+                                            </div>
+                                            <div v-if="isDatabaseExpanded(database.name)">
+                                                <div v-if="database.tables.length === 0" class="muted mt-3 small">{{ t('no_tables_loaded') }}</div>
+                                                <div v-for="table in database.tables" :key="database.name + ':' + table.name" class="tree-table">
+                                                    <div class="d-flex justify-content-between align-items-start">
+                                                        <div>
+                                                            <button class="btn btn-sm btn-outline-light me-2" @click="toggleTableExpand(database.name, table.name)">
+                                                                {{ isTableExpanded(database.name, table.name) ? '-' : '+' }}
+                                                            </button>
+                                                            <strong class="text-info">{{ table.name }}</strong>
+                                                            <span v-if="table.priority" class="badge bg-warning text-dark ms-2" title="adm priority">★</span>
+                                                        </div>
+                                                        <div class="tree-actions">
+                                                            <button class="btn btn-sm btn-outline-secondary" :disabled="taskActionBusy" @click="runTaskAction('get_columns', { db: database.name, table: table.name })">{{ t('cols_short') }}</button>
+                                                            <button class="btn btn-sm btn-outline-success" :disabled="taskActionBusy" @click="runTaskAction('dump_table_data', { db: database.name, table: table.name, limit_start: 1, limit_stop: 20 })">{{ t('data_short') }}</button>
+                                                        </div>
+                                                    </div>
+                                                    <div v-if="isTableExpanded(database.name, table.name)">
+                                                        <div class="tree-columns">
+                                                            <div v-if="!table.columns || table.columns.length === 0" class="muted small">{{ t('no_columns_loaded') }}</div>
+                                                            <span v-for="column in table.columns" :key="database.name + ':' + table.name + ':' + column" class="badge badge-soft">{{ column }}</span>
+                                                        </div>
+                                                        <div class="table-responsive mt-3" v-if="table.rows && table.rows.length">
+                                                            <table class="table table-sm preview-table">
+                                                                <thead>
+                                                                <tr>
+                                                                    <th v-for="column in table.columns" :key="column">{{ column }}</th>
+                                                                </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                <tr v-for="(row, rowIndex) in table.rows" :key="table.name + ':' + rowIndex">
+                                                                    <td v-for="column in table.columns" :key="column" class="font-monospace text-muted">{{ row[column] }}</td>
+                                                                </tr>
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-lg-6">
+                            <div class="tree-box h-100">
+                                <h6 class="mb-3">{{ t('shell_capability') }}</h6>
+                                <div class="code-box h-100" style="min-height:100px">{{ formatJson(taskDetail.shell_probe) }}</div>
+                            </div>
+                        </div>
+
+                        <div class="col-lg-6">
+                            <div class="tree-box h-100">
+                                <h6 class="mb-3">{{ t('session_state') }}</h6>
+                                <div class="code-box h-100" style="min-height:100px">{{ formatJson(taskDetail.session) }}</div>
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="tree-box">
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <h6 class="mb-0">Sqlmap Request (request.txt)</h6>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-secondary" v-if="!requestEditMode" @click="startEditRequest">{{ t('edit') }}</button>
+                                        <button class="btn btn-primary" v-if="requestEditMode" @click="saveRequestContent">{{ t('save_changes') }}</button>
+                                        <button class="btn btn-outline-secondary" v-if="requestEditMode" @click="cancelEditRequest">{{ t('cancel') }}</button>
+                                    </div>
+                                </div>
+                                <textarea v-if="requestEditMode" class="form-control font-monospace" v-model="requestDraft" rows="10"></textarea>
+                                <div v-else class="code-box" style="min-height:120px; white-space: pre-wrap;">{{ taskDetail.request_content || '-' }}</div>
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="tree-box">
+                                <h6 class="mb-3">AWVS Original Payload</h6>
+                                <div class="code-box" style="min-height:80px; white-space: pre-wrap;">{{ selectedFinding && selectedFinding.awvs_payload ? selectedFinding.awvs_payload : '-' }}</div>
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="tree-box">
+                                <h6 class="mb-3">{{ t('awvs_raw_detail') }}</h6>
+                                <div class="code-box" style="min-height:140px; white-space: pre-wrap;">{{ selectedFinding && selectedFinding.awvs_raw ? selectedFinding.awvs_raw : '-' }}</div>
+                            </div>
+                        </div>
+
+                        <div class="col-12">
+                            <div class="tree-box">
+                                <h6 class="mb-3">{{ t('recent_logs') }}</h6>
+                                <div class="log-box">{{ formatLogs(taskDetail.logs) }}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div v-else-if="selectedFinding">
+                    <div v-if="taskActionMessage" class="alert alert-info mb-4" style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); color: var(--accent-blue)">
+                        {{ taskActionMessage }}
+                    </div>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-3"><div class="summary-box"><div class="summary-title">{{ t('th_vuln_id') }}</div><div class="summary-value">{{ selectedFinding.vuln_id || '-' }}</div></div></div>
+                        <div class="col-md-5"><div class="summary-box"><div class="summary-title">{{ t('th_url_path') }}</div><div class="summary-value" style="font-size: 1rem; word-break: break-all;">{{ selectedFinding.affects_url || '-' }}</div></div></div>
+                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('th_sqlmap_status') }}</div><div class="summary-value">{{ selectedFinding.sqlmap_status || 'none' }}</div></div></div>
+                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('results') }}</div><div class="summary-value">{{ selectedFinding.has_data || selectedFinding.has_shell || selectedFinding.has_injection ? t('yes') : t('no') }}</div></div></div>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+                        <button class="btn btn-outline-warning btn-sm" :disabled="taskActionBusy || !selectedFindingId" @click="retryTaskPush">{{ t('force_retry_push') }}</button>
+                    </div>
+                    <div class="row g-4">
+                        <div class="col-12">
+                            <div class="tree-box">
+                                <h6 class="mb-3">AWVS Original Payload</h6>
+                                <div class="code-box" style="min-height:80px; white-space: pre-wrap;">{{ selectedFinding.awvs_payload || '-' }}</div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="tree-box">
+                                <h6 class="mb-3">{{ t('awvs_raw_detail') }}</h6>
+                                <div class="code-box" style="min-height:140px; white-space: pre-wrap;">{{ selectedFinding.awvs_raw || '-' }}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div v-else class="muted text-center py-5">{{ t('select_finding_hint') }}</div>
+            </div>
+        </div>
+    </div>
+
+    <div v-show="activeTab==='awvs'">
+        <div class="row">
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">{{ t('generate_awvs_cmd') }}</div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-6"><input class="form-control" v-model="newAWVS.name" :placeholder="t('awvs_node_name')"></div>
+                            <div class="col-md-3"><input class="form-control" type="number" v-model.number="newAWVS.max_concurrency" :placeholder="t('concurrency')"></div>
+                            <div class="col-md-3"><button class="btn btn-primary w-100" @click="createAWVSConfig" :disabled="!newAWVS.name">{{ t('generate') }}</button></div>
+                        </div>
+                        <div v-if="awvsDockerCmd" class="mt-4">
+                            <div class="install-box mb-3">{{ awvsDockerCmd }}</div>
+                            <button class="btn btn-success" @click="copyAWVSCmd">{{ t('copy_command') }}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">{{ t('register_installed_awvs') }}</div>
+                    <div class="card-body">
+                        <textarea class="form-control mb-3" v-model="awvsProtocolLink" rows="2" placeholder="awvsagent://..."></textarea>
+                        <button class="btn btn-success" @click="registerAWVSProtocol" :disabled="!awvsProtocolLink">{{ t('register_awvs') }}</button>
+                        <div v-if="awvsRegisterResult" class="alert mt-3 mb-0" :class="awvsRegisterResult.error ? 'alert-danger' : 'alert-success'">
+                            {{ awvsRegisterResult.error || awvsRegisterResult.message }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">{{ t('manual_add_awvs') }}</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-3"><input class="form-control" v-model="newAWVS.name" :placeholder="t('node_name')"></div>
+                    <div class="col-md-3"><input class="form-control" v-model="newAWVS.url" placeholder="https://host:3443"></div>
+                    <div class="col-md-2"><input class="form-control" v-model="newAWVS.api_key" :placeholder="t('api_key')"></div>
+                    <div class="col-md-2"><input class="form-control" v-model="newAWVS.awvs_username" :placeholder="t('awvs_username')"></div>
+                    <div class="col-md-2"><input class="form-control" v-model="newAWVS.awvs_password" :placeholder="t('awvs_password')"></div>
+                    <div class="col-md-2"><input class="form-control" type="number" v-model="newAWVS.max_concurrency" :placeholder="t('concurrency')"></div>
+                </div>
+                <button class="btn btn-outline-primary mt-3" @click="addAWVS">{{ t('add_node_manually') }}</button>
+            </div>
+        </div>
+
+        <div v-if="awvsActionResult" class="alert mb-4" :class="awvsActionResult.error ? 'alert-warning' : 'alert-success'" style="background: rgba(255,255,255,0.05); color: var(--text-main); border: 1px solid var(--border-focus)">
+            {{ awvsActionResult.error || awvsActionResult.message }}
+        </div>
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>{{ t('awvs_nodes') }}</span>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-warning" @click="cleanupOfflineNodes('awvs')">{{ t('cleanup_offline_nodes') }}</button>
+                    <button class="btn btn-outline-secondary" @click="fetchData">{{ t('refresh') }}</button>
+                </div>
+            </div>
+            <div class="card-body p-0 table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                    <tr>
+                        <th>{{ t('name') }}</th>
+                        <th>{{ t('label_url') }}</th>
+                        <th>{{ t('token') }}</th>
+                        <th>{{ t('awvs_username') }}</th>
+                        <th>{{ t('awvs_password') }}</th>
+                        <th>{{ t('limit') }}</th>
+                        <th>{{ t('status') }}</th>
+                        <th>{{ t('last_checked') }}</th>
+                        <th>{{ t('action') }}</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr v-for="server in servers" :key="server.ID">
+                        <td class="text-white">{{ server.name || '-' }}</td>
+                        <td><small class="text-muted">{{ server.url }}</small></td>
+                        <td><small class="text-muted">{{ (server.api_key || '').substring(0,8) + '...' }}</small></td>
+                        <td><small class="text-muted">{{ server.awvs_username || '-' }}</small></td>
+                        <td><small class="text-muted">{{ server.awvs_password || '-' }}</small></td>
+                        <td>{{ server.max_concurrency }}</td>
+                        <td><span class="badge" :class="server.is_active ? 'bg-success' : 'bg-secondary'">{{ server.is_active ? t('online') : t('offline') }}</span></td>
+                        <td><small class="text-muted">{{ formatUnixTime(server.last_checked_at) }}</small></td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-secondary" @click="openEditAWVS(server)">{{ t('edit') }}</button>
+                                <button class="btn btn-outline-primary" @click="refreshAWVS(server.ID)">{{ t('refresh') }}</button>
+                                <button class="btn btn-outline-danger" @click="deleteAWVS(server.ID)">{{ t('del') }}</button>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr v-if="servers.length === 0">
+                        <td colspan="9" class="text-center muted py-5">{{ t('no_awvs_nodes') }}</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div v-show="activeTab==='sqlmap'">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>{{ t('sqlmap_agent_defaults') }}</span>
+                <button class="btn btn-sm btn-primary" @click="saveSqlmapDefaults">{{ t('save') }}</button>
+            </div>
+            <div class="card-body">
+                <label class="form-check-label">
+                    <input class="form-check-input me-2" type="checkbox" v-model="sqlmapDefaults.sqlmap_agent_default_use_proxy">
+                    {{ t('sqlmap_new_agent_default_proxy') }}
+                </label>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">{{ t('generate_sqlmap_cmd') }}</div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-4"><input class="form-control" v-model="newAgent.name" :placeholder="t('agent_name')"></div>
+                            <div class="col-md-3"><input class="form-control" type="number" v-model.number="newAgent.max_concurrency" :placeholder="t('concurrency')"></div>
+                            <div class="col-md-3">
+                                <select class="form-select" v-model.number="newAgent.proxy_agent_id">
+                                    <option :value="0">{{ t('proxy_none') }}</option>
+                                    <option v-for="p in proxyAgents" :key="p.ID" :value="p.ID">{{ p.name }}</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2"><button class="btn btn-primary w-100" @click="createAgentConfig" :disabled="!newAgent.name">{{ t('generate') }}</button></div>
+                        </div>
+                        <div v-if="dockerCmd" class="mt-4">
+                            <div class="install-box mb-3">{{ dockerCmd }}</div>
+                            <button class="btn btn-success" @click="copyDockerCmd">{{ t('copy_command') }}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">{{ t('register_installed_agent') }}</div>
+                    <div class="card-body">
+                        <textarea class="form-control mb-3" v-model="protocolLink" rows="2" placeholder="sqlmapagent://..."></textarea>
+                        <button class="btn btn-success" @click="registerAgent" :disabled="!protocolLink">{{ t('register_agent') }}</button>
+                        <div v-if="registerResult" class="alert mt-3 mb-0" :class="registerResult.error ? 'alert-danger' : 'alert-success'">
+                            {{ registerResult.error || registerResult.message }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>{{ t('managed_agents') }}</span>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-primary" @click="openGlobalSqlmapOptionsModal">{{ t('sqlmap_global_defaults') }}</button>
+                    <button class="btn btn-outline-warning" @click="cleanupOfflineNodes('sqlmap')">{{ t('cleanup_offline_nodes') }}</button>
+                    <button class="btn btn-outline-secondary" @click="fetchAgents">{{ t('refresh') }}</button>
+                </div>
+            </div>
+            <div class="card-body p-0 table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                    <tr>
+                        <th>{{ t('name') }}</th>
+                        <th>{{ t('label_url') }}</th>
+                        <th>{{ t('token') }}</th>
+                        <th>{{ t('running') }}</th>
+                        <th>{{ t('queued') }}</th>
+                        <th>{{ t('limit') }}</th>
+                        <th>{{ t('default_use_proxy') }}</th>
+                        <th>{{ t('share_by_domain') }}</th>
+                        <th>{{ t('status') }}</th>
+                        <th>{{ t('action') }}</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr v-for="agent in agents" :key="agent.ID">
+                        <td class="text-white">{{ agent.name }}</td>
+                        <td><small class="text-muted">{{ agent.url }}</small></td>
+                        <td><small class="text-muted">{{ agent.api_key.substring(0,8) + '...' }}</small></td>
+                        <td><span class="text-info fw-bold">{{ agent.current_running }}</span></td>
+                        <td><span class="text-warning fw-bold">{{ agent.current_queued }}</span></td>
+                        <td>{{ agent.max_concurrency }}</td>
+                        <td><span class="badge" :class="agent.default_use_proxy ? 'bg-success' : 'bg-secondary'">{{ agent.default_use_proxy ? t('yes') : t('no') }}</span></td>
+                        <td><span class="badge" :class="agent.share_by_domain !== false ? 'bg-success' : 'bg-secondary'">{{ agent.share_by_domain !== false ? t('yes') : t('no') }}</span></td>
+                        <td><span class="badge" :class="agent.is_active ? 'bg-success' : 'bg-secondary'">{{ agent.is_active ? t('online') : t('offline') }}</span></td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-secondary" @click="openEditAgent(agent)">{{ t('edit') }}</button>
+                                <button class="btn btn-outline-primary" @click="refreshAgent(agent.ID)">{{ t('sync') }}</button>
+                                <button class="btn btn-outline-danger" @click="deleteAgent(agent.ID)">{{ t('del') }}</button>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr v-if="agents.length === 0">
+                        <td colspan="10" class="text-center muted py-5">{{ t('no_sqlmap_agents') }}</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div v-show="activeTab==='proxy'">
+        <div class="row">
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">{{ t('generate_proxy_cmd') }}</div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-6"><input class="form-control" v-model="newProxy.name" :placeholder="t('name')"></div>
+                            <div class="col-md-6"><input class="form-control" :value="t('proxy_server_auto_ipv4')" disabled></div>
+                            <div class="col-md-4">
+                                <select class="form-select" v-model="newProxy.tunnel_protocol">
+                                    <option value="socks5">socks5</option>
+                                    <option value="socks4a">socks4a</option>
+                                    <option value="http">http</option>
+                                    <option value="https">https</option>
+                                </select>
+                            </div>
+                            <div class="col-md-5"><input class="form-control" v-model="newProxy.tunnel_host" :placeholder="t('proxy_tunnel_host')"></div>
+                            <div class="col-md-3"><input class="form-control" type="number" v-model.number="newProxy.tunnel_port" :placeholder="t('proxy_tunnel_port')"></div>
+                            <div class="col-md-6"><input class="form-control" v-model="newProxy.tunnel_username" :placeholder="t('proxy_user')"></div>
+                            <div class="col-md-6"><input class="form-control" v-model="newProxy.tunnel_password" :placeholder="t('proxy_pass')"></div>
+                            <div class="col-md-4"><input class="form-control" :value="'vless'" disabled></div>
+                            <div class="col-md-4"><input class="form-control" type="number" v-model.number="newProxy.listen_port" :placeholder="t('proxy_listen_port')"></div>
+                            <div class="col-md-4"><button class="btn btn-primary w-100" @click="createProxyAgentConfig" :disabled="!newProxy.name || !newProxy.tunnel_host || !newProxy.tunnel_port">{{ t('generate') }}</button></div>
+                        </div>
+                        <div v-if="proxyDockerCmd" class="mt-4">
+                            <div class="install-box mb-3">{{ proxyDockerCmd }}</div>
+                            <div class="btn-group">
+                                <button class="btn btn-success" @click="copyText(proxyDockerCmd)">{{ t('copy_command') }}</button>
+                            </div>
+                            <div class="text-muted small mt-2">{{ t('proxy_install_hint') }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">{{ t('register_installed_proxy') }}</div>
+                    <div class="card-body">
+                        <input class="form-control mb-2" v-model="proxyRegister.name" :placeholder="t('proxy_optional_name')">
+                        <textarea class="form-control mb-3" v-model="proxyRegister.link" rows="2" placeholder="vless://..."></textarea>
+                        <button class="btn btn-success" @click="registerProxyFromLink" :disabled="!proxyRegister.link">{{ t('register_proxy') }}</button>
+                        <div v-if="proxyRegisterResult" class="alert mt-3 mb-0" :class="proxyRegisterResult.error ? 'alert-danger' : 'alert-success'">
+                            {{ proxyRegisterResult.error || proxyRegisterResult.message }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>{{ t('proxy_list') }}</span>
+                <button class="btn btn-sm btn-outline-secondary" @click="fetchProxyAgents">{{ t('refresh') }}</button>
+            </div>
+            <div class="card-body p-0 table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                    <tr>
+                        <th>{{ t('name') }}</th>
+                        <th>{{ t('proxy_tunnel') }}</th>
+                        <th>{{ t('proxy_listen') }}</th>
+                        <th>{{ t('action') }}</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr v-for="p in proxyAgents" :key="p.ID">
+                        <td class="text-white">{{ p.name }}</td>
+                        <td>
+                            <small class="text-muted" v-if="p.tunnel_protocol && p.tunnel_host && p.tunnel_port">{{ p.tunnel_protocol }}://{{ p.tunnel_host }}:{{ p.tunnel_port }}</small>
+                            <small class="text-muted" v-else>-</small>
+                        </td>
+                        <td>vless : {{ p.listen_port }}</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-secondary" @click="copyText(getProxyLink(p))">{{ t('copy_link') }}</button>
+                                <button class="btn btn-outline-danger" @click="deleteProxyAgent(p.ID)">{{ t('del') }}</button>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr v-if="proxyAgents.length===0">
+                        <td colspan="4" class="text-center muted py-5">{{ t('proxy_empty') }}</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div v-show="activeTab==='cloud'">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>{{ t('cloud_credentials') }}</span>
+                <div class="text-muted small">
+                    <span v-if="cloudCredStatus.secret_id_set && cloudCredStatus.secret_key_set">{{ t('cloud_cred_saved') }} ({{ cloudCredStatus.secret_id_masked }})</span>
+                    <span v-else>{{ t('cloud_cred_missing') }}</span>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4"><input class="form-control" v-model="cloudCred.secret_id" :placeholder="t('secret_id')"></div>
+                    <div class="col-md-4"><input class="form-control" v-model="cloudCred.secret_key" :placeholder="t('secret_key')"></div>
+                    <div class="col-md-4"><button class="btn btn-primary w-100" @click="saveCloudCredentials" :disabled="!cloudCred.secret_id || !cloudCred.secret_key">{{ t('save_credentials') }}</button></div>
+                </div>
+                <div class="text-muted small mt-2">{{ t('cloud_cred_hint') }}</div>
+            </div>
+        </div>
+        <div class="row g-4">
+            <div class="col-12 col-xl-6">
+                <div class="card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>{{ t('awvs_cloud_purchase') }}</span>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-success" @click="startCloudScale('awvs')">{{ t('start') }}</button>
+                            <button class="btn btn-outline-danger" @click="stopCloudScale('awvs')">{{ t('stop') }}</button>
+                            <button class="btn btn-outline-warning" @click="cleanupCloudInstances('awvs')">{{ t('one_click_cleanup') }}</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-2">
+                            <div class="col-12"><span class="badge" :class="cloud.awvs_autoscale_status === 'running' ? 'bg-success' : (cloud.awvs_autoscale_status === 'expired' ? 'bg-warning text-dark' : 'bg-secondary')">{{ cloud.awvs_autoscale_status || 'stopped' }}</span></div>
+                            <div class="col-12 text-muted small">{{ t('cloud_purchase_hint') }}</div>
+                            <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('max_usd_h') }}</label><input class="form-control" type="number" step="0.001" v-model.number="cloud.awvs_max_price_usd_per_hour"></div>
+                            <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('hourly_budget') }}</label><input class="form-control" type="number" step="0.001" v-model.number="cloud.awvs_hourly_budget_usd"></div>
+                            <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('budget_hours') }}</label><input class="form-control" type="number" v-model.number="cloud.awvs_budget_hours"></div>
+                            <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('awvs_concurrency') }}</label><input class="form-control" type="number" min="1" v-model.number="cloud.awvs_max_concurrency"></div>
+                            <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('min_cpu') }}</label><input class="form-control" type="number" min="1" v-model.number="cloud.awvs_min_cpu"></div>
+                            <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('min_memory_gb') }}</label><input class="form-control" type="number" min="1" v-model.number="cloud.awvs_min_memory_gb"></div>
+                            <div class="col-12"><label class="form-label small text-muted mb-1">{{ t('instance_type_optional') }}</label><input class="form-control" v-model="cloud.awvs_instance_type" :placeholder="t('instance_type_example')"></div>
+                            <div class="col-12"><button class="btn btn-primary w-100" @click="saveCloud">{{ t('save') }}</button></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-xl-6">
+                <div class="card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>{{ t('sqlmap_cloud_purchase') }}</span>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-success" @click="startCloudScale('sqlmap')">{{ t('start') }}</button>
+                            <button class="btn btn-outline-danger" @click="stopCloudScale('sqlmap')">{{ t('stop') }}</button>
+                            <button class="btn btn-outline-warning" @click="cleanupCloudInstances('sqlmap')">{{ t('one_click_cleanup') }}</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-2">
+                            <div class="col-12"><span class="badge" :class="cloud.sqlmap_autoscale_status === 'running' ? 'bg-success' : (cloud.sqlmap_autoscale_status === 'expired' ? 'bg-warning text-dark' : 'bg-secondary')">{{ cloud.sqlmap_autoscale_status || 'stopped' }}</span></div>
+                            <div class="col-12 text-muted small">{{ t('cloud_purchase_hint') }}</div>
+                            <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('max_usd_h') }}</label><input class="form-control" type="number" step="0.001" v-model.number="cloud.sqlmap_max_price_usd_per_hour"></div>
+                            <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('hourly_budget') }}</label><input class="form-control" type="number" step="0.001" v-model.number="cloud.sqlmap_hourly_budget_usd"></div>
+                            <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('budget_hours') }}</label><input class="form-control" type="number" v-model.number="cloud.sqlmap_budget_hours"></div>
+                            <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('sqlmap_concurrency') }}</label><input class="form-control" type="number" min="1" v-model.number="cloud.sqlmap_max_concurrency"></div>
+                            <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('min_cpu') }}</label><input class="form-control" type="number" min="1" v-model.number="cloud.sqlmap_min_cpu"></div>
+                            <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('min_memory_gb') }}</label><input class="form-control" type="number" min="1" v-model.number="cloud.sqlmap_min_memory_gb"></div>
+                            <div class="col-12"><label class="form-label small text-muted mb-1">{{ t('instance_type_optional') }}</label><input class="form-control" v-model="cloud.sqlmap_instance_type" :placeholder="t('instance_type_example')"></div>
+                            <div class="col-12">
+                                <label class="form-label small text-muted mb-1">{{ t('proxy_strategy') }}</label>
+                                <select class="form-select" v-model="cloud.cloud_proxy_mode">
+                                    <option value="none">{{ t('cloud_proxy_none') }}</option>
+                                    <option value="round_robin">{{ t('cloud_proxy_round_robin') }}</option>
+                                    <option value="specified">{{ t('cloud_proxy_specified') }}</option>
+                                </select>
+                            </div>
+                            <div class="col-12" v-if="cloud.cloud_proxy_mode === 'specified'">
+                                <label class="form-label small text-muted mb-1">{{ t('specified_proxy_node') }}</label>
+                                <select class="form-select" v-model.number="cloud.cloud_proxy_agent_id">
+                                    <option :value="0">{{ t('proxy_none') }}</option>
+                                    <option v-for="p in proxyAgents" :key="'cloud-proxy-' + p.ID" :value="p.ID">{{ p.name }}</option>
+                                </select>
+                            </div>
+                            <div class="col-12"><button class="btn btn-primary w-100" @click="saveCloud">{{ t('save') }}</button></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-xl-6">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>{{ t('awvs_instances') }}</span>
+                        <span class="text-muted small">{{ t('hourly_total') }}: {{ formatUSD(awvsCloudHourlyTotalUSD) }} USD/h</span>
+                    </div>
+                    <div class="card-body p-0 table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead><tr><th>ID</th><th>{{ t('instance') }}</th><th>{{ t('region_zone') }}</th><th>{{ t('spec') }}</th><th>{{ t('status') }}</th><th>{{ t('price') }}</th><th>{{ t('heartbeat') }}</th><th>{{ t('failure_reason') }}</th></tr></thead>
+                            <tbody>
+                            <tr v-for="item in awvsCloudInstances" :key="'awvs-'+item.ID"><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td>{{ item.spot_price_usd }}</td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td></tr>
+                            <tr v-if="awvsCloudInstances.length===0"><td colspan="8" class="text-center muted py-4">{{ t('no_cloud_instances') }}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-xl-6">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>{{ t('sqlmap_instances') }}</span>
+                        <span class="text-muted small">{{ t('hourly_total') }}: {{ formatUSD(sqlmapCloudHourlyTotalUSD) }} USD/h</span>
+                    </div>
+                    <div class="card-body p-0 table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead><tr><th>ID</th><th>{{ t('instance') }}</th><th>{{ t('region_zone') }}</th><th>{{ t('spec') }}</th><th>{{ t('status') }}</th><th>{{ t('price') }}</th><th>{{ t('heartbeat') }}</th><th>{{ t('failure_reason') }}</th></tr></thead>
+                            <tbody>
+                            <tr v-for="item in sqlmapCloudInstances" :key="'sqlmap-'+item.ID"><td>{{ item.ID }}</td><td><small class="text-muted">{{ item.instance_id }}</small></td><td>{{ item.region }} / {{ item.zone }}</td><td><small class="text-muted">{{ item.cpu || '?' }}C / {{ item.memory_gb || '?' }}G</small></td><td><span class="badge bg-info">{{ item.status }}</span></td><td>{{ item.spot_price_usd }}</td><td>{{ item.last_heartbeat_at || 0 }}</td><td><small class="text-muted text-break">{{ item.failure_reason || '-' }}</small></td></tr>
+                            <tr v-if="sqlmapCloudInstances.length===0"><td colspan="8" class="text-center muted py-4">{{ t('no_cloud_instances') }}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12">
+                <div class="text-end text-muted small">{{ t('hourly_total') }}: {{ formatUSD(cloudHourlyTotalUSD) }} USD/h</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="position-fixed p-3" style="top: 0; right: 0; z-index: 1080; width: 360px;">
+        <div v-for="notice in notices" :key="notice.id" class="alert mb-2" :class="'alert-' + notice.type">
+            {{ notice.message }}
+        </div>
+    </div>
+
+    <div class="modal fade show d-block" tabindex="-1" v-if="awvsEditId">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border-subtle);">
+                <div class="modal-header">
+                    <h5 class="modal-title">{{ t('edit_awvs_node') }} #{{ awvsEditId }}</h5>
+                    <button type="button" class="btn-close btn-close-white" @click="cancelEditAWVS"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-3"><input class="form-control" v-model="awvsEdit.name" :placeholder="t('node_name')"></div>
+                        <div class="col-md-4"><input class="form-control" v-model="awvsEdit.url" placeholder="https://host:3443"></div>
+                        <div class="col-md-3"><input class="form-control" v-model="awvsEdit.api_key" :placeholder="t('api_key')"></div>
+                        <div class="col-md-2"><input class="form-control" type="number" v-model.number="awvsEdit.max_concurrency" :placeholder="t('concurrency')"></div>
+                        <div class="col-md-6"><input class="form-control" v-model="awvsEdit.awvs_username" :placeholder="t('awvs_username')"></div>
+                        <div class="col-md-6"><input class="form-control" v-model="awvsEdit.awvs_password" :placeholder="t('awvs_password')"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @click="cancelEditAWVS">{{ t('cancel') }}</button>
+                    <button type="button" class="btn btn-outline-info" @click="testAWVS(awvsEdit)">{{ t('test_connection') }}</button>
+                    <button type="button" class="btn btn-primary" @click="saveAWVS">{{ t('save_changes') }}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade show d-block" tabindex="-1" v-if="agentEditId">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border-subtle);">
+                <div class="modal-header">
+                    <h5 class="modal-title">{{ t('edit_sqlmap_agent') }} #{{ agentEditId }}</h5>
+                    <button type="button" class="btn-close btn-close-white" @click="cancelEditAgent"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-3"><input class="form-control" v-model="agentEdit.name" :placeholder="t('agent_name')"></div>
+                        <div class="col-md-4"><input class="form-control" v-model="agentEdit.url" placeholder="http://host:5000"></div>
+                        <div class="col-md-3"><input class="form-control" v-model="agentEdit.api_key" :placeholder="t('api_key')"></div>
+                        <div class="col-md-2"><input class="form-control" type="number" v-model.number="agentEdit.max_concurrency" :placeholder="t('concurrency')"></div>
+                        <div class="col-md-4 d-flex align-items-center">
+                            <label class="form-check-label">
+                                <input class="form-check-input me-2" type="checkbox" v-model="agentEdit.default_use_proxy">
+                                {{ t('default_use_proxy') }}
+                            </label>
+                        </div>
+                        <div class="col-md-4 d-flex align-items-center">
+                            <label class="form-check-label">
+                                <input class="form-check-input me-2" type="checkbox" v-model="agentEdit.share_by_domain">
+                                {{ t('share_by_domain') }}
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @click="cancelEditAgent">{{ t('cancel') }}</button>
+                    <button type="button" class="btn btn-outline-info" @click="testAgent(agentEdit)">{{ t('test_connection') }}</button>
+                    <button type="button" class="btn btn-primary" @click="saveAgent">{{ t('save_changes') }}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade show d-block" tabindex="-1" v-if="confirmDialog.visible">
+        <div class="modal-dialog">
+            <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border-subtle);">
+                <div class="modal-header">
+                    <h5 class="modal-title">{{ t('confirm') }}</h5>
+                </div>
+                <div class="modal-body">{{ confirmDialog.message }}</div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @click="resolveConfirm(false)">{{ t('cancel') }}</button>
+                    <button type="button" class="btn btn-primary" @click="resolveConfirm(true)">{{ t('confirm') }}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade show d-block" tabindex="-1" v-if="globalSqlmapModalVisible">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border-subtle);">
+                <div class="modal-header">
+                    <h5 class="modal-title">{{ t('sqlmap_global_defaults') }}</h5>
+                    <button type="button" class="btn-close btn-close-white" @click="closeGlobalSqlmapOptionsModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-3"><label class="form-label">{{ t('sqlmap_opt_level') }}</label><select class="form-select" v-model.number="globalSqlmapOptions.level"><option :value="1">1</option><option :value="2">2</option><option :value="3">3</option><option :value="4">4</option><option :value="5">5</option></select></div>
+                        <div class="col-md-3"><label class="form-label">{{ t('sqlmap_opt_risk') }}</label><select class="form-select" v-model.number="globalSqlmapOptions.risk"><option :value="1">1</option><option :value="2">2</option><option :value="3">3</option></select></div>
+                        <div class="col-md-3"><label class="form-label">{{ t('sqlmap_opt_threads') }}</label><input class="form-control" type="number" min="1" max="20" v-model.number="globalSqlmapOptions.threads"></div>
+                        <div class="col-md-3"><label class="form-label">{{ t('sqlmap_opt_timeout') }}</label><input class="form-control" type="number" min="5" v-model.number="globalSqlmapOptions.timeout"></div>
+                        <div class="col-md-3"><label class="form-label">{{ t('sqlmap_opt_retries') }}</label><input class="form-control" type="number" min="0" max="10" v-model.number="globalSqlmapOptions.retries"></div>
+                        <div class="col-md-3"><label class="form-label">{{ t('sqlmap_opt_technique') }}</label><select class="form-select" v-model="globalSqlmapOptions.technique"><option value="">{{ t('auto_tech') }}</option><option value="B">B</option><option value="E">E</option><option value="U">U</option><option value="S">S</option><option value="T">T</option><option value="Q">Q</option></select></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check-label"><input class="form-check-input me-2" type="checkbox" v-model="globalSqlmapOptions.randomAgent">{{ t('sqlmap_opt_random_agent') }}</label></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check-label"><input class="form-check-input me-2" type="checkbox" v-model="globalSqlmapOptions.smart">{{ t('sqlmap_opt_smart') }}</label></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check-label"><input class="form-check-input me-2" type="checkbox" v-model="globalSqlmapOptions.parseErrors">{{ t('sqlmap_opt_parse_errors') }}</label></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check-label"><input class="form-check-input me-2" type="checkbox" v-model="globalSqlmapOptions.keepAlive">{{ t('sqlmap_opt_keep_alive') }}</label></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check-label"><input class="form-check-input me-2" type="checkbox" v-model="globalSqlmapOptions.skipWaf">{{ t('sqlmap_opt_skip_waf') }}</label></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check-label"><input class="form-check-input me-2" type="checkbox" v-model="globalSqlmapOptions.batch">{{ t('sqlmap_opt_batch') }}</label></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @click="closeGlobalSqlmapOptionsModal">{{ t('cancel') }}</button>
+                    <button type="button" class="btn btn-primary" @click="saveGlobalSqlmapOptions">{{ t('save') }}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade show d-block" tabindex="-1" v-if="findingSqlmapModalVisible">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content" style="background: var(--bg-card); border: 1px solid var(--border-subtle);">
+                <div class="modal-header">
+                    <h5 class="modal-title">{{ t('finding_sqlmap_config') }}</h5>
+                    <button type="button" class="btn-close btn-close-white" @click="closeFindingSqlmapOptionsModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="text-muted small mb-3">{{ t('finding_sqlmap_config_hint') }}</div>
+                    <div class="row g-3">
+                        <div class="col-md-3"><label class="form-label">{{ t('sqlmap_opt_level') }}</label><select class="form-select" v-model.number="findingSqlmapOptions.level"><option :value="1">1</option><option :value="2">2</option><option :value="3">3</option><option :value="4">4</option><option :value="5">5</option></select></div>
+                        <div class="col-md-3"><label class="form-label">{{ t('sqlmap_opt_risk') }}</label><select class="form-select" v-model.number="findingSqlmapOptions.risk"><option :value="1">1</option><option :value="2">2</option><option :value="3">3</option></select></div>
+                        <div class="col-md-3"><label class="form-label">{{ t('sqlmap_opt_threads') }}</label><input class="form-control" type="number" min="1" max="20" v-model.number="findingSqlmapOptions.threads"></div>
+                        <div class="col-md-3"><label class="form-label">{{ t('sqlmap_opt_timeout') }}</label><input class="form-control" type="number" min="5" v-model.number="findingSqlmapOptions.timeout"></div>
+                        <div class="col-md-3"><label class="form-label">{{ t('sqlmap_opt_retries') }}</label><input class="form-control" type="number" min="0" max="10" v-model.number="findingSqlmapOptions.retries"></div>
+                        <div class="col-md-3"><label class="form-label">{{ t('sqlmap_opt_technique') }}</label><select class="form-select" v-model="findingSqlmapOptions.technique"><option value="">{{ t('auto_tech') }}</option><option value="B">B</option><option value="E">E</option><option value="U">U</option><option value="S">S</option><option value="T">T</option><option value="Q">Q</option></select></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check-label"><input class="form-check-input me-2" type="checkbox" v-model="findingSqlmapOptions.randomAgent">{{ t('sqlmap_opt_random_agent') }}</label></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check-label"><input class="form-check-input me-2" type="checkbox" v-model="findingSqlmapOptions.smart">{{ t('sqlmap_opt_smart') }}</label></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check-label"><input class="form-check-input me-2" type="checkbox" v-model="findingSqlmapOptions.parseErrors">{{ t('sqlmap_opt_parse_errors') }}</label></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check-label"><input class="form-check-input me-2" type="checkbox" v-model="findingSqlmapOptions.keepAlive">{{ t('sqlmap_opt_keep_alive') }}</label></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check-label"><input class="form-check-input me-2" type="checkbox" v-model="findingSqlmapOptions.skipWaf">{{ t('sqlmap_opt_skip_waf') }}</label></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check-label"><input class="form-check-input me-2" type="checkbox" v-model="findingSqlmapOptions.batch">{{ t('sqlmap_opt_batch') }}</label></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" @click="closeFindingSqlmapOptionsModal">{{ t('cancel') }}</button>
+                    <button type="button" class="btn btn-primary" @click="saveFindingSqlmapOptions">{{ t('save') }}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-backdrop fade show" v-if="globalSqlmapModalVisible || findingSqlmapModalVisible || awvsEditId || agentEditId || confirmDialog.visible"></div>
+</div>
+
+<script>
+const I18N = {
+    en: {
+        tagline: 'Automatic advanced injection orchestration',
+        lang_en: 'English',
+        lang_zh: 'Chinese',
+        tab_tasks: 'Tasks',
+        tab_awvs: 'AWVS Nodes',
+        tab_sqlmap: 'Sqlmap Agents',
+        tab_proxy: 'Proxy Agents',
+        tab_cloud: 'Cloud Spot',
+        add_targets: 'Add Targets',
+        targets_placeholder: 'https://example.com\nhttps://target.test',
+        submit_targets: 'Submit Targets',
+        task_list: 'Task List',
+        filter_all: 'All',
+        filter_has_data: 'Has Data',
+        filter_has_shell: 'Has Shell',
+        filter_has_injection: 'Injection Identified',
+        filter_has_finding: 'Has Finding',
+        title_delete_selected: 'Delete selected tasks',
+        delete_selected: 'Delete Selected',
+        title_clean_empty: 'Delete tasks with NO DATA, NO SHELL, and sqlmap NOT RUNNING',
+        clean_empty_sqli: 'Clean Empty SQLi',
+        title_clean_0_vuln: 'Delete tasks where AWVS finished but found 0 vulnerabilities',
+        clean_0_vuln: 'Clean 0 Vuln',
+        refresh: 'Refresh',
+        target: 'Target',
+        results: 'Results',
+        action: 'Action',
+        badge_data: 'Data',
+        badge_shell: 'Shell',
+        badge_injection: 'Injection',
+        details: 'Details',
+        no_tasks: 'No tasks found matching criteria',
+        per_page: 'page',
+        total: 'Total',
+        prev: 'Prev',
+        next: 'Next',
+        page: 'Page',
+        of: 'of',
+        confirm_cleanup_empty: 'This will delete tasks that have NO DATA, NO SHELL, and sqlmap is NOT RUNNING, and will also delete their targets from AWVS. Continue?',
+        confirm_cleanup_0_vuln: 'This will delete tasks where AWVS finished scanning but found ZERO vulnerabilities. Their AWVS targets will also be removed. Continue?',
+        confirm_batch_delete: 'Are you sure you want to delete {count} selected tasks and their associated AWVS targets?',
+        one_click_cleanup: 'One-click Cleanup',
+        cleanup_offline_nodes: 'Cleanup Offline',
+        confirm_cloud_cleanup_awvs: 'This will stop AWVS autoscale and terminate all AWVS spot instances now. Continue?',
+        confirm_cloud_cleanup_sqlmap: 'This will stop SQLMap autoscale and terminate all SQLMap spot instances now. Continue?',
+        confirm_cleanup_offline_awvs: 'Delete all offline AWVS nodes now?',
+        confirm_cleanup_offline_sqlmap: 'Delete all offline SQLMap nodes now?',
+
+        task_detail: 'Task Detail',
+        refresh_detail: 'Refresh Detail',
+        close: 'Close',
+        sqli_findings: 'SQLi Findings',
+        force_retry_push: 'Force Retry Push',
+        force_retry_task_push: 'Task Retry Push',
+        retry_target_auto: 'Auto Balance',
+        select_finding_hint: 'Select a pushed finding above to load its sqlmap detail.',
+        awvs_raw_detail: 'AWVS Raw Vulnerability Detail',
+        recent_logs: 'Recent Logs',
+
+        generate_awvs_cmd: 'Generate AWVS Install Command',
+        awvs_node_name: 'AWVS node name',
+        concurrency: 'Concurrency',
+        generate: 'Generate',
+        copy_command: 'Copy Command',
+        register_installed_awvs: 'Register Installed AWVS',
+        register_awvs: 'Register AWVS',
+        manual_add_awvs: 'Manual Add AWVS Node',
+        awvs_nodes: 'AWVS Nodes',
+        awvs_username: 'AWVS Username',
+        awvs_password: 'AWVS Password',
+        node_name: 'Node name',
+        api_key: 'API key',
+        add_node_manually: 'Add Node Manually',
+        online: 'Online',
+        offline: 'Offline',
+        label_url: 'URL',
+        label_key: 'Key',
+        max_concurrency: 'Max concurrency',
+        last_checked: 'Last checked',
+        edit: 'Edit',
+        del: 'Del',
+        save_changes: 'Save Changes',
+        test_connection: 'Test Connection',
+        cancel: 'Cancel',
+        no_awvs_nodes: 'No AWVS nodes configured.',
+        edit_awvs_node: 'Edit AWVS Node',
+
+        generate_sqlmap_cmd: 'Generate Install Command',
+        agent_name: 'Agent name',
+        register_installed_agent: 'Register Installed Agent',
+        register_agent: 'Register Agent',
+        managed_agents: 'Managed Agents',
+        name: 'Name',
+        token: 'Token',
+        running: 'Running',
+        queued: 'Queued',
+        limit: 'Limit',
+        status: 'Status',
+        sync: 'Sync',
+        no_sqlmap_agents: 'No sqlmap agents registered.',
+        edit_sqlmap_agent: 'Edit Sqlmap Agent',
+        sqlmap_agent_defaults: 'Sqlmap Agent Global Defaults',
+        sqlmap_new_agent_default_proxy: 'Default use proxy for new agents (manual and cloud auto-created)',
+        share_by_domain: 'Share By Domain',
+        sqlmap_global_defaults: 'Global Sqlmap Defaults',
+        finding_sqlmap_config: 'Finding Sqlmap Config',
+        finding_sqlmap_config_hint: 'This config only affects the current finding and overrides global defaults.',
+        default_use_proxy: 'Default Use Proxy',
+        sqlmap_opt_level: 'Level',
+        sqlmap_opt_risk: 'Risk',
+        sqlmap_opt_threads: 'Threads',
+        sqlmap_opt_timeout: 'Timeout',
+        sqlmap_opt_retries: 'Retries',
+        sqlmap_opt_technique: 'Technique',
+        sqlmap_opt_random_agent: 'Random Agent',
+        sqlmap_opt_smart: 'Smart',
+        sqlmap_opt_parse_errors: 'Parse Errors',
+        sqlmap_opt_keep_alive: 'Keep Alive',
+        sqlmap_opt_skip_waf: 'Skip WAF',
+        sqlmap_opt_batch: 'Batch',
+
+        proxy_agent: 'Proxy Agent',
+        proxy_none: 'None',
+        use_proxy: 'Use Proxy',
+        generate_proxy_cmd: 'Generate Proxy Install Command',
+        register_installed_proxy: 'Register Installed Proxy Agent',
+        register_proxy: 'Register Proxy Agent',
+        proxy_install_hint: 'Run this command on the proxy server. After it starts, copy the generated vless link from its output and paste it into the register box on the right.',
+        proxy_optional_name: 'Optional node name',
+        proxy_list: 'Proxy Agents',
+        proxy_server_host: 'Server host/IP',
+        proxy_server_auto_ipv4: 'Public IPv4 auto via ip.sb -4',
+        proxy_tunnel_host: 'Tunnel host',
+        proxy_tunnel_port: 'Tunnel port',
+        proxy_user: 'Username',
+        proxy_pass: 'Password',
+        proxy_listen_port: 'Listen port',
+        proxy_tunnel: 'Tunnel',
+        transport: 'Transport',
+        proxy_listen: 'Listen',
+        create: 'Create',
+        copy_link: 'Copy Link',
+        proxy_empty: 'No proxy agents yet.',
+
+        cloud_settings: 'Cloud Settings',
+        cloud_autoscale_state: 'Autoscale State',
+        cloud_remaining_seconds: 'Window Remaining (sec)',
+        start: 'Start',
+        stop: 'Stop',
+        save: 'Save',
+        enabled: 'Enabled',
+        secret_id: 'Secret ID',
+        secret_key: 'Secret Key',
+        cloud_credentials: 'Cloud Credentials',
+        save_credentials: 'Save Credentials',
+        cloud_cred_saved: 'Credentials saved.',
+        cloud_cred_missing: 'Credentials missing.',
+        cloud_cred_hint: 'Leave masked values unchanged to keep existing credentials.',
+        max_usd_h: 'Max USD/h',
+        hourly_budget: 'Hourly Budget',
+        budget_hours: 'Budget Hours',
+        awvs_concurrency: 'AWVS Concurrency',
+        sqlmap_concurrency: 'Sqlmap Concurrency',
+        cloud_proxy_none: 'No Proxy',
+        cloud_proxy_round_robin: 'Proxy Round Robin',
+        cloud_proxy_specified: 'Specified Proxy',
+        awvs_cloud_purchase: 'AWVS Spot Purchase',
+        sqlmap_cloud_purchase: 'SQLMap Spot Purchase',
+        awvs_instances: 'AWVS Instances',
+        sqlmap_instances: 'SQLMap Instances',
+        min_cpu: 'Min CPU Cores',
+        min_memory_gb: 'Min Memory (GB)',
+        instance_type_optional: 'Instance Type (optional)',
+        instance_type_example: 'For example: S5.MEDIUM2',
+        cloud_purchase_hint: 'Set budget and constraints, system buys the cheapest spot instances that meet CPU/Memory limits.',
+        proxy_strategy: 'Proxy Strategy',
+        specified_proxy_node: 'Specified Proxy Node',
+        instance_type: 'Instance Type',
+        image_id: 'Image ID',
+        key_id: 'Key ID',
+        security_group_id: 'Security Group ID',
+        cloud_auto_managed_desc: 'Auto mode: Ubuntu 24.04 image, default instance type, random password login, and open-all security group are handled by panel.',
+        spot_instances: 'Spot Instances',
+        instance: 'Instance',
+        region_zone: 'Region/Zone',
+        spec: 'Spec',
+        price: 'Price',
+        heartbeat: 'Heartbeat',
+        failure_reason: 'Failure Reason',
+        hourly_total: 'Hourly Total',
+        no_cloud_instances: 'No cloud instances yet.'
+        ,
+        summary_awvs_node: 'AWVS Node',
+        summary_awvs_status: 'AWVS Status',
+        summary_target: 'Target',
+        summary_findings: 'Findings',
+        summary_selected_vuln: 'Selected Vuln',
+        no_findings: 'No findings matching criteria.',
+        th_vuln_id: 'Vuln ID',
+        th_url_path: 'URL Path',
+        th_sent: 'Sent',
+        th_agent: 'Agent',
+        th_sqlmap_status: 'Sqlmap Status',
+        th_sqlmap_techniques: 'Tech',
+        yes: 'yes',
+        no: 'no',
+        inspect: 'Inspect',
+        summary_status: 'Status',
+        summary_phase: 'Phase',
+        summary_action: 'Action',
+        summary_current_db: 'Current DB',
+        actions_label: 'Actions',
+        title_force_tech: 'Force injection technique',
+        auto_tech: 'Auto Tech',
+        tech_b: 'B: Boolean-based blind',
+        tech_e: 'E: Error-based',
+        tech_u: 'U: Union query-based',
+        tech_s: 'S: Stacked queries',
+        tech_t: 'T: Time-based blind',
+        tech_q: 'Q: Inline queries',
+        btn_current_db: 'Current DB',
+        btn_databases: 'Databases',
+        btn_tables: 'Tables',
+        btn_columns: 'Columns',
+        btn_dump_data: 'Dump Data',
+        btn_probe_shell: 'Probe Shell',
+        injection_points: 'Injection Points',
+        no_injection_data: 'No injection data yet',
+        search: 'Search',
+        clear: 'Clear',
+        search_placeholder: 'Find in DBs, tables, columns, or data...',
+        no_search_results: 'No search results',
+        proxy_requested: 'Requested Proxy',
+        proxy_effective: 'Runtime Proxy (from temp config)',
+        proxy_config_file: 'Runtime Config File',
+        label_db: 'DB',
+        label_tbl: 'TBL',
+        label_col: 'COL',
+        database_tree: 'Database Tree',
+        all_databases_root: 'All Databases',
+        expand: 'Expand',
+        collapse: 'Collapse',
+        auto_run_databases: 'Auto Run Databases',
+        no_db_tree_data: 'No database tree data yet. Try running an action above.',
+        priority: 'priority',
+        run_tables: 'Run Tables',
+        no_tables_loaded: 'No tables loaded for this DB.',
+        cols_short: 'Cols',
+        data_short: 'Data',
+        no_columns_loaded: 'No columns loaded',
+        shell_capability: 'Shell Capability',
+        session_state: 'Session State'
+        ,
+        finding_not_bound_hint: 'This finding is saved. It is not currently bound to a sqlmap task. Use Retry Push to bind it again.',
+        request_failed: 'Request failed',
+        no_logs: 'No logs',
+        check: 'check',
+        confirm: 'Confirm'
+    },
+    zh: {
+        tagline: '\u81ea\u52a8\u9ad8\u7ea7\u6ce8\u5165\u6d41\u7a0b\u7f16\u6392',
+        lang_en: '\u82f1\u6587',
+        lang_zh: '\u4e2d\u6587',
+        tab_tasks: '\u4efb\u52a1',
+        tab_awvs: 'AWVS \u8282\u70b9',
+        tab_sqlmap: 'Sqlmap \u4ee3\u7406',
+        tab_proxy: '\u4ee3\u7406\u7f51\u5173',
+        tab_cloud: '\u4e91\u7ade\u4ef7',
+        add_targets: '\u6dfb\u52a0\u76ee\u6807',
+        targets_placeholder: 'https://example.com\nhttps://target.test',
+        submit_targets: '\u63d0\u4ea4\u76ee\u6807',
+        task_list: '\u4efb\u52a1\u5217\u8868',
+        filter_all: '\u5168\u90e8',
+        filter_has_data: '\u6709\u6570\u636e',
+        filter_has_shell: '\u6709\u6a21\u62df Shell',
+        filter_has_injection: '\u5df2\u8bc6\u522b\u6ce8\u5165\u70b9',
+        filter_has_finding: '\u6709 Finding',
+        title_delete_selected: '\u5220\u9664\u9009\u4e2d\u4efb\u52a1',
+        delete_selected: '\u5220\u9664\u9009\u4e2d',
+        title_clean_empty: '\u6e05\u7406\u6ca1\u6709\u6570\u636e\u3001\u6ca1\u6709 Shell \u4e14 sqlmap \u4e0d\u5728\u8fd0\u884c\u7684\u4efb\u52a1',
+        clean_empty_sqli: '\u6e05\u7406\u7a7a SQLi',
+        title_clean_0_vuln: '\u6e05\u7406 AWVS \u5df2\u5b8c\u6210\u4f46\u6ca1\u6709\u6f0f\u6d1e\u7684\u4efb\u52a1',
+        clean_0_vuln: '\u6e05\u7406 0 \u6f0f\u6d1e',
+        refresh: '\u5237\u65b0',
+        target: '\u76ee\u6807',
+        results: '\u7ed3\u679c',
+        action: '\u64cd\u4f5c',
+        badge_data: '\u6570\u636e',
+        badge_shell: 'Shell',
+        badge_injection: '\u6ce8\u5165',
+        details: '\u8be6\u60c5',
+        no_tasks: '\u6ca1\u6709\u5339\u914d\u7684\u4efb\u52a1',
+        per_page: '\u6bcf\u9875',
+        total: '\u603b\u6570',
+        prev: '\u4e0a\u4e00\u9875',
+        next: '\u4e0b\u4e00\u9875',
+        page: '\u9875',
+        of: '/',
+        confirm_cleanup_empty: '\u5c06\u5220\u9664\u6ca1\u6709\u6570\u636e\u3001\u6ca1\u6709 Shell \u4e14 sqlmap \u4e0d\u5728\u8fd0\u884c\u7684\u4efb\u52a1\uff0c\u540c\u65f6\u4f1a\u5220\u9664\u5176 AWVS target\u3002\u7ee7\u7eed\u5417\uff1f',
+        confirm_cleanup_0_vuln: '\u5c06\u5220\u9664 AWVS \u626b\u63cf\u5df2\u5b8c\u6210\u4f46\u6ca1\u6709\u4efb\u4f55\u6f0f\u6d1e\u7684\u4efb\u52a1\uff0c\u540c\u65f6\u4f1a\u5220\u9664\u5176 AWVS target\u3002\u7ee7\u7eed\u5417\uff1f',
+        confirm_batch_delete: '\u786e\u5b9a\u5220\u9664\u9009\u4e2d\u7684 {count} \u4e2a\u4efb\u52a1\u53ca\u5176\u5bf9\u5e94\u7684 AWVS target \u5417\uff1f',
+        one_click_cleanup: 'One-click Cleanup',
+        cleanup_offline_nodes: '\u6e05\u7406\u79bb\u7ebf\u8282\u70b9',
+        confirm_cloud_cleanup_awvs: 'This will stop AWVS autoscale and terminate all AWVS spot instances now. Continue?',
+        confirm_cloud_cleanup_sqlmap: 'This will stop SQLMap autoscale and terminate all SQLMap spot instances now. Continue?',
+        confirm_cleanup_offline_awvs: '\u73b0\u5728\u5220\u9664\u6240\u6709\u79bb\u7ebf AWVS \u8282\u70b9\u5417\uff1f',
+        confirm_cleanup_offline_sqlmap: '\u73b0\u5728\u5220\u9664\u6240\u6709\u79bb\u7ebf SQLMap \u8282\u70b9\u5417\uff1f',
+
+        task_detail: '\u4efb\u52a1\u8be6\u60c5',
+        refresh_detail: '\u5237\u65b0\u8be6\u60c5',
+        close: '\u5173\u95ed',
+        sqli_findings: 'SQLi \u6f0f\u6d1e',
+        force_retry_push: '\u5f3a\u5236\u91cd\u65b0\u6295\u9012',
+        force_retry_task_push: '\u4efb\u52a1\u7ea7\u91cd\u65b0\u6295\u9012',
+        retry_target_auto: '\u81ea\u52a8\u5747\u8861',
+        select_finding_hint: '\u8bf7\u5148\u9009\u4e2d\u4e0a\u65b9\u7684\u6f0f\u6d1e\u6761\u76ee\u4ee5\u52a0\u8f7d sqlmap \u8be6\u60c5\u3002',
+        awvs_raw_detail: 'AWVS \u539f\u59cb\u6f0f\u6d1e\u8be6\u60c5',
+        recent_logs: '\u6700\u8fd1\u65e5\u5fd7',
+
+        generate_awvs_cmd: '\u751f\u6210 AWVS \u5b89\u88c5\u547d\u4ee4',
+        awvs_node_name: 'AWVS \u8282\u70b9\u540d\u79f0',
+        concurrency: '\u5e76\u53d1',
+        generate: '\u751f\u6210',
+        copy_command: '\u590d\u5236\u547d\u4ee4',
+        register_installed_awvs: '\u6ce8\u518c\u5df2\u5b89\u88c5\u7684 AWVS',
+        register_awvs: '\u6ce8\u518c AWVS',
+        manual_add_awvs: '\u624b\u52a8\u6dfb\u52a0 AWVS \u8282\u70b9',
+        awvs_nodes: 'AWVS \u8282\u70b9',
+        awvs_username: 'AWVS \u7528\u6237\u540d',
+        awvs_password: 'AWVS \u5bc6\u7801',
+        node_name: '\u8282\u70b9\u540d\u79f0',
+        api_key: 'API Key',
+        add_node_manually: '\u624b\u52a8\u6dfb\u52a0',
+        online: '\u5728\u7ebf',
+        offline: '\u79bb\u7ebf',
+        label_url: 'URL',
+        label_key: '\u5bc6\u94a5',
+        max_concurrency: '\u6700\u5927\u5e76\u53d1',
+        last_checked: '\u4e0a\u6b21\u68c0\u67e5',
+        edit: '\u7f16\u8f91',
+        del: '\u5220\u9664',
+        save_changes: '\u4fdd\u5b58\u4fee\u6539',
+        test_connection: '\u6d4b\u8bd5\u8fde\u63a5',
+        cancel: '\u53d6\u6d88',
+        no_awvs_nodes: '\u5f53\u524d\u6ca1\u6709 AWVS \u8282\u70b9\u3002',
+        edit_awvs_node: '\u7f16\u8f91 AWVS \u8282\u70b9',
+
+        generate_sqlmap_cmd: '\u751f\u6210\u5b89\u88c5\u547d\u4ee4',
+        agent_name: '\u4ee3\u7406\u540d\u79f0',
+        register_installed_agent: '\u6ce8\u518c\u5df2\u5b89\u88c5\u7684\u4ee3\u7406',
+        register_agent: '\u6ce8\u518c\u4ee3\u7406',
+        managed_agents: '\u5df2\u7ba1\u7406\u7684\u4ee3\u7406',
+        name: '\u540d\u79f0',
+        token: 'Token',
+        running: '\u8fd0\u884c\u4e2d',
+        queued: '\u961f\u5217\u4e2d',
+        limit: '\u4e0a\u9650',
+        status: '\u72b6\u6001',
+        sync: '\u540c\u6b65',
+        no_sqlmap_agents: '\u5f53\u524d\u6ca1\u6709 sqlmap \u4ee3\u7406\u3002',
+        edit_sqlmap_agent: '\u7f16\u8f91 Sqlmap \u4ee3\u7406',
+        sqlmap_agent_defaults: 'Sqlmap \u4ee3\u7406\u5168\u5c40\u9ed8\u8ba4',
+        sqlmap_new_agent_default_proxy: '\u65b0\u589e\u4ee3\u7406\u9ed8\u8ba4\u4f7f\u7528\u4ee3\u7406\uff08\u624b\u52a8+\u4e91\u81ea\u52a8\u521b\u5efa\uff09',
+        share_by_domain: '\u540c\u57df\u540d\u5171\u4eab',
+        sqlmap_global_defaults: 'Sqlmap \u5168\u5c40\u9ed8\u8ba4\u914d\u7f6e',
+        finding_sqlmap_config: 'Finding \u7ea7 Sqlmap \u914d\u7f6e',
+        finding_sqlmap_config_hint: '\u4ec5\u5bf9\u5f53\u524d finding \u751f\u6548\uff0c\u4f1a\u8986\u76d6\u5168\u5c40\u9ed8\u8ba4\u914d\u7f6e\u3002',
+        default_use_proxy: '\u9ed8\u8ba4\u4f7f\u7528\u4ee3\u7406',
+        sqlmap_opt_level: 'Level',
+        sqlmap_opt_risk: 'Risk',
+        sqlmap_opt_threads: 'Threads',
+        sqlmap_opt_timeout: 'Timeout',
+        sqlmap_opt_retries: 'Retries',
+        sqlmap_opt_technique: 'Technique',
+        sqlmap_opt_random_agent: 'Random Agent',
+        sqlmap_opt_smart: 'Smart',
+        sqlmap_opt_parse_errors: 'Parse Errors',
+        sqlmap_opt_keep_alive: 'Keep Alive',
+        sqlmap_opt_skip_waf: 'Skip WAF',
+        sqlmap_opt_batch: 'Batch',
+
+        proxy_agent: '\u4ee3\u7406\u8282\u70b9',
+        proxy_none: '\u4e0d\u4f7f\u7528',
+        use_proxy: '\u4f7f\u7528\u4ee3\u7406',
+        generate_proxy_cmd: 'Generate Proxy Install Command',
+        register_installed_proxy: 'Register Installed Proxy Agent',
+        register_proxy: 'Register Proxy Agent',
+        proxy_install_hint: 'Run this command on the proxy server. After it starts, copy the generated vless link from its output and paste it into the register box on the right.',
+        proxy_optional_name: 'Optional node name',
+        proxy_list: '\u4ee3\u7406\u8282\u70b9\u5217\u8868',
+        proxy_server_host: '\u670d\u52a1\u5668\u5730\u5740/IP',
+        proxy_server_auto_ipv4: '\u5bf9\u5916 IPv4 \u81ea\u52a8\u83b7\u53d6 (ip.sb -4)',
+        proxy_tunnel_host: '\u96a7\u9053\u4e3b\u673a',
+        proxy_tunnel_port: '\u96a7\u9053\u7aef\u53e3',
+        proxy_user: '\u7528\u6237\u540d',
+        proxy_pass: '\u5bc6\u7801',
+        proxy_listen_port: '\u76d1\u542c\u7aef\u53e3',
+        proxy_tunnel: '\u96a7\u9053',
+        transport: '\u4f20\u8f93',
+        proxy_listen: '\u76d1\u542c',
+        create: '\u521b\u5efa',
+        copy_link: '\u590d\u5236\u94fe\u63a5',
+        proxy_empty: '\u6682\u65e0\u4ee3\u7406\u8282\u70b9\u3002',
+
+        cloud_settings: '\u4e91\u914d\u7f6e',
+        cloud_autoscale_state: '\u81ea\u52a8\u8d2d\u4e70\u72b6\u6001',
+        cloud_remaining_seconds: '\u5269\u4f59\u65f6\u95f4(\u79d2)',
+        start: '\u542f\u52a8',
+        stop: '\u505c\u6b62',
+        save: '\u4fdd\u5b58',
+        enabled: '\u542f\u7528',
+        secret_id: 'SecretId',
+        secret_key: 'SecretKey',
+        max_usd_h: '\u6700\u9ad8 USD/\u5c0f\u65f6',
+        hourly_budget: '\u6bcf\u5c0f\u65f6\u9884\u7b97',
+        budget_hours: '\u9884\u7b97\u5c0f\u65f6\u6570',
+        awvs_concurrency: 'AWVS \u5e76\u53d1\u6570',
+        sqlmap_concurrency: 'Sqlmap \u5e76\u53d1\u6570',
+        cloud_proxy_none: '\u4e0d\u4f7f\u7528\u4ee3\u7406',
+        cloud_proxy_round_robin: '\u4ee3\u7406\u8f6e\u8be2',
+        cloud_proxy_specified: '\u6307\u5b9a\u4ee3\u7406',
+        awvs_cloud_purchase: 'AWVS \u7ade\u4ef7\u8d2d\u4e70',
+        sqlmap_cloud_purchase: 'SQLMap \u7ade\u4ef7\u8d2d\u4e70',
+        awvs_instances: 'AWVS \u5b9e\u4f8b',
+        sqlmap_instances: 'SQLMap \u5b9e\u4f8b',
+        min_cpu: '\u6700\u5c0fCPU\u6838\u5fc3',
+        min_memory_gb: '\u6700\u5c0f\u5185\u5b58(GB)',
+        instance_type_optional: '\u673a\u578b(\u53ef\u9009)',
+        instance_type_example: '\u4f8b\u5982\uff1aS5.MEDIUM2',
+        cloud_purchase_hint: '\u5148\u8bbe\u7f6e\u9884\u7b97\u548c\u7ea6\u675f\uff0c\u7cfb\u7edf\u4f1a\u5728\u6ee1\u8db3CPU/\u5185\u5b58\u7684\u524d\u63d0\u4e0b\u9009\u6700\u4fbf\u5b9c\u7ade\u4ef7\u673a\u3002',
+        proxy_strategy: '\u4ee3\u7406\u7b56\u7565',
+        specified_proxy_node: '\u6307\u5b9a\u4ee3\u7406\u8282\u70b9',
+        instance_type: '\u673a\u578b',
+        image_id: '\u955c\u50cf ID',
+        key_id: '\u5bc6\u94a5 ID',
+        security_group_id: '\u5b89\u5168\u7ec4 ID',
+        cloud_auto_managed_desc: '\u81ea\u52a8\u6a21\u5f0f\uff1aUbuntu 24.04 \u955c\u50cf\u3001\u9ed8\u8ba4\u673a\u578b\u3001\u968f\u673a\u5bc6\u7801\u767b\u5f55\u3001\u5168\u653e\u901a\u5b89\u5168\u7ec4\u5747\u7531\u9762\u677f\u81ea\u52a8\u5904\u7406\u3002',
+        spot_instances: '\u7ade\u4ef7\u5b9e\u4f8b',
+        instance: '\u5b9e\u4f8b',
+        region_zone: '\u533a\u57df/\u53ef\u7528\u533a',
+        spec: '\u89c4\u683c',
+        price: '\u4ef7\u683c',
+        heartbeat: '\u5fc3\u8df3',
+        failure_reason: '\u5931\u8d25\u539f\u56e0',
+        hourly_total: 'Hourly Total',
+        no_cloud_instances: '\u5f53\u524d\u6ca1\u6709\u4e91\u5b9e\u4f8b\u3002'
+        ,
+        summary_awvs_node: 'AWVS \u8282\u70b9',
+        summary_awvs_status: 'AWVS \u72b6\u6001',
+        summary_target: '\u76ee\u6807',
+        summary_findings: '\u6f0f\u6d1e\u6570',
+        summary_selected_vuln: '\u9009\u4e2d\u6f0f\u6d1e',
+        no_findings: '\u6ca1\u6709\u5339\u914d\u7684\u6f0f\u6d1e\u8bb0\u5f55\u3002',
+        th_vuln_id: '\u6f0f\u6d1e ID',
+        th_url_path: 'URL \u8def\u5f84',
+        th_sent: '\u5df2\u6295\u9012',
+        th_agent: '\u4ee3\u7406',
+        th_sqlmap_status: 'Sqlmap \u72b6\u6001',
+        th_sqlmap_techniques: '\u6280\u672f',
+        yes: '\u662f',
+        no: '\u5426',
+        inspect: '\u67e5\u770b',
+        summary_status: '\u72b6\u6001',
+        summary_phase: '\u9636\u6bb5',
+        summary_action: '\u64cd\u4f5c',
+        summary_current_db: '\u5f53\u524d DB',
+        actions_label: '\u52a8\u4f5c',
+        title_force_tech: '\u5f3a\u5236\u6307\u5b9a\u6ce8\u5165\u6280\u672f',
+        auto_tech: '\u81ea\u52a8\u6280\u672f',
+        tech_b: 'B: \u5e03\u5c14\u76f2\u6ce8',
+        tech_e: 'E: \u62a5\u9519\u6ce8\u5165',
+        tech_u: 'U: UNION \u6ce8\u5165',
+        tech_s: 'S: \u5806\u53e0\u67e5\u8be2',
+        tech_t: 'T: \u65f6\u95f4\u76f2\u6ce8',
+        tech_q: 'Q: \u5185\u8054\u67e5\u8be2',
+        btn_current_db: '\u5f53\u524d DB',
+        btn_databases: '\u6570\u636e\u5e93',
+        btn_tables: '\u8868',
+        btn_columns: '\u5217',
+        btn_dump_data: '\u5bfc\u51fa\u6570\u636e',
+        btn_probe_shell: '\u63a2\u6d4b Shell',
+        injection_points: '\u6ce8\u5165\u70b9',
+        no_injection_data: '\u6682\u65e0\u6ce8\u5165\u6570\u636e',
+        search: '\u641c\u7d22',
+        clear: '\u6e05\u7a7a',
+        search_placeholder: '\u641c\u7d22\u6570\u636e\u5e93\u3001\u8868\u3001\u5217\u6216\u6570\u636e...',
+        no_search_results: '\u65e0\u641c\u7d22\u7ed3\u679c',
+        proxy_requested: '\u671f\u671b\u4ee3\u7406',
+        proxy_effective: '\u5b9e\u9645\u4ee3\u7406\uff08\u4ece\u4e34\u65f6\u914d\u7f6e\u8bfb\u53d6\uff09',
+        proxy_config_file: '\u5b9e\u9645\u914d\u7f6e\u6587\u4ef6',
+        label_db: 'DB',
+        label_tbl: '\u8868',
+        label_col: '\u5217',
+        database_tree: '\u6570\u636e\u5e93\u6811',
+        all_databases_root: '\u6240\u6709\u6570\u636e\u5e93',
+        expand: '\u5c55\u5f00',
+        collapse: '\u6298\u53e0',
+        auto_run_databases: '\u81ea\u52a8\u83b7\u53d6\u6570\u636e\u5e93',
+        no_db_tree_data: '\u6682\u65e0\u6570\u636e\u5e93\u6811\u6570\u636e\uff0c\u53ef\u5148\u6267\u884c\u4e0a\u65b9\u52a8\u4f5c\u3002',
+        priority: '\u4f18\u5148\u7ea7',
+        run_tables: '\u83b7\u53d6\u8868',
+        no_tables_loaded: '\u8be5 DB \u6682\u65e0\u8868\u6570\u636e\u3002',
+        cols_short: '\u5217',
+        data_short: '\u6570\u636e',
+        no_columns_loaded: '\u6682\u65e0\u5217\u6570\u636e',
+        shell_capability: 'Shell \u80fd\u529b',
+        session_state: '\u4f1a\u8bdd\u72b6\u6001'
+        ,
+        finding_not_bound_hint: '\u8be5 finding \u5df2\u5165\u5e93\uff0c\u4f46\u5f53\u524d\u672a\u7ed1\u5b9a sqlmap \u4efb\u52a1\uff0c\u53ef\u70b9\u51fb Retry Push \u91cd\u65b0\u7ed1\u5b9a\u3002',
+        request_failed: '\u8bf7\u6c42\u5931\u8d25',
+        no_logs: '\u6682\u65e0\u65e5\u5fd7',
+        check: '\u67e5\u770b',
+        confirm: '\u786e\u8ba4'
+    }
+};
+
+new Vue({
+    el: '#app',
+    data: {
+        activeTab: 'tasks',
+        language: 'en',
+        servers: [],
+        agents: [],
+        tasks: [],
+        newUrls: '',
+        newAWVS: { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 },
+        newAgent: { name: '', max_concurrency: 10, proxy_agent_id: 0 },
+        dockerCmd: '',
+        awvsDockerCmd: '',
+        protocolLink: '',
+        awvsProtocolLink: '',
+        registerResult: null,
+        awvsRegisterResult: null,
+        awvsActionResult: null,
+        awvsEditId: null,
+        awvsEdit: { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 },
+        agentEditId: null,
+        agentEdit: { name: '', url: '', api_key: '', max_concurrency: 10, default_use_proxy: true, share_by_domain: true },
+        selectedTaskId: null,
+        selectedTask: null,
+        taskDetail: null,
+        taskFindings: [],
+        selectedFindingId: null,
+        selectedFinding: null,
+        taskDetailError: '',
+        taskActionBusy: false,
+        taskActionMessage: '',
+        treeRootExpanded: false,
+        expandedDatabases: {},
+        expandedTables: {},
+        searchQuery: '',
+        searchResults: [],
+        searchBusy: false,
+        taskFilter: 'all',
+        findingFilter: 'all',
+        selectedTech: '',
+        selectedTaskIds: [],
+        retrySqlmapAgentId: 0,
+        requestEditMode: false,
+        requestDraft: '',
+        currentPage: 1,
+        pageSize: 20,
+        findingPage: 1,
+        findingPageSize: 20,
+        cloud: {
+            max_price_usd_per_hour: 0.02,
+            hourly_budget_usd: 0,
+            budget_hours: 0,
+            enabled: false,
+            autoscale_status: 'stopped',
+            autoscale_remaining_sec: 0,
+            instance_type: '',
+            awvs_max_price_usd_per_hour: 0.02,
+            awvs_hourly_budget_usd: 0,
+            awvs_budget_hours: 0,
+            awvs_autoscale_status: 'stopped',
+            awvs_autoscale_remaining_sec: 0,
+            awvs_instance_type: '',
+            awvs_min_cpu: 1,
+            awvs_min_memory_gb: 1,
+            awvs_max_concurrency: 5,
+            sqlmap_max_price_usd_per_hour: 0.02,
+            sqlmap_hourly_budget_usd: 0,
+            sqlmap_budget_hours: 0,
+            sqlmap_autoscale_status: 'stopped',
+            sqlmap_autoscale_remaining_sec: 0,
+            sqlmap_instance_type: '',
+            sqlmap_min_cpu: 1,
+            sqlmap_min_memory_gb: 1,
+            sqlmap_max_concurrency: 10,
+            cloud_proxy_mode: 'round_robin',
+            cloud_proxy_agent_id: 0,
+            image_id: '',
+            key_id: '',
+            security_group_id: '',
+            interact_cmd: 'interact.sh client',
+            sqlmap_default_options: ''
+        },
+        cloudCred: {
+            secret_id: '',
+            secret_key: ''
+        },
+        cloudCredStatus: {
+            secret_id_set: false,
+            secret_key_set: false,
+            secret_id_masked: ''
+        },
+        cloudInstances: [],
+        proxyAgents: [],
+        newProxy: {
+            name: '',
+            tunnel_protocol: 'socks5',
+            tunnel_host: '',
+            tunnel_port: 0,
+            tunnel_username: '',
+            tunnel_password: '',
+            listen_port: 443
+        },
+        proxyRegister: {
+            link: '',
+            name: ''
+        },
+        proxyRegisterResult: null,
+        proxyDockerCmd: '',
+        proxyLink: '',
+        sqlmapDefaults: {
+            sqlmap_agent_default_use_proxy: true
+        },
+        globalSqlmapModalVisible: false,
+        findingSqlmapModalVisible: false,
+        findingSqlmapTargetId: 0,
+        globalSqlmapOptions: {
+            level: 5,
+            risk: 3,
+            threads: 4,
+            timeout: 20,
+            retries: 4,
+            randomAgent: true,
+            smart: true,
+            parseErrors: true,
+            keepAlive: true,
+            skipWaf: true,
+            batch: true,
+            technique: ''
+        },
+        findingSqlmapOptions: {
+            level: 5,
+            risk: 3,
+            threads: 4,
+            timeout: 20,
+            retries: 4,
+            randomAgent: true,
+            smart: true,
+            parseErrors: true,
+            keepAlive: true,
+            skipWaf: true,
+            batch: true,
+            technique: ''
+        },
+        notices: [],
+        confirmDialog: {
+            visible: false,
+            message: '',
+            resolver: null
+        }
+    },
+    computed: {
+        filteredTasks() {
+            if (this.taskFilter === 'has_data') return this.tasks.filter(t => t.has_data);
+            if (this.taskFilter === 'has_shell') return this.tasks.filter(t => t.has_shell);
+            if (this.taskFilter === 'has_injection') return this.tasks.filter(t => t.has_injection);
+            if (this.taskFilter === 'has_finding') return this.tasks.filter(t => t.has_finding);
+            return this.tasks;
+        },
+        paginatedTasks() {
+            const start = (this.currentPage - 1) * this.pageSize;
+            const end = start + this.pageSize;
+            return this.filteredTasks.slice(start, end);
+        },
+        totalPages() {
+            return Math.ceil(this.filteredTasks.length / this.pageSize);
+        },
+        visiblePageNumbers() {
+            const total = this.totalPages || 1;
+            const current = Math.min(Math.max(1, this.currentPage), total);
+            let start = Math.max(1, current - 2);
+            let end = Math.min(total, current + 2);
+            if (end - start < 4) {
+                if (start === 1) {
+                    end = Math.min(total, start + 4);
+                } else if (end === total) {
+                    start = Math.max(1, end - 4);
+                }
+            }
+            const pages = [];
+            for (let p = start; p <= end; p += 1) {
+                pages.push(p);
+            }
+            return pages;
+        },
+        filteredFindings() {
+            if (this.findingFilter === 'has_data') return this.taskFindings.filter(f => f.has_data);
+            if (this.findingFilter === 'has_shell') return this.taskFindings.filter(f => f.has_shell);
+            if (this.findingFilter === 'has_injection') return this.taskFindings.filter(f => f.has_injection);
+            return this.taskFindings;
+        },
+        paginatedFindings() {
+            const start = (this.findingPage - 1) * this.findingPageSize;
+            const end = start + this.findingPageSize;
+            return this.filteredFindings.slice(start, end);
+        },
+        findingTotalPages() {
+            return Math.ceil(this.filteredFindings.length / this.findingPageSize);
+        },
+        findingVisiblePageNumbers() {
+            const total = this.findingTotalPages || 1;
+            const current = Math.min(Math.max(1, this.findingPage), total);
+            let start = Math.max(1, current - 2);
+            let end = Math.min(total, current + 2);
+            if (end - start < 4) {
+                if (start === 1) {
+                    end = Math.min(total, start + 4);
+                } else if (end === total) {
+                    start = Math.max(1, end - 4);
+                }
+            }
+            const pages = [];
+            for (let p = start; p <= end; p += 1) {
+                pages.push(p);
+            }
+            return pages;
+        },
+        awvsCloudInstances() {
+            return this.cloudInstances.filter(x => x.workload === 'awvs');
+        },
+        sqlmapCloudInstances() {
+            return this.cloudInstances.filter(x => x.workload === 'sqlmap');
+        },
+        awvsCloudHourlyTotalUSD() {
+            return this.sumCloudPrices(this.awvsCloudInstances);
+        },
+        sqlmapCloudHourlyTotalUSD() {
+            return this.sumCloudPrices(this.sqlmapCloudInstances);
+        },
+        cloudHourlyTotalUSD() {
+            return this.awvsCloudHourlyTotalUSD + this.sqlmapCloudHourlyTotalUSD;
+        }
+    },
+    watch: {
+            taskFilter() {
+                this.currentPage = 1;
+                this.selectedTaskIds = [];
+            },
+            totalPages() {
+                const total = this.totalPages || 1;
+                if (this.currentPage > total) {
+                    this.currentPage = total;
+                }
+            },
+            findingFilter() {
+                this.findingPage = 1;
+            },
+            findingTotalPages() {
+                const total = this.findingTotalPages || 1;
+                if (this.findingPage > total) {
+                    this.findingPage = total;
+                }
+            }
+        },
+        mounted() {
+        this.initLanguage();
+        this.fetchData();
+        setInterval(this.fetchData, 15000);
+        setInterval(this.refreshSelectedTaskSilently, 10000);
+    },
+    methods: {
+        t(key) {
+            const pack = I18N[this.language] || I18N.en;
+            return (pack && pack[key]) || I18N.en[key] || key;
+        },
+        tf(key, vars) {
+            let s = this.t(key);
+            Object.keys(vars || {}).forEach(k => {
+                s = s.split('{' + k + '}').join(String(vars[k]));
+            });
+            return s;
+        },
+        sumCloudPrices(items) {
+            return (items || []).reduce((sum, item) => {
+                const v = Number(item && item.spot_price_usd);
+                return sum + (Number.isFinite(v) ? v : 0);
+            }, 0);
+        },
+        formatUSD(v) {
+            const num = Number(v);
+            return Number.isFinite(num) ? num.toFixed(6) : '0.000000';
+        },
+        sqlmapOptionsTemplate() {
+            return {
+                level: 5,
+                risk: 3,
+                threads: 4,
+                timeout: 20,
+                retries: 4,
+                randomAgent: true,
+                smart: true,
+                parseErrors: true,
+                keepAlive: true,
+                skipWaf: true,
+                batch: true,
+                technique: ''
+            };
+        },
+        normalizeSqlmapOptions(options) {
+            const source = Object.assign(this.sqlmapOptionsTemplate(), options || {});
+            return {
+                level: Math.max(1, Math.min(5, Number(source.level) || 5)),
+                risk: Math.max(1, Math.min(3, Number(source.risk) || 3)),
+                threads: Math.max(1, Math.min(20, Number(source.threads) || 4)),
+                timeout: Math.max(5, Number(source.timeout) || 20),
+                retries: Math.max(0, Math.min(10, Number(source.retries) || 4)),
+                randomAgent: !!source.randomAgent,
+                smart: !!source.smart,
+                parseErrors: !!source.parseErrors,
+                keepAlive: !!source.keepAlive,
+                skipWaf: !!source.skipWaf,
+                batch: !!source.batch,
+                technique: (source.technique || '').trim()
+            };
+        },
+        decodeSqlmapOptions(raw) {
+            if (!raw) return this.sqlmapOptionsTemplate();
+            try {
+                return this.normalizeSqlmapOptions(JSON.parse(raw));
+            } catch (_) {
+                return this.sqlmapOptionsTemplate();
+            }
+        },
+        encodeSqlmapOptions(options) {
+            return JSON.stringify(this.normalizeSqlmapOptions(options));
+        },
+        initLanguage() {
+            const saved = localStorage.getItem('lang');
+            if (saved === 'en' || saved === 'zh') {
+                this.language = saved;
+                return;
+            }
+            const langs = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || 'en']).map(s => String(s).toLowerCase());
+            this.language = langs.some(l => l.startsWith('zh')) ? 'zh' : 'en';
+            localStorage.setItem('lang', this.language);
+        },
+        persistLanguage() {
+            localStorage.setItem('lang', this.language);
+        },
+        notify(message, type = 'info', duration = 10000) {
+            const id = Date.now() + Math.random();
+            this.notices.push({ id, message: String(message || ''), type });
+            setTimeout(() => {
+                this.notices = this.notices.filter(item => item.id !== id);
+            }, duration);
+        },
+        notifyError(message) {
+            this.notify(message, 'danger');
+        },
+        notifySuccess(message) {
+            this.notify(message, 'success');
+        },
+        askConfirm(message) {
+            return new Promise(resolve => {
+                this.confirmDialog = {
+                    visible: true,
+                    message: String(message || ''),
+                    resolver: resolve
+                };
+            });
+        },
+        resolveConfirm(accepted) {
+            const resolver = this.confirmDialog && this.confirmDialog.resolver;
+            this.confirmDialog = { visible: false, message: '', resolver: null };
+            if (typeof resolver === 'function') {
+                resolver(!!accepted);
+            }
+        },
+        fetchData() {
+            axios.get('/api/servers').then(res => this.servers = res.data);
+            axios.get('/api/sqlmap/agents').then(res => this.agents = res.data);
+            this.fetchSqlmapDefaults();
+            axios.get('/api/tasks').then(res => {
+                this.tasks = res.data;
+                if (this.selectedTaskId) {
+                    const current = this.tasks.find(item => item.ID === this.selectedTaskId);
+                    if (current) {
+                        this.selectedTask = current;
+                    }
+                }
+            });
+            this.fetchCloud();
+            this.fetchProxyAgents();
+        },
+        fetchSqlmapDefaults() {
+            axios.get('/api/sqlmap/defaults').then(res => {
+                this.sqlmapDefaults = Object.assign({}, this.sqlmapDefaults, res.data);
+            });
+        },
+        saveSqlmapDefaults() {
+            axios.put('/api/sqlmap/defaults', {
+                sqlmap_agent_default_use_proxy: !!this.sqlmapDefaults.sqlmap_agent_default_use_proxy
+            }).then(() => {
+                this.fetchSqlmapDefaults();
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        fetchProxyAgents() {
+            axios.get('/api/proxy/agents').then(res => this.proxyAgents = res.data);
+        },
+        createProxyAgentConfig() {
+            this.proxyDockerCmd = '';
+            const payload = {
+                name: this.newProxy.name,
+                tunnel_protocol: this.newProxy.tunnel_protocol,
+                tunnel_host: this.newProxy.tunnel_host,
+                tunnel_port: this.newProxy.tunnel_port,
+                tunnel_username: this.newProxy.tunnel_username,
+                tunnel_password: this.newProxy.tunnel_password,
+                listen_port: this.newProxy.listen_port
+            };
+            axios.post('/api/proxy/agents/config', payload).then(res => {
+                this.proxyDockerCmd = res.data.docker_cmd_bash || res.data.docker_cmd || '';
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        registerProxyFromLink() {
+            this.proxyRegisterResult = null;
+            axios.post('/api/proxy/agents/register', {
+                link: this.proxyRegister.link,
+                name: this.proxyRegister.name
+            }).then(res => {
+                this.proxyRegisterResult = res.data;
+                this.proxyRegister = { link: '', name: '' };
+                this.fetchProxyAgents();
+            }).catch(err => {
+                this.proxyRegisterResult = { error: this.extractError(err) };
+            });
+        },
+        deleteProxyAgent(id) {
+            axios.delete('/api/proxy/agents/' + id).then(() => this.fetchProxyAgents()).catch(err => this.notifyError(this.extractError(err)));
+        },
+        getProxyLink(p) {
+            const name = encodeURIComponent(p.name || 'proxy');
+            return `vless://${p.client_id}@${p.server_host}:${p.listen_port}?encryption=none&type=tcp#${name}`;
+        },
+        copyText(text) {
+            navigator.clipboard.writeText(text || '').catch(() => {});
+        },
+        updateFindingProxy(finding, enabled) {
+            axios.put('/api/findings/' + finding.ID, { use_proxy: !!enabled }).then(res => {
+                const updated = res.data.finding;
+                const idx = this.taskFindings.findIndex(item => item.ID === updated.ID);
+                if (idx >= 0) {
+                    this.taskFindings[idx].use_proxy = updated.use_proxy;
+                }
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        fetchCloud() {
+            axios.get('/api/cloud/settings').then(res => {
+                this.cloud = Object.assign({}, this.cloud, res.data);
+                this.globalSqlmapOptions = this.decodeSqlmapOptions(this.cloud.sqlmap_default_options || '');
+            });
+            axios.get('/api/cloud/credentials').then(res => this.cloudCredStatus = Object.assign({}, this.cloudCredStatus, res.data));
+            axios.get('/api/cloud/instances').then(res => this.cloudInstances = res.data);
+        },
+        saveCloudCredentials() {
+            axios.put('/api/cloud/credentials', {
+                secret_id: this.cloudCred.secret_id,
+                secret_key: this.cloudCred.secret_key
+            }).then(() => {
+                this.cloudCred.secret_key = '';
+                this.fetchCloud();
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        saveCloud() {
+            const payload = {
+                max_price_usd_per_hour: this.cloud.max_price_usd_per_hour,
+                hourly_budget_usd: this.cloud.hourly_budget_usd,
+                budget_hours: this.cloud.budget_hours,
+                enabled: this.cloud.enabled,
+                instance_type: this.cloud.instance_type,
+                awvs_max_concurrency: this.cloud.awvs_max_concurrency,
+                sqlmap_max_concurrency: this.cloud.sqlmap_max_concurrency,
+                awvs_auto_enabled: this.cloud.awvs_auto_enabled,
+                sqlmap_auto_enabled: this.cloud.sqlmap_auto_enabled,
+                awvs_max_price_usd_per_hour: this.cloud.awvs_max_price_usd_per_hour,
+                sqlmap_max_price_usd_per_hour: this.cloud.sqlmap_max_price_usd_per_hour,
+                awvs_hourly_budget_usd: this.cloud.awvs_hourly_budget_usd,
+                sqlmap_hourly_budget_usd: this.cloud.sqlmap_hourly_budget_usd,
+                awvs_budget_hours: this.cloud.awvs_budget_hours,
+                sqlmap_budget_hours: this.cloud.sqlmap_budget_hours,
+                awvs_instance_type: this.cloud.awvs_instance_type,
+                sqlmap_instance_type: this.cloud.sqlmap_instance_type,
+                awvs_min_cpu: this.cloud.awvs_min_cpu,
+                awvs_min_memory_gb: this.cloud.awvs_min_memory_gb,
+                sqlmap_min_cpu: this.cloud.sqlmap_min_cpu,
+                sqlmap_min_memory_gb: this.cloud.sqlmap_min_memory_gb,
+                cloud_proxy_mode: this.cloud.cloud_proxy_mode,
+                cloud_proxy_agent_id: this.cloud.cloud_proxy_agent_id || 0,
+                image_id: this.cloud.image_id,
+                key_id: this.cloud.key_id,
+                security_group_id: this.cloud.security_group_id,
+                vpc_id: this.cloud.vpc_id,
+                subnet_id: this.cloud.subnet_id,
+                interact_cmd: this.cloud.interact_cmd,
+                sqlmap_default_options: this.encodeSqlmapOptions(this.globalSqlmapOptions)
+            };
+            axios.put('/api/cloud/settings', payload).then(() => this.fetchCloud());
+        },
+        openGlobalSqlmapOptionsModal() {
+            this.globalSqlmapOptions = this.decodeSqlmapOptions(this.cloud.sqlmap_default_options || '');
+            this.globalSqlmapModalVisible = true;
+        },
+        closeGlobalSqlmapOptionsModal() {
+            this.globalSqlmapModalVisible = false;
+        },
+        saveGlobalSqlmapOptions() {
+            this.globalSqlmapOptions = this.normalizeSqlmapOptions(this.globalSqlmapOptions);
+            this.cloud.sqlmap_default_options = this.encodeSqlmapOptions(this.globalSqlmapOptions);
+            this.globalSqlmapModalVisible = false;
+            this.saveCloud();
+        },
+        openFindingSqlmapOptionsModal() {
+            if (!this.selectedFindingId || !this.selectedFinding) return;
+            this.findingSqlmapTargetId = this.selectedFindingId;
+            this.findingSqlmapOptions = this.decodeSqlmapOptions(this.selectedFinding.sqlmap_options || '');
+            this.findingSqlmapModalVisible = true;
+        },
+        closeFindingSqlmapOptionsModal() {
+            this.findingSqlmapModalVisible = false;
+            this.findingSqlmapTargetId = 0;
+        },
+        saveFindingSqlmapOptions() {
+            const targetId = this.findingSqlmapTargetId || this.selectedFindingId;
+            if (!targetId) return;
+            const optionsJSON = this.encodeSqlmapOptions(this.findingSqlmapOptions);
+            axios.put('/api/findings/' + targetId, {
+                sqlmap_options: optionsJSON
+            }).then(res => {
+                const updated = res.data.finding;
+                const idx = this.taskFindings.findIndex(item => item.ID === updated.ID);
+                if (idx >= 0) {
+                    this.taskFindings[idx].sqlmap_options = updated.sqlmap_options;
+                }
+                if (this.selectedFinding && this.selectedFinding.ID === updated.ID) {
+                    this.selectedFinding.sqlmap_options = updated.sqlmap_options;
+                }
+                this.findingSqlmapModalVisible = false;
+                this.findingSqlmapTargetId = 0;
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        startCloudScale(workload) {
+            const kind = workload || 'all';
+            axios.post('/api/cloud/scale/start?workload=' + encodeURIComponent(kind)).then(() => this.fetchCloud());
+        },
+        stopCloudScale(workload) {
+            const kind = workload || 'all';
+            axios.post('/api/cloud/scale/stop?workload=' + encodeURIComponent(kind)).then(() => this.fetchCloud());
+        },
+        async cleanupCloudInstances(workload) {
+            const kind = workload || 'awvs';
+            const confirmKey = kind === 'sqlmap' ? 'confirm_cloud_cleanup_sqlmap' : 'confirm_cloud_cleanup_awvs';
+            if (!(await this.askConfirm(this.t(confirmKey)))) return;
+            axios.post('/api/cloud/instances/cleanup?workload=' + encodeURIComponent(kind)).then(res => {
+                if (res && res.data && res.data.message) {
+                    this.notifySuccess(res.data.message + ' (' + (res.data.terminated_count || 0) + ')');
+                }
+                this.fetchCloud();
+                this.fetchData();
+                this.fetchAgents();
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        async cleanupOfflineNodes(kind) {
+            const target = kind === 'sqlmap' ? 'sqlmap' : 'awvs';
+            const confirmKey = target === 'sqlmap' ? 'confirm_cleanup_offline_sqlmap' : 'confirm_cleanup_offline_awvs';
+            const url = target === 'sqlmap' ? '/api/sqlmap/agents/cleanup-offline' : '/api/servers/cleanup-offline';
+            if (!(await this.askConfirm(this.t(confirmKey)))) return;
+            axios.post(url).then(res => {
+                if (res && res.data && res.data.message) {
+                    this.notifySuccess(res.data.message + ' (' + (res.data.deleted_count || 0) + ')');
+                }
+                this.fetchData();
+                this.fetchAgents();
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        fetchAgents() {
+            axios.get('/api/sqlmap/agents').then(res => this.agents = res.data);
+        },
+        addTasks() {
+            const urls = this.newUrls.split('\n').map(item => item.trim()).filter(Boolean);
+            if (!urls.length) return;
+            axios.post('/api/tasks', { urls }).then(() => {
+                this.newUrls = '';
+                this.fetchData();
+            });
+        },
+        async cleanupTasks() {
+            if (!(await this.askConfirm(this.t('confirm_cleanup_empty')))) {
+                return;
+            }
+            axios.post('/api/tasks/cleanup').then(res => {
+                this.notifySuccess(res.data.message);
+                if (this.selectedTask && !this.selectedTask.has_data && !this.selectedTask.has_shell && this.selectedTask.sqlmap_status !== 'running') {
+                    this.clearTaskSelection();
+                }
+                this.fetchData();
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        async cleanupNoVulnTasks() {
+            if (!(await this.askConfirm(this.t('confirm_cleanup_0_vuln')))) {
+                return;
+            }
+            axios.post('/api/tasks/cleanup-no-vuln').then(res => {
+                this.notifySuccess(res.data.message);
+                this.fetchData();
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        async batchDeleteTasks() {
+            if (!this.selectedTaskIds.length) return;
+            if (!(await this.askConfirm(this.tf('confirm_batch_delete', { count: this.selectedTaskIds.length })))) {
+                return;
+            }
+            axios.post('/api/tasks/batch-delete', { ids: this.selectedTaskIds }).then(res => {
+                this.notifySuccess(res.data.message);
+                if (this.selectedTaskIds.includes(this.selectedTaskId)) {
+                    this.clearTaskSelection();
+                }
+                this.selectedTaskIds = [];
+                this.fetchData();
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        toggleAllTasks(e) {
+            if (e.target.checked) {
+                this.selectedTaskIds = this.paginatedTasks.map(t => t.ID);
+            } else {
+                this.selectedTaskIds = [];
+            }
+        },
+        addAWVS() {
+            if (!this.newAWVS.url || !this.newAWVS.api_key) return;
+            this.awvsActionResult = null;
+            axios.post('/api/servers', this.newAWVS).then(res => {
+                this.awvsActionResult = res.data;
+                this.newAWVS = { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 };
+                this.fetchData();
+            }).catch(err => {
+                this.awvsActionResult = { error: this.extractError(err) };
+            });
+        },
+        createAWVSConfig() {
+            axios.post('/api/awvs/config', { name: this.newAWVS.name, max_concurrency: this.newAWVS.max_concurrency }).then(res => {
+                this.awvsDockerCmd = res.data.docker_cmd;
+                this.awvsRegisterResult = null;
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        copyAWVSCmd() {
+            navigator.clipboard.writeText(this.awvsDockerCmd).then(() => {
+                // optional visual feedback
+            });
+        },
+        registerAWVSProtocol() {
+            this.awvsRegisterResult = null;
+            axios.post('/api/awvs/register', { protocol_link: this.awvsProtocolLink }).then(res => {
+                this.awvsRegisterResult = res.data;
+                this.awvsActionResult = res.data;
+                this.awvsProtocolLink = '';
+                this.fetchData();
+            }).catch(err => {
+                this.awvsRegisterResult = { error: this.extractError(err) };
+            });
+        },
+        openEditAWVS(server) {
+            this.awvsActionResult = null;
+            this.awvsEditId = server.ID;
+            this.awvsEdit = {
+                name: server.name || '',
+                url: server.url || '',
+                api_key: server.api_key || '',
+                awvs_username: server.awvs_username || '',
+                awvs_password: server.awvs_password || '',
+                max_concurrency: server.max_concurrency || 5
+            };
+        },
+        cancelEditAWVS() {
+            this.awvsEditId = null;
+            this.awvsEdit = { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 };
+        },
+        saveAWVS() {
+            if (!this.awvsEditId) return;
+            this.awvsActionResult = null;
+            axios.put('/api/servers/' + this.awvsEditId, this.awvsEdit).then(res => {
+                this.awvsActionResult = res.data;
+                this.fetchData();
+            }).catch(err => {
+                this.awvsActionResult = { error: this.extractError(err) };
+            });
+        },
+        refreshAWVS(id) {
+            this.awvsActionResult = null;
+            axios.post('/api/servers/' + id + '/refresh').then(res => {
+                this.awvsActionResult = res.data;
+                this.fetchData();
+            }).catch(err => {
+                this.awvsActionResult = { error: this.extractError(err) };
+            });
+        },
+        testAWVS(server) {
+            const payload = { url: server.url, api_key: server.api_key };
+            axios.post('/api/servers/test', payload).then(res => {
+                this.awvsActionResult = res.data;
+                this.notify(JSON.stringify(res.data.info || {}, null, 2), 'info');
+            }).catch(err => {
+                this.awvsActionResult = { error: this.extractError(err) };
+                this.notifyError(this.extractError(err));
+            });
+        },
+        deleteAWVS(id) {
+            axios.delete('/api/servers/' + id).then(() => {
+                if (this.awvsEditId === id) {
+                    this.cancelEditAWVS();
+                }
+                this.fetchData();
+            });
+        },
+        createAgentConfig() {
+            const payload = {
+                name: this.newAgent.name,
+                max_concurrency: this.newAgent.max_concurrency,
+                proxy_agent_id: this.newAgent.proxy_agent_id || 0
+            };
+            axios.post('/api/sqlmap/agents/config', payload).then(res => {
+                this.dockerCmd = res.data.docker_cmd;
+                this.registerResult = null;
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        copyDockerCmd() {
+            navigator.clipboard.writeText(this.dockerCmd).then(() => {
+            });
+        },
+        registerAgent() {
+            this.registerResult = null;
+            axios.post('/api/sqlmap/agents/register', { protocol_link: this.protocolLink }).then(res => {
+                this.registerResult = res.data;
+                this.protocolLink = '';
+                this.fetchAgents();
+            }).catch(err => {
+                this.registerResult = { error: this.extractError(err) };
+            });
+        },
+        deleteAgent(id) {
+            axios.delete('/api/sqlmap/agents/' + id).then(() => this.fetchAgents());
+        },
+        openEditAgent(agent) {
+            this.agentEditId = agent.ID;
+            this.agentEdit = {
+                name: agent.name || '',
+                url: agent.url || '',
+                api_key: agent.api_key || '',
+                max_concurrency: agent.max_concurrency || 10,
+                default_use_proxy: agent.default_use_proxy !== false,
+                share_by_domain: agent.share_by_domain !== false
+            };
+        },
+        cancelEditAgent() {
+            this.agentEditId = null;
+            this.agentEdit = { name: '', url: '', api_key: '', max_concurrency: 10, default_use_proxy: true, share_by_domain: true };
+        },
+        saveAgent() {
+            if (!this.agentEditId) return;
+            axios.put('/api/sqlmap/agents/' + this.agentEditId, this.agentEdit).then(res => {
+                if (res.data && res.data.error) {
+                    this.notifyError(res.data.error);
+                }
+                this.fetchAgents();
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        refreshAgent(id) {
+            axios.post('/api/sqlmap/agents/' + id + '/refresh').then(() => this.fetchAgents());
+        },
+        testAgent(agent) {
+            axios.post('/api/sqlmap/agents/test', { url: agent.url, api_key: agent.api_key }).then(res => {
+                this.notify(JSON.stringify(res.data.info || {}, null, 2), 'info');
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        selectTask(task) {
+            this.selectedTaskId = task.ID;
+            this.selectedTask = task;
+            this.resetTreeExpandState();
+            this.retrySqlmapAgentId = 0;
+            this.findingPage = 1;
+            this.selectedFindingId = null;
+            this.selectedFinding = null;
+            this.taskActionMessage = '';
+            this.searchResults = [];
+            this.findingFilter = 'all';
+            this.loadTaskDetail(task.ID);
+        },
+        clearTaskSelection() {
+            this.selectedTaskId = null;
+            this.selectedTask = null;
+            this.resetTreeExpandState();
+            this.retrySqlmapAgentId = 0;
+            this.findingPage = 1;
+            this.requestEditMode = false;
+            this.requestDraft = '';
+            this.taskDetail = null;
+            this.taskFindings = [];
+            this.selectedFindingId = null;
+            this.selectedFinding = null;
+            this.taskDetailError = '';
+            this.taskActionMessage = '';
+            this.searchQuery = '';
+            this.searchResults = [];
+        },
+        loadTaskDetail(taskId) {
+            this.taskDetailError = '';
+            this.taskActionMessage = '';
+            axios.get('/api/tasks/' + taskId + '/sqlmap').then(res => {
+                this.taskFindings = res.data.findings || [];
+                if (this.selectedFindingId) {
+                    const currentFinding = this.taskFindings.find(item => item.ID === this.selectedFindingId);
+                    if (currentFinding) {
+                        this.selectedFinding = currentFinding;
+                        if (this.findingHasSqlmapBinding(currentFinding)) {
+                            this.loadFindingDetail(currentFinding.ID, true);
+                        } else {
+                            this.taskDetail = null;
+                        }
+                        return;
+                    }
+                }
+                const firstFinding = this.taskFindings[0];
+                if (firstFinding) {
+                    this.selectFinding(firstFinding);
+                } else {
+                    this.selectedFindingId = null;
+                    this.selectedFinding = null;
+                    this.taskDetail = null;
+                }
+            }).catch(err => {
+                this.taskDetail = null;
+                this.taskFindings = [];
+                this.selectedFindingId = null;
+                this.selectedFinding = null;
+                this.taskDetailError = this.extractError(err);
+            });
+        },
+        refreshSelectedTaskSilently() {
+            if (!this.selectedTaskId) return;
+            axios.get('/api/tasks/' + this.selectedTaskId + '/sqlmap').then(res => {
+                this.taskFindings = res.data.findings || [];
+                if (this.selectedFindingId) {
+                    const currentFinding = this.taskFindings.find(item => item.ID === this.selectedFindingId);
+                    if (currentFinding) {
+                        this.selectedFinding = currentFinding;
+                        if (!this.requestEditMode && this.findingHasSqlmapBinding(currentFinding)) {
+                            this.loadFindingDetail(currentFinding.ID, true);
+                        } else if (!this.findingHasSqlmapBinding(currentFinding)) {
+                            this.taskDetail = null;
+                        }
+                        return;
+                    }
+                }
+                const firstFinding = this.taskFindings[0];
+                if (firstFinding) {
+                    this.selectedFindingId = firstFinding.ID;
+                    this.selectedFinding = firstFinding;
+                    if (!this.requestEditMode && this.findingHasSqlmapBinding(firstFinding)) {
+                        this.loadFindingDetail(firstFinding.ID, true);
+                    } else if (!this.findingHasSqlmapBinding(firstFinding)) {
+                        this.taskDetail = null;
+                    }
+                    return;
+                }
+                this.selectedFindingId = null;
+                this.selectedFinding = null;
+                this.taskDetail = null;
+            }).catch(() => {});
+        },
+        selectFinding(finding) {
+            this.selectedFindingId = finding.ID;
+            this.selectedFinding = finding;
+            if (this.findingHasSqlmapBinding(finding)) {
+                this.loadFindingDetail(finding.ID, false);
+            } else {
+                this.taskDetailError = '';
+                this.taskActionMessage = this.t('finding_not_bound_hint');
+                this.taskDetail = null;
+                this.requestEditMode = false;
+                this.requestDraft = '';
+            }
+        },
+        findingHasSqlmapBinding(finding) {
+            if (!finding) return false;
+            return !!(finding.sqlmap_task_id && finding.sqlmap_agent_id);
+        },
+        loadFindingDetail(findingId, silent) {
+            if (silent && this.requestEditMode) {
+                return;
+            }
+            if (!silent) {
+                this.taskDetailError = '';
+                this.taskActionMessage = '';
+                this.requestEditMode = false;
+                this.requestDraft = '';
+            }
+            axios.get('/api/findings/' + findingId + '/sqlmap').then(res => {
+                this.taskDetail = res.data.scan || res.data;
+                if (!this.requestEditMode) {
+                    this.requestDraft = (this.taskDetail && this.taskDetail.request_content) ? this.taskDetail.request_content : '';
+                }
+                if (res.data.finding) {
+                    this.selectedFinding = res.data.finding;
+                }
+            }).catch(err => {
+                this.taskDetail = null;
+                if (!silent) {
+                    this.taskDetailError = this.extractError(err);
+                }
+            });
+        },
+        startEditRequest() {
+            if (!this.taskDetail) return;
+            this.requestDraft = this.taskDetail.request_content || '';
+            this.requestEditMode = true;
+        },
+        cancelEditRequest() {
+            this.requestEditMode = false;
+            this.requestDraft = (this.taskDetail && this.taskDetail.request_content) ? this.taskDetail.request_content : '';
+        },
+        saveRequestContent() {
+            if (!this.selectedFindingId) return;
+            axios.put('/api/findings/' + this.selectedFindingId + '/sqlmap/request', {
+                request_content: this.requestDraft || ''
+            }).then(() => {
+                this.requestEditMode = false;
+                this.loadFindingDetail(this.selectedFindingId, true);
+            }).catch(err => {
+                this.taskActionMessage = this.extractError(err);
+            });
+        },
+        runTaskAction(action, extraPayload) {
+            if (!this.selectedFindingId) {
+                this.taskActionMessage = 'Select a pushed SQLi finding first';
+                return;
+            }
+            this.taskActionBusy = true;
+            this.taskActionMessage = '';
+            const payload = Object.assign({ action: action }, extraPayload || {});
+            if (this.selectedTech) {
+                payload.technique = this.selectedTech;
+            }
+            axios.post('/api/findings/' + this.selectedFindingId + '/sqlmap/action', payload).then(res => {
+                this.taskActionMessage = res.data.message + ' (' + action + ')';
+                this.fetchData();
+                this.loadFindingDetail(this.selectedFindingId, false);
+            }).catch(err => {
+                this.taskActionMessage = this.extractError(err);
+            }).finally(() => {
+                this.taskActionBusy = false;
+            });
+        },
+        searchTaskTree() {
+            if (!this.selectedFindingId || !this.searchQuery) return;
+            this.searchBusy = true;
+            axios.get('/api/findings/' + this.selectedFindingId + '/sqlmap/search?q=' + encodeURIComponent(this.searchQuery)).then(res => {
+                this.searchResults = res.data.results || [];
+            }).catch(err => {
+                this.taskActionMessage = this.extractError(err);
+            }).finally(() => {
+                this.searchBusy = false;
+            });
+        },
+        clearSearch() {
+            this.searchQuery = '';
+            this.searchResults = [];
+        },
+        retryTaskPush() {
+            if (!this.selectedFindingId) return;
+            this.taskActionBusy = true;
+            this.taskActionMessage = '';
+            axios.post('/api/findings/' + this.selectedFindingId + '/sqlmap/retry-push', {
+                sqlmap_agent_id: this.retrySqlmapAgentId || 0
+            }).then(res => {
+                this.taskActionMessage = res.data.message;
+                this.fetchData();
+                this.refreshSelectedTaskSilently();
+                this.loadFindingDetail(this.selectedFindingId, true);
+            }).catch(err => {
+                this.taskActionMessage = this.extractError(err);
+            }).finally(() => {
+                this.taskActionBusy = false;
+            });
+        },
+        retryTaskLevelPush() {
+            if (!this.selectedTaskId) return;
+            this.taskActionBusy = true;
+            this.taskActionMessage = '';
+            axios.post('/api/tasks/' + this.selectedTaskId + '/sqlmap/retry-push', {
+                sqlmap_agent_id: this.retrySqlmapAgentId || 0
+            }).then(res => {
+                this.taskActionMessage = res.data.message;
+                this.fetchData();
+                this.refreshSelectedTaskSilently();
+            }).catch(err => {
+                this.taskActionMessage = this.extractError(err);
+            }).finally(() => {
+                this.taskActionBusy = false;
+            });
+        },
+        getServerName(id) {
+            const server = this.servers.find(item => item.ID === id);
+            return server ? (server.name || server.url) : '-';
+        },
+        getAgentName(id) {
+            const agent = this.agents.find(item => item.ID === id);
+            return agent ? (agent.name || agent.url) : '-';
+        },
+        getStatusBadgeClass(status) {
+            const mapping = {
+                pending: 'bg-secondary',
+                scanning: 'bg-primary',
+                completed: 'bg-success',
+                failed: 'bg-danger',
+                aborted: 'bg-warning text-dark'
+            };
+            return mapping[status] || 'bg-secondary';
+        },
+        getSqlmapBadgeClass(status) {
+            const mapping = {
+                none: 'badge-soft',
+                queued: 'bg-warning text-dark',
+                running: 'bg-primary',
+                completed: 'bg-success',
+                failed: 'bg-danger',
+                terminated: 'badge-soft'
+            };
+            return mapping[status] || 'badge-soft';
+        },
+        getTaskDetailValue(obj, path) {
+            let current = obj;
+            for (let index = 0; index < path.length; index += 1) {
+                if (!current || current[path[index]] === undefined || current[path[index]] === null) {
+                    return null;
+                }
+                current = current[path[index]];
+            }
+            return current;
+        },
+        getTaskTechniques() {
+            return this.getTaskDetailValue(this.taskDetail, ['content', 'techniques']) || [];
+        },
+        getTreeDatabases() {
+            return this.getTaskDetailValue(this.taskDetail, ['tree', 'databases']) || [];
+        },
+        resetTreeExpandState() {
+            this.treeRootExpanded = false;
+            this.expandedDatabases = {};
+            this.expandedTables = {};
+        },
+        toggleTreeRoot() {
+            this.treeRootExpanded = !this.treeRootExpanded;
+        },
+        toggleDatabaseExpand(databaseName) {
+            const key = String(databaseName || '').trim();
+            if (!key) return;
+            const current = !!this.expandedDatabases[key];
+            this.$set(this.expandedDatabases, key, !current);
+        },
+        isDatabaseExpanded(databaseName) {
+            const key = String(databaseName || '').trim();
+            return !!this.expandedDatabases[key];
+        },
+        tableExpandKey(databaseName, tableName) {
+            return String(databaseName || '').trim() + ':' + String(tableName || '').trim();
+        },
+        toggleTableExpand(databaseName, tableName) {
+            const key = this.tableExpandKey(databaseName, tableName);
+            const current = !!this.expandedTables[key];
+            this.$set(this.expandedTables, key, !current);
+        },
+        isTableExpanded(databaseName, tableName) {
+            const key = this.tableExpandKey(databaseName, tableName);
+            return !!this.expandedTables[key];
+        },
+        getFindingTechniqueList(finding) {
+            const raw = (finding && finding.sqlmap_techniques) ? String(finding.sqlmap_techniques).toUpperCase() : '';
+            if (!raw) return [];
+            const order = ['B', 'E', 'U', 'S', 'T', 'Q'];
+            const seen = {};
+            const out = [];
+            for (let i = 0; i < order.length; i += 1) {
+                const ch = order[i];
+                if (raw.indexOf(ch) >= 0 && !seen[ch]) {
+                    seen[ch] = true;
+                    out.push(ch);
+                }
+            }
+            return out;
+        },
+        extractError(err) {
+            return (err && err.response && err.response.data && err.response.data.error) || (err && err.message) || this.t('request_failed');
+        },
+        formatTime(value) {
+            if (!value) return '-';
+            return new Date(value).toLocaleString();
+        },
+        formatUnixTime(value) {
+            if (!value) return '-';
+            return new Date(value * 1000).toLocaleString();
+        },
+        formatJson(value) {
+            if (value === undefined || value === null || value === '') return '-';
+            return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+        },
+        formatLogs(logs) {
+            if (!logs || !logs.length) return this.t('no_logs');
+            return logs.map(item => '[' + (item.time || '-') + '] ' + (item.level || '-') + ' ' + (item.message || '')).join('\n');
+        }
+    }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+panel.db
+awvs-panel.exe
+
+data/panel.log
+data/*.db
+data/releases/
