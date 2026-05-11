@@ -117,6 +117,7 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 			agent.AgentVersion = strings.TrimSpace(statusResp.Version)
 			agent.LastHeartbeatAt = time.Now().Unix()
 			agent.IsActive = true
+			agent.Updating = false
 			db.Save(&agent)
 		}
 	}

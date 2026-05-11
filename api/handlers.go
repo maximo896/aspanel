@@ -662,6 +662,7 @@ func (api *API) RefreshSqlmapAgentStatus(c *gin.Context) {
 	agent.MaxConcurrency = statusResp.MaxConcurrent
 	agent.AgentVersion = strings.TrimSpace(statusResp.Version)
 	agent.IsActive = true
+	agent.Updating = false
 	agent.LastCheckedAt = time.Now().Unix()
 	api.DB.Save(&agent)
 	c.JSON(200, agent)
@@ -688,6 +689,7 @@ func (api *API) UpdateSqlmapAgentVersion(c *gin.Context) {
 	}
 	api.DB.Model(&models.SqlmapAgent{}).Where("id = ?", agent.ID).Updates(map[string]interface{}{
 		"is_active":         false,
+		"updating":          true,
 		"last_checked_at":   time.Now().Unix(),
 		"last_heartbeat_at": 0,
 	})

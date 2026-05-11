@@ -895,7 +895,10 @@
                         <td><span class="text-warning fw-bold">{{ agent.current_queued }}</span></td>
                         <td><span class="badge" :class="agent.default_use_proxy ? 'bg-success' : 'bg-secondary'">{{ agent.default_use_proxy ? t('yes') : t('no') }}</span></td>
                         <td><span class="badge" :class="agent.share_by_domain !== false ? 'bg-success' : 'bg-secondary'">{{ agent.share_by_domain !== false ? t('yes') : t('no') }}</span></td>
-                        <td><span class="badge" :class="agent.is_active ? 'bg-success' : 'bg-secondary'">{{ agent.is_active ? t('online') : t('offline') }}</span></td>
+                        <td>
+                            <span class="badge bg-warning text-dark" v-if="agent.updating">{{ t('updating') }}</span>
+                            <span class="badge" :class="agent.is_active ? 'bg-success' : 'bg-secondary'" v-else>{{ agent.is_active ? t('online') : t('offline') }}</span>
+                        </td>
                         <td>
                             <div class="btn-group btn-group-sm">
                                 <button class="btn btn-outline-secondary" @click="openEditAgent(agent)">{{ t('edit') }}</button>
@@ -1372,6 +1375,7 @@ const I18N = {
         add_node_manually: 'Add Node Manually',
         online: 'Online',
         offline: 'Offline',
+        updating: 'Updating',
         label_url: 'URL',
         label_key: 'Key',
         max_concurrency: 'Max concurrency',
@@ -1657,6 +1661,7 @@ const I18N = {
         add_node_manually: '\u624b\u52a8\u6dfb\u52a0',
         online: '\u5728\u7ebf',
         offline: '\u79bb\u7ebf',
+        updating: '\u66f4\u65b0\u4e2d',
         label_url: 'URL',
         label_key: '\u5bc6\u94a5',
         max_concurrency: '\u6700\u5927\u5e76\u53d1',

@@ -37,6 +37,7 @@ type SqlmapAgent struct {
 	DefaultUseProxy bool   `json:"default_use_proxy" gorm:"default:true"`
 	ShareByDomain   bool   `json:"share_by_domain" gorm:"default:true"`
 	IsActive        bool   `json:"is_active" gorm:"default:true"`
+	Updating        bool   `json:"updating" gorm:"default:false"`
 	CurrentRunning  int    `json:"current_running"`
 	CurrentQueued   int    `json:"current_queued"`
 	LastCheckedAt   int64  `json:"last_checked_at"`
