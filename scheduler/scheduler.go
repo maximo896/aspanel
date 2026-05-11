@@ -252,6 +252,109 @@ func trimPlainInjectionSuffix(v string) string {
 	return strings.TrimSpace(v)
 }
 
+type decodedByteSpan struct {
+	Decoded string
+	Spans   [][2]int
+}
+
+func percentDecodePreservePlusWithMap(raw string) decodedByteSpan {
+	var b strings.Builder
+	spans := make([][2]int, 0, len(raw))
+	for i := 0; i < len(raw); {
+		if raw[i] == '%' && i+2 < len(raw) {
+			if decoded, err := strconv.ParseUint(raw[i+1:i+3], 16, 8); err == nil {
+				b.WriteByte(byte(decoded))
+				spans = append(spans, [2]int{i, i + 3})
+				i += 3
+				continue
+			}
+		}
+		b.WriteByte(raw[i])
+		spans = append(spans, [2]int{i, i + 1})
+		i++
+	}
+	return decodedByteSpan{
+		Decoded: b.String(),
+		Spans:   spans,
+	}
+}
+
+func encodeReplacementLikeOriginal(originalSegment, replacement string) string {
+	if replacement == "" {
+		return "*"
+	}
+	if !strings.Contains(originalSegment, "%") {
+		return replacement
+	}
+	var b strings.Builder
+	for i := 0; i < len(replacement); i++ {
+		ch := replacement[i]
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || strings.ContainsRune("-._~*/", rune(ch)) {
+			b.WriteByte(ch)
+			continue
+		}
+		b.WriteString(fmt.Sprintf("%%%02X", ch))
+	}
+	return b.String()
+}
+
+func replacePayloadUsingOriginalValue(rawRequest, payload, originalValue string) string {
+	rawRequest = strings.ReplaceAll(rawRequest, "\r\n", "\n")
+	rawRequest = strings.ReplaceAll(rawRequest, "\r", "\n")
+	payload = strings.TrimSpace(payload)
+	originalValue = strings.TrimSpace(originalValue)
+	if rawRequest == "" || payload == "" || originalValue == "" {
+		return rawRequest
+	}
+	decodedRequest := percentDecodePreservePlusWithMap(rawRequest)
+	payloadVariants := payloadVariants(payload)
+	originalVariants := []string{originalValue}
+	if decodedOriginal, err := url.QueryUnescape(originalValue); err == nil && strings.TrimSpace(decodedOriginal) != "" && decodedOriginal != originalValue {
+		originalVariants = append(originalVariants, decodedOriginal)
+	}
+	for _, candidate := range payloadVariants {
+		if strings.TrimSpace(candidate) == "" {
+			continue
+		}
+		matchAt := strings.Index(decodedRequest.Decoded, candidate)
+		if matchAt < 0 {
+			continue
+		}
+		matchEnd := matchAt + len(candidate)
+		if matchEnd > len(decodedRequest.Spans) {
+			continue
+		}
+		origStart := decodedRequest.Spans[matchAt][0]
+		origEnd := decodedRequest.Spans[matchEnd-1][1]
+		originalSegment := rawRequest[origStart:origEnd]
+		decodedMatched := decodedRequest.Decoded[matchAt:matchEnd]
+		replacementBase := ""
+		for _, ov := range originalVariants {
+			if ov == "" {
+				continue
+			}
+			innerAt := strings.Index(decodedMatched, ov)
+			if innerAt < 0 {
+				continue
+			}
+			subStart := matchAt + innerAt
+			subEnd := subStart + len(ov)
+			if subEnd > len(decodedRequest.Spans) {
+				continue
+			}
+			origValueStart := decodedRequest.Spans[subStart][0]
+			origValueEnd := decodedRequest.Spans[subEnd-1][1]
+			replacementBase = rawRequest[origValueStart:origValueEnd]
+			break
+		}
+		if replacementBase == "" {
+			replacementBase = encodeReplacementLikeOriginal(originalSegment, originalValue)
+		}
+		return rawRequest[:origStart] + replacementBase + "*" + rawRequest[origEnd:]
+	}
+	return rawRequest
+}
+
 func payloadReplacement(v string) string {
 	base := trimEncodedInjectionSuffix(v)
 	base = trimPlainInjectionSuffix(base)
@@ -297,6 +400,16 @@ func extractAWVSPayload(details map[string]interface{}, detailsHTML string) stri
 		return p
 	}
 	return ""
+}
+
+func extractAWVSOriginalValue(detailsHTML string) string {
+	decodedDetails := html.UnescapeString(detailsHTML)
+	re := regexp.MustCompile(`(?is)Original value:\s*<strong>(.*?)</strong>`)
+	matches := re.FindStringSubmatch(decodedDetails)
+	if len(matches) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(html.UnescapeString(matches[1]))
 }
 
 func RetryTaskVulnerabilities(db *gorm.DB, taskID uint) error {
@@ -353,8 +466,24 @@ func RetryFindingFromLocal(db *gorm.DB, findingID uint, sqlmapAgentID uint) erro
 		httpRequest = fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: Mozilla/5.0\r\nAccept: */*\r\nConnection: close\r\n\r\n", requestURI, domain)
 	}
 
+	originalValue := ""
+	if strings.TrimSpace(finding.AWVSRaw) != "" {
+		var raw map[string]interface{}
+		if err := json.Unmarshal([]byte(finding.AWVSRaw), &raw); err == nil {
+			if detailsHTML, ok := raw["details"].(string); ok {
+				originalValue = extractAWVSOriginalValue(detailsHTML)
+			}
+		}
+	}
 	if payload := strings.TrimSpace(finding.AWVSPayload); payload != "" {
-		httpRequest = maskPayloadInRawRequest(httpRequest, payload)
+		rewritten := httpRequest
+		if originalValue != "" {
+			rewritten = replacePayloadUsingOriginalValue(httpRequest, payload, originalValue)
+		}
+		if rewritten == httpRequest {
+			rewritten = maskPayloadInRawRequest(httpRequest, payload)
+		}
+		httpRequest = rewritten
 	}
 
 	globalOptions := loadGlobalSqlmapOptions(db)
