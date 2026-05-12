@@ -297,20 +297,20 @@ func (api *API) GetPathManualUpdateCommand(c *gin.Context) {
 		return
 	}
 	cfg, err := api.fetchManagerConfig(agent.ManagerURL, agent.ManagerToken)
-	if err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
 	command, err := buildPathManualUpdateCommand(agent, cfg)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{
+	response := gin.H{
 		"command": command,
 		"name":    agent.Name,
 		"type":    "path",
-	})
+	}
+	if cfg == nil {
+		response["warning"] = "manager health unavailable, using default data dir fallback"
+	}
+	c.JSON(200, response)
 }
 
 func (api *API) RestartPathDocker(c *gin.Context) {

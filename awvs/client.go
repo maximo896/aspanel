@@ -60,6 +60,8 @@ func (c *Client) doReq(method, path string, body interface{}) ([]byte, error) {
 
 	req.Header.Set("X-Auth", c.APIKey)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("User-Agent", "aspanel/1.0")
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -175,25 +177,42 @@ func (c *Client) GetLatestScanID(targetID string) (string, error) {
 }
 
 func (c *Client) CountActiveScans() (int, error) {
-	statusQueries := []string{
-		"/api/v1/scans?l=1000&q=status:processing",
-		"/api/v1/scans?l=1000&q=status:processing;",
-		"/api/v1/scans?l=1000&q=status:starting",
-		"/api/v1/scans?l=1000&q=status:starting;",
+	statusCandidates := map[string][]string{
+		"processing": {
+			"/api/v1/scans?l=20&q=status:processing;",
+			"/api/v1/scans?l=1000&q=status:processing;",
+			"/api/v1/scans?l=20&q=status:processing",
+			"/api/v1/scans?l=1000&q=status:processing",
+		},
+		"starting": {
+			"/api/v1/scans?l=20&q=status:starting;",
+			"/api/v1/scans?l=1000&q=status:starting;",
+			"/api/v1/scans?l=20&q=status:starting",
+			"/api/v1/scans?l=1000&q=status:starting",
+		},
 	}
-	seenStatuses := map[string]bool{}
 	total := 0
-	for _, query := range statusQueries {
-		statusKey := query
-		if idx := strings.Index(statusKey, "q="); idx >= 0 {
-			statusKey = statusKey[idx+2:]
-		}
-		statusKey = strings.TrimSuffix(statusKey, ";")
-		if seenStatuses[statusKey] {
+	successCount := 0
+	for _, status := range []string{"processing", "starting"} {
+		count, err := c.countActiveScansByStatus(statusCandidates[status])
+		if err != nil {
 			continue
 		}
+		total += count
+		successCount++
+	}
+	if successCount == 0 {
+		return 0, fmt.Errorf("count active scans failed")
+	}
+	return total, nil
+}
+
+func (c *Client) countActiveScansByStatus(queries []string) (int, error) {
+	var lastErr error
+	for _, query := range queries {
 		res, err := c.doReq("GET", query, nil)
 		if err != nil {
+			lastErr = err
 			continue
 		}
 		var data struct {
@@ -201,23 +220,28 @@ func (c *Client) CountActiveScans() (int, error) {
 				Count int `json:"count"`
 			} `json:"pagination"`
 			Scans []struct {
-				ScanID string `json:"scan_id"`
+				ScanID         string `json:"scan_id"`
+				CurrentSession struct {
+					Status string `json:"status"`
+				} `json:"current_session"`
 			} `json:"scans"`
 		}
 		if err := json.Unmarshal(res, &data); err != nil {
+			lastErr = err
 			continue
 		}
-		seenStatuses[statusKey] = true
 		if data.Pagination.Count > 0 {
-			total += data.Pagination.Count
-			continue
+			return data.Pagination.Count, nil
 		}
-		total += len(data.Scans)
+		if len(data.Scans) > 0 {
+			return len(data.Scans), nil
+		}
+		return 0, nil
 	}
-	if len(seenStatuses) == 0 {
-		return 0, fmt.Errorf("count active scans failed")
+	if lastErr == nil {
+		lastErr = fmt.Errorf("all candidate queries failed")
 	}
-	return total, nil
+	return 0, lastErr
 }
 
 func (c *Client) GetScanStatus(scanID string) (string, error) {
