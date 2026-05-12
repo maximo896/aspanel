@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -355,6 +356,59 @@ func (api *API) RetryTaskPathScan(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "path scan retry requested", "task_id": idValue})
+}
+
+func (api *API) GetTaskPathScanLogs(c *gin.Context) {
+	taskID, err := parseUint(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid task id"})
+		return
+	}
+	scanID, err := parseUint(c.Param("scanId"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid scan id"})
+		return
+	}
+	var scan models.TaskPathScan
+	if err := api.DB.Where("id = ? AND task_id = ?", scanID, taskID).First(&scan).Error; err != nil {
+		c.JSON(404, gin.H{"error": "path scan not found"})
+		return
+	}
+	if scan.PathAgentID == 0 || strings.TrimSpace(scan.PathTaskID) == "" {
+		c.JSON(400, gin.H{"error": "path scan is not bound to an agent task"})
+		return
+	}
+	var agent models.PathAgent
+	if err := api.DB.First(&agent, scan.PathAgentID).Error; err != nil {
+		c.JSON(404, gin.H{"error": "path agent not found"})
+		return
+	}
+	offset, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("offset", "0")))
+	limit, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "200")))
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	req, _ := http.NewRequest("GET", fmt.Sprintf("%s/scan/%s/log?offset=%d&limit=%d", normalizeBaseURL(agent.URL), scan.PathTaskID, offset, limit), nil)
+	req.Header.Set("X-Api-Token", agent.APIKey)
+	resp, err := httpClient().Do(req)
+	if err != nil {
+		c.JSON(502, gin.H{"error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = fmt.Sprintf("path agent returned %d", resp.StatusCode)
+		}
+		c.JSON(resp.StatusCode, gin.H{"error": message})
+		return
+	}
+	c.Data(200, "application/json", body)
 }
 
 func parseUint(raw string) (uint64, error) {

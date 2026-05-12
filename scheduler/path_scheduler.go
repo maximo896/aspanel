@@ -42,7 +42,7 @@ func refreshPathAgentsStatus(db *gorm.DB) {
 	for {
 		time.Sleep(time.Duration(agentHeartbeatIntervalSec) * time.Second)
 		var agents []models.PathAgent
-		if err := db.Where("is_active = ?", true).Find(&agents).Error; err != nil || len(agents) == 0 {
+		if err := db.Where("is_active = ? OR updating = ?", true, true).Find(&agents).Error; err != nil || len(agents) == 0 {
 			continue
 		}
 		for _, agent := range agents {

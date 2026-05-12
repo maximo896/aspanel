@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -118,6 +119,11 @@ func testAWVSConnection(baseURL, apiKey string) (map[string]interface{}, error) 
 	return client.TestConnection()
 }
 
+func getAWVSActiveScanCount(baseURL, apiKey string) (int, error) {
+	client := awvs.NewClient(normalizeBaseURL(baseURL), strings.TrimSpace(apiKey))
+	return client.CountActiveScans()
+}
+
 func (api *API) countAWVSBoundRunningTasks(serverID uint) int {
 	var count int64
 	api.DB.Model(&models.Task{}).
@@ -131,17 +137,23 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 	server.LastCheckedAt = time.Now().Unix()
 	if err != nil {
 		server.IsActive = false
+		server.CurrentRunning = 0
 		server.LastError = err.Error()
 		api.DB.Save(server)
-		server.CurrentRunning = api.countAWVSBoundRunningTasks(server.ID)
 		return nil, err
 	}
 
 	server.URL = normalizeBaseURL(server.URL)
 	server.IsActive = true
 	server.LastError = ""
+	activeScans, countErr := getAWVSActiveScanCount(server.URL, server.APIKey)
+	if countErr != nil {
+		server.CurrentRunning = 0
+		server.LastError = fmt.Sprintf("count active scans failed: %v", countErr)
+	} else {
+		server.CurrentRunning = activeScans
+	}
 	api.DB.Save(server)
-	server.CurrentRunning = api.countAWVSBoundRunningTasks(server.ID)
 	return info, nil
 }
 
@@ -149,7 +161,12 @@ func (api *API) GetServers(c *gin.Context) {
 	var servers []models.AWVSServer
 	api.DB.Order("id desc").Find(&servers)
 	for i := range servers {
-		servers[i].CurrentRunning = api.countAWVSBoundRunningTasks(servers[i].ID)
+		activeScans, err := getAWVSActiveScanCount(servers[i].URL, servers[i].APIKey)
+		if err != nil {
+			servers[i].CurrentRunning = 0
+		} else {
+			servers[i].CurrentRunning = activeScans
+		}
 	}
 	c.JSON(200, servers)
 }
@@ -1902,9 +1919,20 @@ func normalizeAgentVersionValue(version string) string {
 	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(version), "v"))
 }
 
-func fetchLatestSQLMapAgentVersion() (string, error) {
+func githubAPIToken() string {
+	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		return token
+	}
+	return strings.TrimSpace(os.Getenv("GITHUB_API_TOKEN"))
+}
+
+func fetchLatestSQLMapAgentVersionFromAPI() (string, error) {
 	req, _ := http.NewRequest("GET", sqlmapAgentReleaseAPI, nil)
 	req.Header.Set("User-Agent", "awvs-sqlmap-panel")
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if token := githubAPIToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -1926,6 +1954,44 @@ func fetchLatestSQLMapAgentVersion() (string, error) {
 	return version, nil
 }
 
+func fetchLatestSQLMapAgentVersionFromRedirect() (string, error) {
+	req, _ := http.NewRequest("GET", "https://github.com/maximo896/as/releases/latest", nil)
+	req.Header.Set("User-Agent", "awvs-sqlmap-panel")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	finalURL := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	matches := regexp.MustCompile(`/releases/tag/([^/?#]+)`).FindStringSubmatch(finalURL)
+	if len(matches) < 2 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("release redirect parse failed status=%d url=%s body=%s", resp.StatusCode, strings.TrimSpace(finalURL), strings.TrimSpace(string(body)))
+	}
+	version := normalizeAgentVersionValue(matches[1])
+	if version == "" {
+		return "", fmt.Errorf("empty tag parsed from redirect url=%s", finalURL)
+	}
+	return version, nil
+}
+
+func fetchLatestSQLMapAgentVersion() (string, error) {
+	version, err := fetchLatestSQLMapAgentVersionFromAPI()
+	if err == nil {
+		return version, nil
+	}
+	redirectVersion, redirectErr := fetchLatestSQLMapAgentVersionFromRedirect()
+	if redirectErr == nil {
+		log.Printf("[sqlmap-agent-version] api fetch failed, using redirect fallback version=%s err=%v", redirectVersion, err)
+		return redirectVersion, nil
+	}
+	return "", fmt.Errorf("api error: %v; redirect error: %v", err, redirectErr)
+}
+
 func getLatestSQLMapAgentVersion() string {
 	sqlmapAgentLatestVersionCache.mu.Lock()
 	defer sqlmapAgentLatestVersionCache.mu.Unlock()
@@ -1944,11 +2010,15 @@ func getLatestSQLMapAgentVersion() string {
 
 	if cached := normalizeAgentVersionValue(sqlmapAgentLatestVersionCache.version); cached != "" {
 		log.Printf("[sqlmap-agent-version] using stale cached latest version=%s after fetch error: %v", cached, err)
+		sqlmapAgentLatestVersionCache.fetchedAt = time.Now()
 		return cached
 	}
 
-	log.Printf("[sqlmap-agent-version] using fallback latest version=%s after fetch error: %v", defaultLatestSQLMapAgentVersion, err)
-	return normalizeAgentVersionValue(defaultLatestSQLMapAgentVersion)
+	fallback := normalizeAgentVersionValue(defaultLatestSQLMapAgentVersion)
+	sqlmapAgentLatestVersionCache.version = fallback
+	sqlmapAgentLatestVersionCache.fetchedAt = time.Now()
+	log.Printf("[sqlmap-agent-version] using fallback latest version=%s after fetch error: %v", fallback, err)
+	return fallback
 }
 
 func isLatestSQLMapAgentVersion(version, latest string) bool {

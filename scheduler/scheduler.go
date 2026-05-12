@@ -65,6 +65,7 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 			server.LastCheckedAt = time.Now().Unix()
 			if err != nil {
 				server.IsActive = false
+				server.CurrentRunning = 0
 				server.LastError = err.Error()
 				db.Save(&server)
 				if isServerStale(server.LastHeartbeatAt) {
@@ -75,8 +76,15 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 			}
 
 			server.IsActive = true
+			activeScans, countErr := client.CountActiveScans()
+			if countErr != nil {
+				server.CurrentRunning = 0
+				server.LastError = fmt.Sprintf("count active scans failed: %v", countErr)
+			} else {
+				server.CurrentRunning = activeScans
+				server.LastError = ""
+			}
 			server.LastHeartbeatAt = time.Now().Unix()
-			server.LastError = ""
 			db.Save(&server)
 		}
 	}
@@ -86,7 +94,7 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 	for {
 		time.Sleep(time.Duration(agentHeartbeatIntervalSec) * time.Second)
 		var agents []models.SqlmapAgent
-		if err := db.Where("is_active = ?", true).Find(&agents).Error; err != nil || len(agents) == 0 {
+		if err := db.Where("is_active = ? OR updating = ?", true, true).Find(&agents).Error; err != nil || len(agents) == 0 {
 			continue
 		}
 		for _, agent := range agents {

@@ -164,6 +164,7 @@ func main() {
 	r.GET("/api/path/agents/:id/status", h.GetPathAgentStatus)
 	r.POST("/api/path/agents/:id/refresh", h.RefreshPathAgentStatus)
 	r.GET("/api/tasks/:id/path-scan", h.GetTaskPathScans)
+	r.GET("/api/tasks/:id/path-scan/:scanId/logs", h.GetTaskPathScanLogs)
 	r.POST("/api/tasks/:id/path-scan/retry", h.RetryTaskPathScan)
 
 	log.Printf("AWVS + Sqlmap Panel starting on %s", listenAddr)

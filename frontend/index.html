@@ -446,11 +446,17 @@
                 <div class="tree-box mb-4">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h6 class="mb-0">{{ t('path_scan_results') }}</h6>
-                        <button class="btn btn-sm btn-outline-warning" :disabled="taskPathActionBusy || !selectedTaskId" @click="retryTaskPathScan">{{ t('retry_path_scan') }}</button>
+                        <div class="d-flex align-items-center gap-3 flex-wrap">
+                            <label class="form-check-label small text-muted">
+                                <input class="form-check-input me-2" type="checkbox" v-model="pathOnlyWithForms">
+                                {{ t('path_only_with_forms') }}
+                            </label>
+                            <button class="btn btn-sm btn-outline-warning" :disabled="taskPathActionBusy || !selectedTaskId" @click="retryTaskPathScan">{{ t('retry_path_scan') }}</button>
+                        </div>
                     </div>
                     <div v-if="taskPathScanError" class="alert alert-danger mb-3">{{ taskPathScanError }}</div>
-                    <div v-if="taskPathScans.length === 0" class="muted">{{ t('no_path_scan') }}</div>
-                    <div v-for="entry in taskPathScans" :key="'path-scan-' + entry.scan.ID" class="code-box mb-3">
+                    <div v-if="filteredTaskPathScans.length === 0" class="muted">{{ t('no_path_scan') }}</div>
+                    <div v-for="entry in filteredTaskPathScans" :key="'path-scan-' + entry.scan.ID" class="code-box mb-3">
                         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <div>
                                 <div class="text-white fw-bold">{{ entry.scan.target_url || '-' }}</div>
@@ -463,6 +469,14 @@
                             </div>
                         </div>
                         <div v-if="entry.scan.last_error" class="small text-danger mt-3">{{ entry.scan.last_error }}</div>
+                        <div class="mt-3">
+                            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                                <div class="small text-muted">{{ t('path_live_logs') }}</div>
+                                <div class="small text-muted" v-if="isPathScanActive(entry.scan.path_status)">{{ t('auto_refreshing') }}</div>
+                            </div>
+                            <div class="install-box" style="max-height: 220px; overflow: auto; white-space: pre-wrap;">{{ formatPathScanLogText(entry.scan.ID) }}</div>
+                            <div v-if="pathScanLogState(entry.scan.ID).error" class="small text-danger mt-2">{{ pathScanLogState(entry.scan.ID).error }}</div>
+                        </div>
                         <div v-if="entry.result && entry.result.result && entry.result.result.paths && entry.result.result.paths.length" class="table-responsive mt-3">
                             <table class="table table-sm align-middle mb-0">
                                 <thead>
@@ -1741,6 +1755,9 @@ const I18N = {
         path_url: 'Path URL',
         path_sources: 'Sources',
         path_forms: 'Forms',
+        path_live_logs: 'Live Logs',
+        auto_refreshing: 'Auto Refreshing',
+        path_only_with_forms: 'Only show paths with forms',
         awvs_original_payload: 'AWVS Original Payload',
         price_total: 'Total',
         price_instance: 'Instance',
@@ -2058,6 +2075,9 @@ const I18N = {
         path_url: '\u8def\u5f84 URL',
         path_sources: '\u6765\u6e90',
         path_forms: '\u8868\u5355',
+        path_live_logs: '\u5b9e\u65f6\u65e5\u5fd7',
+        auto_refreshing: '\u81ea\u52a8\u5237\u65b0\u4e2d',
+        path_only_with_forms: '\u53ea\u663e\u793a\u6709\u8868\u5355\u7684\u8def\u5f84',
         awvs_original_payload: 'AWVS \u539f\u59cb Payload',
         price_total: '\u603b\u4ef7',
         price_instance: '\u5b9e\u4f8b',
@@ -2088,6 +2108,7 @@ new Vue({
         agents: [],
         pathAgents: [],
         sqlmapLatestAgentVersion: '2.1.2',
+        sqlmapLatestVersionCheckedAt: 0,
         tasks: [],
         newUrls: '',
         newAWVS: { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 },
@@ -2139,6 +2160,8 @@ new Vue({
         selectedSqlmapCloudInstanceIds: [],
         retrySqlmapAgentId: 0,
         taskPathScans: [],
+        taskPathLogs: {},
+        pathOnlyWithForms: true,
         taskPathScanError: '',
         taskPathActionBusy: false,
         requestEditMode: false,
@@ -2150,6 +2173,7 @@ new Vue({
         currentUnixTs: Math.floor(Date.now() / 1000),
         fetchDataTimer: null,
         taskRefreshTimer: null,
+        taskPathLogTimer: null,
         recycleCountdownTimer: null,
         cloud: {
             max_price_usd_per_hour: 0.02,
@@ -2293,6 +2317,13 @@ new Vue({
             if (this.findingFilter === 'has_injection') return this.taskFindings.filter(f => f.has_injection);
             return this.taskFindings;
         },
+        filteredTaskPathScans() {
+            if (!this.pathOnlyWithForms) return this.taskPathScans;
+            return (this.taskPathScans || []).filter(entry => {
+                const count = entry && entry.scan ? entry.scan.forms_count : 0;
+                return Number(count || 0) > 0;
+            });
+        },
         paginatedFindings() {
             const start = (this.findingPage - 1) * this.findingPageSize;
             const end = start + this.findingPageSize;
@@ -2394,6 +2425,9 @@ new Vue({
             this.taskRefreshTimer = setInterval(() => {
                 if (this.isAuthenticated) this.refreshSelectedTaskSilently();
             }, 10000);
+            this.taskPathLogTimer = setInterval(() => {
+                if (this.isAuthenticated) this.refreshPathScanLogsSilently();
+            }, 2000);
             this.recycleCountdownTimer = setInterval(() => {
                 this.currentUnixTs = Math.floor(Date.now() / 1000);
             }, 1000);
@@ -2402,6 +2436,7 @@ new Vue({
         beforeDestroy() {
             if (this.fetchDataTimer) clearInterval(this.fetchDataTimer);
             if (this.taskRefreshTimer) clearInterval(this.taskRefreshTimer);
+            if (this.taskPathLogTimer) clearInterval(this.taskPathLogTimer);
             if (this.recycleCountdownTimer) clearInterval(this.recycleCountdownTimer);
             window.removeEventListener('popstate', this.handleLocationChange);
         },
@@ -2427,6 +2462,40 @@ new Vue({
         parsePositiveInt(value) {
             const n = Number.parseInt(String(value || '').trim(), 10);
             return Number.isFinite(n) && n > 0 ? n : null;
+        },
+        defaultPathScanLogState(pathTaskID) {
+            return {
+                entries: [],
+                nextOffset: 0,
+                total: 0,
+                truncated: false,
+                loading: false,
+                error: '',
+                pathTaskID: pathTaskID || ''
+            };
+        },
+        ensurePathScanLogState(scanId, pathTaskID) {
+            const key = String(scanId || '').trim();
+            if (!key) return this.defaultPathScanLogState(pathTaskID);
+            const current = this.taskPathLogs[key];
+            if (!current || (pathTaskID !== undefined && current.pathTaskID !== (pathTaskID || ''))) {
+                const nextState = this.defaultPathScanLogState(pathTaskID);
+                this.$set(this.taskPathLogs, key, nextState);
+                return nextState;
+            }
+            return current;
+        },
+        pathScanLogState(scanId) {
+            const key = String(scanId || '').trim();
+            if (!key) return this.defaultPathScanLogState('');
+            return this.taskPathLogs[key] || this.defaultPathScanLogState('');
+        },
+        isPathScanActive(status) {
+            const raw = String(status || '').trim().toLowerCase();
+            return raw === 'queued' || raw === 'running' || raw === 'pending' || raw === 'scanning';
+        },
+        resetTaskPathLogs() {
+            this.taskPathLogs = {};
         },
         initTabFromURL() {
             const state = this.readRouteStateFromURL();
@@ -2703,6 +2772,11 @@ new Vue({
             });
         },
         fetchSqlmapAgentLatestVersion() {
+            const now = Date.now();
+            if (this.sqlmapLatestVersionCheckedAt && (now - this.sqlmapLatestVersionCheckedAt) < 10 * 60 * 1000) {
+                return;
+            }
+            this.sqlmapLatestVersionCheckedAt = now;
             axios.get('/api/sqlmap/agents/latest-version').then(res => {
                 const latest = this.normalizeSqlmapAgentVersion(res.data && res.data.version);
                 if (latest) {
@@ -2930,7 +3004,15 @@ new Vue({
             if (!(await this.askConfirm(confirmText))) return;
             const url = target === 'sqlmap' ? '/api/sqlmap/agents/restart-docker' : (target === 'path' ? '/api/path/agents/restart-docker' : '/api/servers/restart-docker');
             axios.post(url, { ids: selected }).then(res => {
-                this.notifySuccess((res.data.message || 'ok') + ' (' + (res.data.succeeded_count || 0) + '/' + selected.length + ')');
+                const succeeded = res.data.succeeded_count || 0;
+                const failed = res.data.failed_count || 0;
+                const summary = (res.data.message || 'ok') + ' (' + succeeded + '/' + selected.length + ')';
+                if (failed > 0) {
+                    const detail = (res.data.failed || []).map(item => (item.name || item.id || '-') + ': ' + (item.error || 'failed')).join(' | ');
+                    this.notifyError(summary + (detail ? ' | ' + detail : ''));
+                } else {
+                    this.notifySuccess(summary);
+                }
                 if (target === 'sqlmap') {
                     this.selectedSqlmapAgentIds = [];
                     this.fetchAgents();
@@ -3294,15 +3376,92 @@ new Vue({
             this.searchQuery = '';
             this.searchResults = [];
             this.taskPathScans = [];
+            this.resetTaskPathLogs();
             this.taskPathScanError = '';
+        },
+        syncTaskPathScanLogs() {
+            const nextLogs = {};
+            (this.taskPathScans || []).forEach(entry => {
+                const scan = (entry && entry.scan) || {};
+                const scanId = String(scan.ID || '').trim();
+                if (!scanId) return;
+                const pathTaskID = String(scan.path_task_id || '').trim();
+                const current = this.taskPathLogs[scanId];
+                if (!current || current.pathTaskID !== pathTaskID) {
+                    nextLogs[scanId] = this.defaultPathScanLogState(pathTaskID);
+                    return;
+                }
+                nextLogs[scanId] = current;
+            });
+            this.taskPathLogs = nextLogs;
+            (this.taskPathScans || []).forEach(entry => {
+                const scan = (entry && entry.scan) || {};
+                if (scan.ID) {
+                    this.loadTaskPathScanLogs(scan.ID, false, scan.path_task_id || '');
+                }
+            });
         },
         loadTaskPathScans(taskId) {
             this.taskPathScanError = '';
             axios.get('/api/tasks/' + taskId + '/path-scan').then(res => {
                 this.taskPathScans = res.data.scans || [];
+                this.syncTaskPathScanLogs();
             }).catch(err => {
                 this.taskPathScans = [];
+                this.resetTaskPathLogs();
                 this.taskPathScanError = this.extractError(err);
+            });
+        },
+        loadTaskPathScanLogs(scanId, reset, pathTaskID) {
+            if (!this.selectedTaskId || !scanId) return;
+            const state = this.ensurePathScanLogState(scanId, pathTaskID);
+            if (state.loading) return;
+            const offset = reset ? 0 : (state.nextOffset || 0);
+            this.$set(this.taskPathLogs, String(scanId), Object.assign({}, state, { loading: true, error: '' }));
+            axios.get('/api/tasks/' + this.selectedTaskId + '/path-scan/' + scanId + '/logs', {
+                params: {
+                    offset: offset,
+                    limit: 200
+                }
+            }).then(res => {
+                const data = res.data || {};
+                const incoming = Array.isArray(data.entries) ? data.entries : [];
+                const current = this.ensurePathScanLogState(scanId, pathTaskID);
+                let entries = current.entries || [];
+                if (reset || data.truncated) {
+                    entries = incoming.slice();
+                } else if (incoming.length) {
+                    entries = entries.concat(incoming);
+                }
+                if (entries.length > 400) {
+                    entries = entries.slice(entries.length - 400);
+                }
+                this.$set(this.taskPathLogs, String(scanId), {
+                    entries: entries,
+                    nextOffset: Number.isFinite(data.next_offset) ? data.next_offset : (entries.length ? entries[entries.length - 1].offset : offset),
+                    total: Number.isFinite(data.total) ? data.total : entries.length,
+                    truncated: !!data.truncated,
+                    loading: false,
+                    error: '',
+                    pathTaskID: String(pathTaskID || current.pathTaskID || '')
+                });
+            }).catch(err => {
+                const current = this.ensurePathScanLogState(scanId, pathTaskID);
+                this.$set(this.taskPathLogs, String(scanId), Object.assign({}, current, {
+                    loading: false,
+                    error: this.extractError(err)
+                }));
+            });
+        },
+        refreshPathScanLogsSilently() {
+            if (!this.selectedTaskId || !this.taskPathScans.length) return;
+            this.taskPathScans.forEach(entry => {
+                const scan = (entry && entry.scan) || {};
+                if (!scan.ID) return;
+                const logState = this.pathScanLogState(scan.ID);
+                if (this.isPathScanActive(scan.path_status) || !(logState.entries || []).length) {
+                    this.loadTaskPathScanLogs(scan.ID, false, scan.path_task_id || '');
+                }
             });
         },
         retryTaskPathScan() {
@@ -3329,8 +3488,6 @@ new Vue({
                         this.selectedFinding = currentFinding;
                         if (this.findingHasSqlmapBinding(currentFinding)) {
                             this.loadFindingDetail(currentFinding.ID, true);
-                        } else {
-                            this.taskDetail = null;
                         }
                         return;
                     }
@@ -3370,8 +3527,6 @@ new Vue({
                         this.selectedFinding = currentFinding;
                         if (!this.requestEditMode && this.findingHasSqlmapBinding(currentFinding)) {
                             this.loadFindingDetail(currentFinding.ID, true);
-                        } else if (!this.findingHasSqlmapBinding(currentFinding)) {
-                            this.taskDetail = null;
                         }
                         return;
                     }
@@ -3390,8 +3545,6 @@ new Vue({
                     this.selectedFinding = firstFinding;
                     if (!this.requestEditMode && this.findingHasSqlmapBinding(firstFinding)) {
                         this.loadFindingDetail(firstFinding.ID, true);
-                    } else if (!this.findingHasSqlmapBinding(firstFinding)) {
-                        this.taskDetail = null;
                     }
                     return;
                 }
@@ -3778,6 +3931,15 @@ new Vue({
         formatLogs(logs) {
             if (!logs || !logs.length) return this.t('no_logs');
             return logs.map(item => '[' + (item.time || '-') + '] ' + (item.level || '-') + ' ' + (item.message || '')).join('\n');
+        },
+        formatPathScanLogText(scanId) {
+            const state = this.pathScanLogState(scanId);
+            const entries = state.entries || [];
+            if (!entries.length) return this.t('no_logs');
+            return entries.map(item => {
+                const ts = item && item.timestamp ? new Date(item.timestamp * 1000).toLocaleTimeString() : '-';
+                return '[' + ts + '] ' + (item.message || '');
+            }).join('\n');
         }
     }
 });

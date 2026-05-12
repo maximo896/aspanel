@@ -177,12 +177,14 @@ func (m *manager) handleDockerAction(w http.ResponseWriter, action string, cfg c
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	log.Printf("[docker-manager] action=%s containers=%v timeout=%s start", action, cfg.Containers, timeout)
 	cmd := exec.CommandContext(ctx, "docker", append([]string{action}, cfg.Containers...)...)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		err = fmt.Errorf("docker %s timed out after %s", action, timeout)
 	}
 	if err != nil {
+		log.Printf("[docker-manager] action=%s containers=%v failed err=%v output=%s", action, cfg.Containers, err, strings.TrimSpace(string(output)))
 		m.markActionDone(action, err)
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 			"error":   strings.TrimSpace(string(output)),
@@ -191,6 +193,7 @@ func (m *manager) handleDockerAction(w http.ResponseWriter, action string, cfg c
 		return
 	}
 
+	log.Printf("[docker-manager] action=%s containers=%v done output=%s", action, cfg.Containers, strings.TrimSpace(string(output)))
 	m.markActionDone(action, nil)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"ok":         true,
