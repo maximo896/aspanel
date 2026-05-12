@@ -234,6 +234,41 @@ MANAGER_LOG_FILE="${DATA_ROOT}/docker-manager.log"
 UPDATE_SCRIPT_FILE="${DATA_ROOT}/update-agent.sh"
 UPDATE_LOG_FILE="${DATA_ROOT}/update-agent.log"
 mkdir -p "$DATA_ROOT"
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
+
+backup_existing_awvs_state() {
+  local backup_root="${WORKDIR}/awvs-state"
+  rm -rf "$backup_root"
+  mkdir -p "$backup_root"
+  if ! $SUDO docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+    return 1
+  fi
+  echo "[*] Backing up existing AWVS state..."
+  if ! $SUDO docker cp "${CONTAINER_NAME}:/home/acunetix/.acunetix" "$backup_root" >/dev/null 2>&1; then
+    echo "[!] Failed to backup existing AWVS state."
+    return 1
+  fi
+  return 0
+}
+
+restore_existing_awvs_state() {
+  local backup_path="${WORKDIR}/awvs-state/.acunetix"
+  if [ ! -d "$backup_path" ]; then
+    return 1
+  fi
+  echo "[*] Restoring previous AWVS state..."
+  $SUDO docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  if ! $SUDO docker cp "$backup_path" "${CONTAINER_NAME}:/home/acunetix/" >/dev/null 2>&1; then
+    echo "[!] Failed to restore previous AWVS state."
+    return 1
+  fi
+  if ! $SUDO docker start "$CONTAINER_NAME" >/dev/null 2>&1; then
+    echo "[!] Failed to restart AWVS after state restore."
+    return 1
+  fi
+  return 0
+}
 
 detect_manager_arch() {
   case "$(uname -m)" in
@@ -297,7 +332,12 @@ fi
 MANAGER_URL="http://${PUBLIC_HOST}:${MANAGER_PORT}"
 
 # Reuse the original port for in-place updates of the same node.
-if [ "${MANAGER_ALLOW_REUSE_PORT:-0}" = "1" ]; then
+RESTORE_PREVIOUS_STATE=0
+if [ "${MANAGER_ALLOW_REUSE_PORT:-0}" = "1" ] && $SUDO docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+  if ! backup_existing_awvs_state; then
+    exit 1
+  fi
+  RESTORE_PREVIOUS_STATE=1
   $SUDO docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 fi
 
@@ -339,8 +379,21 @@ echo $! > "$MANAGER_PID_FILE"
 
 BASE_URL="https://${PUBLIC_HOST}:${AGENT_PORT}"
 LOCAL_URL="https://127.0.0.1:${AGENT_PORT}"
-WORKDIR="$(mktemp -d)"
-trap 'rm -rf "$WORKDIR"' EXIT
+
+if [ "$RESTORE_PREVIOUS_STATE" = "1" ]; then
+  if ! restore_existing_awvs_state; then
+    exit 1
+  fi
+  wait_for_awvs "$LOCAL_URL"
+  echo ""
+  echo "=========================================="
+  echo "[+] AWVS Update Complete"
+  echo "=========================================="
+  echo "URL: ${BASE_URL}"
+  echo "[+] Previous AWVS state restored."
+  echo "[+] Existing username/password/api key should remain unchanged."
+  exit 0
+fi
 
 wait_for_awvs "$LOCAL_URL"
 
