@@ -420,7 +420,12 @@ func (api *API) GetTaskPathScanLogs(c *gin.Context) {
 		return
 	}
 	if scan.PathAgentID == 0 || strings.TrimSpace(scan.PathTaskID) == "" {
-		c.JSON(400, gin.H{"error": "path scan is not bound to an agent task"})
+		c.JSON(200, gin.H{
+			"entries":     []interface{}{},
+			"next_offset": 0,
+			"total":       0,
+			"truncated":   false,
+		})
 		return
 	}
 	var agent models.PathAgent

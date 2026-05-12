@@ -677,8 +677,8 @@
                                                                 {{ isTableExpanded(database.name, table.name) ? '-' : '+' }}
                                                             </button>
                                                             <strong class="text-info">{{ table.name }}</strong>
+                                                            <span v-if="table.row_count !== undefined && table.row_count !== null && table.row_count !== ''" class="text-muted ms-1">({{ table.row_count }})</span>
                                                             <span v-if="table.priority" class="badge bg-warning text-dark ms-2" title="adm priority">★</span>
-                                                            <span v-if="table.row_count !== undefined && table.row_count !== null && table.row_count !== ''" class="badge badge-soft ms-2">{{ t('rows_count') }}: {{ table.row_count }}</span>
                                                             <span v-if="table.matched_keywords && table.matched_keywords.length" class="badge badge-match ms-2">{{ t('matched_terms') }}: {{ table.matched_keywords.join(', ') }}</span>
                                                             <span v-if="table.matched_custom_terms && table.matched_custom_terms.length" class="badge badge-match ms-2">{{ t('custom_matched_terms') }}: {{ table.matched_custom_terms.join(', ') }}</span>
                                                         </div>
