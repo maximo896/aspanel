@@ -96,6 +96,15 @@ func httpClient() *http.Client {
 	}
 }
 
+func nodeManagerHTTPClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: tr,
+	}
+}
+
 func normalizeBaseURL(raw string) string {
 	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
@@ -2713,7 +2722,7 @@ func (api *API) callNodeManager(managerURL, managerToken, action string) error {
 	req, _ := http.NewRequest("POST", managerURL+"/docker/control", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Manager-Token", managerToken)
-	resp, err := httpClient().Do(req)
+	resp, err := nodeManagerHTTPClient().Do(req)
 	if err != nil {
 		return err
 	}

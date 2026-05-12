@@ -458,9 +458,15 @@
                                 <input class="form-check-input me-2" type="checkbox" v-model="pathOnlyWithForms">
                                 {{ t('path_only_with_forms') }}
                             </label>
+                            <label class="form-check-label small text-muted">
+                                <input class="form-check-input me-2" type="checkbox" v-model="pathKeywordFilterEnabled">
+                                {{ t('path_keyword_filter') }}
+                            </label>
+                            <input class="form-control form-control-sm" style="min-width: 240px; max-width: 320px;" v-model.trim="pathCustomFilterQuery" :placeholder="t('path_custom_filter_placeholder')">
                             <button class="btn btn-sm btn-outline-warning" :disabled="taskPathActionBusy || !selectedTaskId" @click="retryTaskPathScan">{{ t('retry_path_scan') }}</button>
                         </div>
                     </div>
+                    <div v-if="pathKeywordFilterEnabled" class="small text-muted mb-3">{{ t('path_keyword_filter_hint') }}: {{ pathKeywordTerms.join(', ') }}</div>
                     <div v-if="taskPathScanError" class="alert alert-danger mb-3">{{ taskPathScanError }}</div>
                     <div v-if="filteredTaskPathScans.length === 0" class="muted">{{ t('no_path_scan') }}</div>
                     <div v-for="entry in filteredTaskPathScans" :key="'path-scan-' + entry.scan.ID" class="code-box mb-3">
@@ -499,6 +505,10 @@
                                     <td>
                                         <div class="text-break"><a :href="pathItem.url" target="_blank" style="color:var(--accent-blue); text-decoration:none">{{ pathItem.url }}</a></div>
                                         <div class="small text-muted" v-if="pathItem.title">{{ pathItem.title }}</div>
+                                        <div class="small mt-1" v-if="(pathItem.matched_keywords && pathItem.matched_keywords.length) || (pathItem.matched_custom_terms && pathItem.matched_custom_terms.length)">
+                                            <span v-if="pathItem.matched_keywords && pathItem.matched_keywords.length" class="badge badge-match me-2">{{ t('matched_terms') }}: {{ pathItem.matched_keywords.join(', ') }}</span>
+                                            <span v-if="pathItem.matched_custom_terms && pathItem.matched_custom_terms.length" class="badge badge-match">{{ t('custom_matched_terms') }}: {{ pathItem.matched_custom_terms.join(', ') }}</span>
+                                        </div>
                                     </td>
                                     <td>{{ pathItem.status_code || '-' }}</td>
                                     <td><small>{{ (pathItem.sources || []).join(', ') || '-' }}</small></td>
@@ -1765,6 +1775,9 @@ const I18N = {
         tree_keyword_filter: 'Sensitive filter',
         tree_keyword_filter_hint: 'Keywords',
         tree_custom_filter_placeholder: 'Custom filter in table/column/data',
+        path_keyword_filter: 'Sensitive filter',
+        path_keyword_filter_hint: 'Keywords',
+        path_custom_filter_placeholder: 'Custom filter in path/form',
         custom_matched_terms: 'Custom',
         proxy_requested: 'Requested Proxy',
         proxy_effective: 'Runtime Proxy (from temp config)',
@@ -2098,6 +2111,9 @@ const I18N = {
         tree_keyword_filter: '\u654f\u611f\u8bcd\u7b5b\u9009',
         tree_keyword_filter_hint: '\u7b5b\u9009\u8bcd',
         tree_custom_filter_placeholder: '\u81ea\u5b9a\u4e49\u7b5b\u9009\uff08\u8868/\u5217/\u6570\u636e\uff09',
+        path_keyword_filter: '\u654f\u611f\u8bcd\u7b5b\u9009',
+        path_keyword_filter_hint: '\u7b5b\u9009\u8bcd',
+        path_custom_filter_placeholder: '\u81ea\u5b9a\u4e49\u7b5b\u9009\uff08\u8def\u5f84/\u8868\u5355\uff09',
         custom_matched_terms: '\u81ea\u5b9a\u4e49\u547d\u4e2d',
         proxy_requested: '\u671f\u671b\u4ee3\u7406',
         proxy_effective: '\u5b9e\u9645\u4ee3\u7406\uff08\u4ece\u4e34\u65f6\u914d\u7f6e\u8bfb\u53d6\uff09',
@@ -2208,6 +2224,9 @@ new Vue({
         treeKeywordFilterEnabled: true,
         treeKeywordTerms: ['admin', 'administrator', 'manager', 'user', 'username', 'password', 'passwd', 'pass', 'senha', 'usuario', 'usuarios', 'administracao', 'gerente', 'login'],
         treeCustomFilterQuery: '',
+        pathKeywordFilterEnabled: true,
+        pathKeywordTerms: ['admin', 'administrator', 'manager', 'user', 'username', 'password', 'passwd', 'pass', 'senha', 'usuario', 'usuarios', 'administracao', 'gerente', 'login'],
+        pathCustomFilterQuery: '',
         taskFilter: 'all',
         findingFilter: 'all',
         selectedTech: '',
@@ -2377,11 +2396,41 @@ new Vue({
             return this.taskFindings;
         },
         filteredTaskPathScans() {
-            if (!this.pathOnlyWithForms) return this.taskPathScans;
-            return (this.taskPathScans || []).filter(entry => {
-                const count = entry && entry.scan ? entry.scan.forms_count : 0;
-                return Number(count || 0) > 0;
-            });
+            return (this.taskPathScans || []).map(entry => {
+                const rawPaths = (((entry || {}).result || {}).result || {}).paths;
+                const activeFilters = this.pathOnlyWithForms || this.pathKeywordFilterEnabled || !!String(this.pathCustomFilterQuery || '').trim();
+                if (!Array.isArray(rawPaths)) {
+                    return activeFilters ? null : entry;
+                }
+                const filteredPaths = rawPaths.map(pathItem => {
+                    const forms = Array.isArray(pathItem && pathItem.forms) ? pathItem.forms : [];
+                    if (this.pathOnlyWithForms && !forms.length) {
+                        return null;
+                    }
+                    const matchedKeywords = this.pathKeywordFilterEnabled ? this.collectPathKeywordMatches(pathItem) : [];
+                    const matchedCustomTerms = this.collectPathCustomMatches(pathItem, this.pathCustomFilterQuery);
+                    if (this.pathKeywordFilterEnabled && !matchedKeywords.length && !matchedCustomTerms.length) {
+                        return null;
+                    }
+                    if (!this.pathKeywordFilterEnabled && String(this.pathCustomFilterQuery || '').trim() && !matchedCustomTerms.length) {
+                        return null;
+                    }
+                    return Object.assign({}, pathItem, {
+                        matched_keywords: matchedKeywords,
+                        matched_custom_terms: matchedCustomTerms
+                    });
+                }).filter(Boolean);
+                if (activeFilters && !filteredPaths.length) {
+                    return null;
+                }
+                return Object.assign({}, entry, {
+                    result: Object.assign({}, entry.result || {}, {
+                        result: Object.assign({}, ((entry || {}).result || {}).result || {}, {
+                            paths: filteredPaths
+                        })
+                    })
+                });
+            }).filter(Boolean);
         },
         displayTreeDatabases() {
             const databases = this.getTreeDatabases();
@@ -3944,6 +3993,45 @@ new Vue({
                 return treeDatabases;
             }
             return this.buildFallbackTreeDatabases();
+        },
+        collectPathSearchTexts(pathItem) {
+            const haystacks = [];
+            if (pathItem && pathItem.url) {
+                haystacks.push(String(pathItem.url));
+            }
+            if (pathItem && pathItem.title) {
+                haystacks.push(String(pathItem.title));
+            }
+            (pathItem && pathItem.sources ? pathItem.sources : []).forEach(source => {
+                haystacks.push(String(source || ''));
+            });
+            (pathItem && pathItem.forms ? pathItem.forms : []).forEach(form => {
+                haystacks.push(String((form && form.method) || ''));
+                haystacks.push(String((form && form.action) || ''));
+                (form && form.fields ? form.fields : []).forEach(field => {
+                    haystacks.push(String((field && field.name) || ''));
+                    haystacks.push(String((field && field.type) || ''));
+                    haystacks.push(String((field && field.tag) || ''));
+                    haystacks.push(String((field && field.value) || ''));
+                });
+            });
+            return haystacks;
+        },
+        collectPathKeywordMatches(pathItem) {
+            const blob = this.collectPathSearchTexts(pathItem).join('\n').toLowerCase();
+            return (this.pathKeywordTerms || []).filter(term => blob.indexOf(String(term || '').toLowerCase()) >= 0);
+        },
+        collectPathCustomMatches(pathItem, rawQuery) {
+            const query = String(rawQuery || '').trim().toLowerCase();
+            if (!query) {
+                return [];
+            }
+            const tokens = query.split(/\s+/).map(item => item.trim()).filter(Boolean);
+            if (!tokens.length) {
+                return [];
+            }
+            const blob = this.collectPathSearchTexts(pathItem).join('\n').toLowerCase();
+            return tokens.filter(term => blob.indexOf(term) >= 0);
         },
         collectTableKeywordMatches(table) {
             const haystacks = [];
