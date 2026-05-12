@@ -279,11 +279,11 @@
                                 <td>{{ task.ID }}</td>
                                 <td><a :href="task.url" target="_blank" style="color:var(--accent-blue); text-decoration:none">{{ task.url }}</a></td>
                                 <td>
-                                    <span class="badge" :class="getStatusBadgeClass(task.status)">{{ task.status }}</span>
+                                    <span class="badge" :class="getStatusBadgeClass(task.status)">{{ formatTaskStatus(task.status) }}</span>
                                     <div class="mt-1" v-if="task.awvs_server_id"><small class="text-muted" style="font-size: 0.7rem">{{ getServerName(task.awvs_server_id) }}</small></div>
                                 </td>
                                 <td>
-                                    <span class="badge" :class="getSqlmapBadgeClass(task.sqlmap_status)">{{ task.sqlmap_status || 'none' }}</span>
+                                    <span class="badge" :class="getSqlmapBadgeClass(task.sqlmap_status)">{{ formatSqlmapStatus(task.sqlmap_status) }}</span>
                                     <div class="mt-1" v-if="task.sqlmap_agent_id"><small class="text-muted" style="font-size: 0.7rem">{{ getAgentName(task.sqlmap_agent_id) }}</small></div>
                                 </td>
                                 <td>
@@ -393,7 +393,7 @@
                                 <td><small class="text-truncate d-inline-block" style="max-width: 150px;" :title="finding.affects_url">{{ finding.affects_url || '-' }}</small></td>
                                 <td><span class="badge" :class="finding.sent_to_sqlmap ? 'bg-success' : 'bg-secondary'">{{ finding.sent_to_sqlmap ? t('yes') : t('no') }}</span></td>
                                 <td><small class="text-muted text-truncate d-inline-block" style="max-width: 100px;" :title="getAgentName(finding.sqlmap_agent_id)">{{ getAgentName(finding.sqlmap_agent_id) }}</small></td>
-                                <td><span class="badge" :class="getSqlmapBadgeClass(finding.sqlmap_status || 'none')">{{ finding.sqlmap_status || 'none' }}</span></td>
+                                <td><span class="badge" :class="getSqlmapBadgeClass(finding.sqlmap_status || 'none')">{{ formatSqlmapStatus(finding.sqlmap_status) }}</span></td>
                                 <td>
                                     <span v-if="getFindingTechniqueList(finding).length === 0" class="text-muted small">-</span>
                                     <span v-for="tech in getFindingTechniqueList(finding)" :key="finding.ID + ':' + tech" class="badge bg-info text-dark me-1">{{ tech }}</span>
@@ -457,7 +457,7 @@
                                 <div class="small text-muted">{{ t('label_url') }}: {{ entry.scan.scope_domain || '-' }}</div>
                             </div>
                             <div class="d-flex gap-2 flex-wrap">
-                                <span class="badge" :class="getSqlmapBadgeClass(entry.scan.path_status || 'none')">{{ entry.scan.path_status || 'none' }}</span>
+                                <span class="badge" :class="getSqlmapBadgeClass(entry.scan.path_status || 'none')">{{ formatSqlmapStatus(entry.scan.path_status) }}</span>
                                 <span class="badge bg-primary">{{ t('path_paths_count') }}: {{ entry.scan.paths_count || 0 }}</span>
                                 <span class="badge bg-success">{{ t('path_forms_count') }}: {{ entry.scan.forms_count || 0 }}</span>
                             </div>
@@ -726,7 +726,7 @@
                     <div class="row g-3 mb-4">
                         <div class="col-md-3"><div class="summary-box"><div class="summary-title">{{ t('th_vuln_id') }}</div><div class="summary-value">{{ selectedFinding.vuln_id || '-' }}</div></div></div>
                         <div class="col-md-5"><div class="summary-box"><div class="summary-title">{{ t('th_url_path') }}</div><div class="summary-value" style="font-size: 1rem; word-break: break-all;">{{ selectedFinding.affects_url || '-' }}</div></div></div>
-                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('th_sqlmap_status') }}</div><div class="summary-value">{{ selectedFinding.sqlmap_status || 'none' }}</div></div></div>
+                        <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('th_sqlmap_status') }}</div><div class="summary-value">{{ formatSqlmapStatus(selectedFinding.sqlmap_status) }}</div></div></div>
                         <div class="col-md-2"><div class="summary-box"><div class="summary-title">{{ t('results') }}</div><div class="summary-value">{{ selectedFinding.has_data || selectedFinding.has_shell || selectedFinding.has_injection ? t('yes') : t('no') }}</div></div></div>
                     </div>
                     <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
@@ -1766,6 +1766,7 @@ const I18N = {
         tab_tasks: '\u4efb\u52a1',
         tab_awvs: 'AWVS \u8282\u70b9',
         tab_sqlmap: 'Sqlmap \u4ee3\u7406',
+        tab_path: '\u8def\u5f84\u4ee3\u7406',
         tab_proxy: '\u4ee3\u7406\u7f51\u5173',
         tab_cloud: '\u4e91\u7ade\u4ef7',
         add_targets: '\u6dfb\u52a0\u76ee\u6807',
@@ -1864,7 +1865,7 @@ const I18N = {
         managed_agents: '\u5df2\u7ba1\u7406\u7684\u4ee3\u7406',
         path_agents: '\u8def\u5f84\u4ee3\u7406',
         name: '\u540d\u79f0',
-        token: 'Token',
+        token: '\u4ee4\u724c',
         running: '\u8fd0\u884c\u4e2d',
         queued: '\u961f\u5217\u4e2d',
         limit: '\u4e0a\u9650',
@@ -1923,6 +1924,11 @@ const I18N = {
         stop: '\u505c\u6b62',
         save: '\u4fdd\u5b58',
         enabled: '\u542f\u7528',
+        cloud_credentials: '\u4e91\u51ed\u636e',
+        save_credentials: '\u4fdd\u5b58\u51ed\u636e',
+        cloud_cred_saved: '\u5df2\u4fdd\u5b58\u51ed\u636e',
+        cloud_cred_missing: '\u672a\u914d\u7f6e\u51ed\u636e',
+        cloud_cred_hint: '\u4fdd\u7559\u8131\u654f\u540e\u7684\u503c\u4ee5\u4fdd\u6301\u4e0d\u53d8\uff0c\u53ea\u66ff\u6362\u4f60\u771f\u6b63\u60f3\u66f4\u65b0\u7684\u90e8\u5206\u3002',
         secret_id: 'SecretId',
         secret_key: 'SecretKey',
         max_usd_h: '\u6700\u9ad8 USD/\u5c0f\u65f6',
@@ -2048,10 +2054,10 @@ const I18N = {
         retry_path_scan: '\u91cd\u8bd5\u8def\u5f84\u626b\u63cf',
         no_path_scan: '\u6682\u65e0\u8def\u5f84\u626b\u63cf\u7ed3\u679c\u3002',
         path_paths_count: '\u8def\u5f84',
-        path_forms_count: 'Form',
+        path_forms_count: '\u8868\u5355',
         path_url: '\u8def\u5f84 URL',
         path_sources: '\u6765\u6e90',
-        path_forms: 'Form',
+        path_forms: '\u8868\u5355',
         awvs_original_payload: 'AWVS \u539f\u59cb Payload',
         price_total: '\u603b\u4ef7',
         price_instance: '\u5b9e\u4f8b',
@@ -3568,6 +3574,31 @@ new Vue({
                 terminated: 'badge-soft'
             };
             return mapping[status] || 'badge-soft';
+        },
+        formatTaskStatus(status) {
+            const raw = String(status || '').trim();
+            if (!raw) return '-';
+            if (this.language !== 'zh') return raw;
+            const mapping = {
+                pending: '\u7b49\u5f85\u4e2d',
+                scanning: '\u626b\u63cf\u4e2d',
+                completed: '\u5df2\u5b8c\u6210',
+                failed: '\u5931\u8d25'
+            };
+            return mapping[raw] || raw;
+        },
+        formatSqlmapStatus(status) {
+            const raw = String(status || '').trim() || 'none';
+            if (this.language !== 'zh') return raw;
+            const mapping = {
+                none: '\u65e0',
+                queued: '\u961f\u5217\u4e2d',
+                running: '\u8fd0\u884c\u4e2d',
+                completed: '\u5df2\u5b8c\u6210',
+                failed: '\u5931\u8d25',
+                terminated: '\u5df2\u7ec8\u6b62'
+            };
+            return mapping[raw] || raw;
         },
         getTaskDetailValue(obj, path) {
             let current = obj;
