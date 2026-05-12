@@ -176,24 +176,46 @@ func (c *Client) GetLatestScanID(targetID string) (string, error) {
 
 func (c *Client) CountActiveScans() (int, error) {
 	statusQueries := []string{
+		"/api/v1/scans?l=1000&q=status:processing",
 		"/api/v1/scans?l=1000&q=status:processing;",
+		"/api/v1/scans?l=1000&q=status:starting",
 		"/api/v1/scans?l=1000&q=status:starting;",
 	}
+	seenStatuses := map[string]bool{}
 	total := 0
 	for _, query := range statusQueries {
+		statusKey := query
+		if idx := strings.Index(statusKey, "q="); idx >= 0 {
+			statusKey = statusKey[idx+2:]
+		}
+		statusKey = strings.TrimSuffix(statusKey, ";")
+		if seenStatuses[statusKey] {
+			continue
+		}
 		res, err := c.doReq("GET", query, nil)
 		if err != nil {
-			return 0, err
+			continue
 		}
 		var data struct {
+			Pagination struct {
+				Count int `json:"count"`
+			} `json:"pagination"`
 			Scans []struct {
 				ScanID string `json:"scan_id"`
 			} `json:"scans"`
 		}
 		if err := json.Unmarshal(res, &data); err != nil {
-			return 0, err
+			continue
+		}
+		seenStatuses[statusKey] = true
+		if data.Pagination.Count > 0 {
+			total += data.Pagination.Count
+			continue
 		}
 		total += len(data.Scans)
+	}
+	if len(seenStatuses) == 0 {
+		return 0, fmt.Errorf("count active scans failed")
 	}
 	return total, nil
 }

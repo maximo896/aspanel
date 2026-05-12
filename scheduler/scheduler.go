@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -184,6 +185,17 @@ func checkAWVSStatus(db *gorm.DB) {
 		for _, task := range scanningTasks {
 			var srv models.AWVSServer
 			if err := db.First(&srv, task.AWVSServerID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					task.Status = "pending"
+					task.AWVSServerID = 0
+					task.TargetID = ""
+					task.ScanSessionID = ""
+					task.LastRequeuedAt = time.Now().Unix()
+					task.RequeueReason = "awvs_server_not_found"
+					db.Save(&task)
+					continue
+				}
+				log.Printf("[awvs][status] load server failed task_id=%d awvs_server_id=%d err=%v", task.ID, task.AWVSServerID, err)
 				continue
 			}
 

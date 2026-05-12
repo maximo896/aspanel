@@ -626,6 +626,7 @@
                                             <input class="form-check-input me-2" type="checkbox" v-model="treeKeywordFilterEnabled">
                                             {{ t('tree_keyword_filter') }}
                                         </label>
+                                    <input class="form-control form-control-sm" style="min-width: 240px; max-width: 320px;" v-model.trim="treeCustomFilterQuery" :placeholder="t('tree_custom_filter_placeholder')">
                                         <button class="btn btn-sm btn-outline-primary" :disabled="taskActionBusy" @click="runTaskAction('get_dbs')">{{ t('auto_run_databases') }}</button>
                                     </div>
                                 </div>
@@ -669,6 +670,7 @@
                                                             <span v-if="table.priority" class="badge bg-warning text-dark ms-2" title="adm priority">★</span>
                                                             <span v-if="table.row_count !== undefined && table.row_count !== null && table.row_count !== ''" class="badge badge-soft ms-2">{{ t('rows_count') }}: {{ table.row_count }}</span>
                                                             <span v-if="table.matched_keywords && table.matched_keywords.length" class="badge badge-match ms-2">{{ t('matched_terms') }}: {{ table.matched_keywords.join(', ') }}</span>
+                                                            <span v-if="table.matched_custom_terms && table.matched_custom_terms.length" class="badge badge-match ms-2">{{ t('custom_matched_terms') }}: {{ table.matched_custom_terms.join(', ') }}</span>
                                                         </div>
                                                         <div class="tree-actions">
                                                             <button class="btn btn-sm btn-outline-secondary" :disabled="taskActionBusy" @click="runTaskAction('get_columns', { db: database.name, table: table.name })">{{ t('cols_short') }}</button>
@@ -880,6 +882,8 @@
                             <div class="btn-group btn-group-sm">
                                 <button class="btn btn-outline-secondary" @click="openEditAWVS(server)">{{ t('edit') }}</button>
                                 <button class="btn btn-outline-primary" @click="refreshAWVS(server.ID)">{{ t('refresh') }}</button>
+                                <button class="btn btn-outline-success" @click="updateAWVS(server)">{{ t('update') }}</button>
+                                <button class="btn btn-outline-info" @click="copyNodeUpdateCommand('awvs', server.ID)">{{ t('copy_update_command') }}</button>
                                 <button class="btn btn-outline-warning" @click="restartDockerNodes('awvs', [server.ID])">{{ t('restart_docker') }}</button>
                                 <button class="btn btn-outline-danger" @click="deleteAWVS(server.ID)">{{ t('del') }}</button>
                             </div>
@@ -995,6 +999,7 @@
                                 <button class="btn btn-outline-secondary" @click="openEditAgent(agent)">{{ t('edit') }}</button>
                                 <button class="btn btn-outline-primary" @click="refreshAgent(agent.ID)">{{ t('sync') }}</button>
                                 <button class="btn btn-outline-success" v-if="canUpdateSqlmapAgent(agent)" @click="updateSqlmapAgent(agent)">{{ t('update') }}</button>
+                                <button class="btn btn-outline-info" @click="copyNodeUpdateCommand('sqlmap', agent.ID)">{{ t('copy_update_command') }}</button>
                                 <button class="btn btn-outline-warning" @click="restartDockerNodes('sqlmap', [agent.ID])">{{ t('restart_docker') }}</button>
                                 <button class="btn btn-outline-danger" @click="deleteAgent(agent.ID)">{{ t('del') }}</button>
                             </div>
@@ -1082,6 +1087,8 @@
                         <td>
                             <div class="btn-group btn-group-sm">
                                 <button class="btn btn-outline-primary" @click="refreshPathAgent(agent.ID)">{{ t('sync') }}</button>
+                                <button class="btn btn-outline-success" @click="updatePathAgent(agent)">{{ t('update') }}</button>
+                                <button class="btn btn-outline-info" @click="copyNodeUpdateCommand('path', agent.ID)">{{ t('copy_update_command') }}</button>
                                 <button class="btn btn-outline-warning" @click="restartDockerNodes('path', [agent.ID])">{{ t('restart_docker') }}</button>
                                 <button class="btn btn-outline-danger" @click="deletePathAgent(agent.ID)">{{ t('del') }}</button>
                             </div>
@@ -1545,6 +1552,7 @@ const I18N = {
         concurrency: 'Concurrency',
         generate: 'Generate',
         copy_command: 'Copy Command',
+        copy_update_command: 'Copy Update Command',
         register_installed_awvs: 'Register Installed AWVS',
         register_installed_path: 'Register Installed Path Agent',
         register_installed_path: 'Register Installed Path Agent',
@@ -1697,7 +1705,9 @@ const I18N = {
         confirm_restart_path_docker: 'Restart docker for this path agent now?',
         confirm_batch_restart_path_docker: 'Restart docker for {count} path agents now?',
         confirm_cleanup_offline_path: 'Delete all offline path agents now?',
-        confirm_update_sqlmap_agent: 'Update this sqlmap agent to the latest version now?'
+        confirm_update_awvs_agent: 'Update this AWVS node to the latest version now?',
+        confirm_update_sqlmap_agent: 'Update this sqlmap agent to the latest version now?',
+        confirm_update_path_agent: 'Update this path agent to the latest version now?'
         ,
         summary_awvs_node: 'AWVS Node',
         summary_awvs_status: 'AWVS Status',
@@ -1754,6 +1764,8 @@ const I18N = {
         matched_terms: 'Matched',
         tree_keyword_filter: 'Sensitive filter',
         tree_keyword_filter_hint: 'Keywords',
+        tree_custom_filter_placeholder: 'Custom filter in table/column/data',
+        custom_matched_terms: 'Custom',
         proxy_requested: 'Requested Proxy',
         proxy_effective: 'Runtime Proxy (from temp config)',
         proxy_config_file: 'Runtime Config File',
@@ -1876,6 +1888,7 @@ const I18N = {
         concurrency: '\u5e76\u53d1',
         generate: '\u751f\u6210',
         copy_command: '\u590d\u5236\u547d\u4ee4',
+        copy_update_command: '\u590d\u5236\u66f4\u65b0\u547d\u4ee4',
         register_installed_awvs: '\u6ce8\u518c\u5df2\u5b89\u88c5\u7684 AWVS',
         register_installed_path: '\u6ce8\u518c\u5df2\u5b89\u88c5\u7684\u8def\u5f84\u4ee3\u7406',
         register_awvs: '\u6ce8\u518c AWVS',
@@ -2025,7 +2038,9 @@ const I18N = {
         confirm_restart_path_docker: '\u73b0\u5728\u91cd\u542f\u8fd9\u4e2a\u8def\u5f84\u4ee3\u7406\u7684 Docker \u5417\uff1f',
         confirm_batch_restart_path_docker: '\u73b0\u5728\u6279\u91cf\u91cd\u542f {count} \u4e2a\u8def\u5f84\u4ee3\u7406\u7684 Docker \u5417\uff1f',
         confirm_cleanup_offline_path: '\u73b0\u5728\u5220\u9664\u6240\u6709\u79bb\u7ebf\u8def\u5f84\u4ee3\u7406\u5417\uff1f',
-        confirm_update_sqlmap_agent: '\u73b0\u5728\u5c06\u8fd9\u4e2a sqlmap \u4ee3\u7406\u66f4\u65b0\u5230\u6700\u65b0\u7248\u672c\u5417\uff1f'
+        confirm_update_awvs_agent: '\u73b0\u5728\u5c06\u8fd9\u4e2a AWVS \u8282\u70b9\u66f4\u65b0\u5230\u6700\u65b0\u7248\u672c\u5417\uff1f',
+        confirm_update_sqlmap_agent: '\u73b0\u5728\u5c06\u8fd9\u4e2a sqlmap \u4ee3\u7406\u66f4\u65b0\u5230\u6700\u65b0\u7248\u672c\u5417\uff1f',
+        confirm_update_path_agent: '\u73b0\u5728\u5c06\u8fd9\u4e2a\u8def\u5f84\u4ee3\u7406\u66f4\u65b0\u5230\u6700\u65b0\u7248\u672c\u5417\uff1f'
         ,
         summary_awvs_node: 'AWVS \u8282\u70b9',
         summary_awvs_status: 'AWVS \u72b6\u6001',
@@ -2082,6 +2097,8 @@ const I18N = {
         matched_terms: '\u5339\u914d',
         tree_keyword_filter: '\u654f\u611f\u8bcd\u7b5b\u9009',
         tree_keyword_filter_hint: '\u7b5b\u9009\u8bcd',
+        tree_custom_filter_placeholder: '\u81ea\u5b9a\u4e49\u7b5b\u9009\uff08\u8868/\u5217/\u6570\u636e\uff09',
+        custom_matched_terms: '\u81ea\u5b9a\u4e49\u547d\u4e2d',
         proxy_requested: '\u671f\u671b\u4ee3\u7406',
         proxy_effective: '\u5b9e\u9645\u4ee3\u7406\uff08\u4ece\u4e34\u65f6\u914d\u7f6e\u8bfb\u53d6\uff09',
         proxy_config_file: '\u5b9e\u9645\u914d\u7f6e\u6587\u4ef6',
@@ -2190,6 +2207,7 @@ new Vue({
         dumpLimitRows: 20,
         treeKeywordFilterEnabled: true,
         treeKeywordTerms: ['admin', 'administrator', 'manager', 'user', 'username', 'password', 'passwd', 'pass', 'senha', 'usuario', 'usuarios', 'administracao', 'gerente', 'login'],
+        treeCustomFilterQuery: '',
         taskFilter: 'all',
         findingFilter: 'all',
         selectedTech: '',
@@ -2367,17 +2385,25 @@ new Vue({
         },
         displayTreeDatabases() {
             const databases = this.getTreeDatabases();
-            if (!this.treeKeywordFilterEnabled) {
-                return databases;
-            }
             return databases.map(database => {
                 const tables = (database.tables || []).map(table => {
                     const matchedKeywords = this.collectTableKeywordMatches(table);
-                    if (!matchedKeywords.length) return null;
+                    const matchedCustomTerms = this.collectTableCustomMatches(table, this.treeCustomFilterQuery);
+                    if (this.treeKeywordFilterEnabled && !matchedKeywords.length && !matchedCustomTerms.length) return null;
+                    if (!this.treeKeywordFilterEnabled && this.treeCustomFilterQuery && !matchedCustomTerms.length) return null;
                     return Object.assign({}, table, {
-                        matched_keywords: matchedKeywords
+                        matched_keywords: matchedKeywords,
+                        matched_custom_terms: matchedCustomTerms
                     });
                 }).filter(Boolean);
+                if (!this.treeKeywordFilterEnabled && !this.treeCustomFilterQuery) {
+                    return Object.assign({}, database, {
+                        tables: (database.tables || []).map(table => Object.assign({}, table, {
+                            matched_keywords: [],
+                            matched_custom_terms: []
+                        }))
+                    });
+                }
                 if (!tables.length) return null;
                 return Object.assign({}, database, {
                     tables: tables
@@ -2894,7 +2920,28 @@ new Vue({
             return `vless://${p.client_id}@${p.server_host}:${p.listen_port}?encryption=none&type=tcp#${name}`;
         },
         copyText(text) {
-            navigator.clipboard.writeText(text || '').catch(() => {});
+            return navigator.clipboard.writeText(text || '').catch(() => {});
+        },
+        copyNodeUpdateCommand(kind, id) {
+            const routes = {
+                awvs: '/api/servers/' + id + '/manual-update-command',
+                sqlmap: '/api/sqlmap/agents/' + id + '/manual-update-command',
+                path: '/api/path/agents/' + id + '/manual-update-command'
+            };
+            const requestURL = routes[kind];
+            if (!requestURL) return;
+            axios.get(requestURL).then(res => {
+                const command = (res.data && res.data.command) || '';
+                if (!command) {
+                    this.notifyError(this.t('request_failed'));
+                    return;
+                }
+                this.copyText(command).then(() => {
+                    this.notifySuccess(this.t('copy_update_command'));
+                });
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
         },
         updateFindingProxy(finding, enabled) {
             axios.put('/api/findings/' + finding.ID, { use_proxy: !!enabled }).then(res => {
@@ -3276,6 +3323,22 @@ new Vue({
                 this.awvsActionResult = { error: this.extractError(err) };
             });
         },
+        async updateAWVS(server) {
+            if (!server || !server.ID) return;
+            if (!(await this.askConfirm(this.t('confirm_update_awvs_agent')))) {
+                return;
+            }
+            this.awvsActionResult = null;
+            axios.post('/api/servers/' + server.ID + '/update').then(res => {
+                this.awvsActionResult = res.data;
+                this.notifySuccess((res.data && res.data.message) || 'ok');
+                this.fetchData();
+                setTimeout(() => this.fetchData(), 8000);
+            }).catch(err => {
+                this.awvsActionResult = { error: this.extractError(err) };
+                this.notifyError(this.extractError(err));
+            });
+        },
         testAWVS(server) {
             const payload = { url: server.url, api_key: server.api_key };
             axios.post('/api/servers/test', payload).then(res => {
@@ -3391,6 +3454,19 @@ new Vue({
                 this.notifySuccess((res.data && res.data.message ? res.data.message : 'ok') + ' -> ' + targetVersion);
                 this.fetchAgents();
                 setTimeout(() => this.fetchAgents(), 8000);
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
+        async updatePathAgent(agent) {
+            if (!agent || !agent.ID) return;
+            if (!(await this.askConfirm(this.t('confirm_update_path_agent')))) {
+                return;
+            }
+            axios.post('/api/path/agents/' + agent.ID + '/update').then(res => {
+                this.notifySuccess((res.data && res.data.message) || 'ok');
+                this.fetchPathAgents();
+                setTimeout(() => this.fetchPathAgents(), 8000);
             }).catch(err => {
                 this.notifyError(this.extractError(err));
             });
@@ -3885,6 +3961,31 @@ new Vue({
             });
             const blob = haystacks.join('\n').toLowerCase();
             return (this.treeKeywordTerms || []).filter(term => blob.indexOf(String(term || '').toLowerCase()) >= 0);
+        },
+        collectTableCustomMatches(table, rawQuery) {
+            const query = String(rawQuery || '').trim().toLowerCase();
+            if (!query) {
+                return [];
+            }
+            const tokens = query.split(/\s+/).map(item => item.trim()).filter(Boolean);
+            if (!tokens.length) {
+                return [];
+            }
+            const haystacks = [];
+            if (table && table.name) {
+                haystacks.push(String(table.name));
+            }
+            (table && table.columns ? table.columns : []).forEach(column => {
+                haystacks.push(String(column || ''));
+            });
+            (table && table.rows ? table.rows : []).forEach(row => {
+                Object.keys(row || {}).forEach(key => {
+                    haystacks.push(String(key || ''));
+                    haystacks.push(String(row[key] || ''));
+                });
+            });
+            const blob = haystacks.join('\n').toLowerCase();
+            return tokens.filter(term => blob.indexOf(term) >= 0);
         },
         buildFallbackTreeDatabases() {
             const content = this.getTaskDetailValue(this.taskDetail, ['content']) || {};

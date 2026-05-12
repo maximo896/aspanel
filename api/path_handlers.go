@@ -268,6 +268,51 @@ func (api *API) RefreshPathAgentStatus(c *gin.Context) {
 	c.JSON(200, agent)
 }
 
+func (api *API) UpdatePathAgentVersion(c *gin.Context) {
+	var agent models.PathAgent
+	if err := api.DB.First(&agent, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "path agent not found"})
+		return
+	}
+	if err := api.callNodeManager(agent.ManagerURL, agent.ManagerToken, "update"); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	api.DB.Model(&models.PathAgent{}).Where("id = ?", agent.ID).Updates(map[string]interface{}{
+		"is_active":         false,
+		"updating":          true,
+		"last_checked_at":   time.Now().Unix(),
+		"last_heartbeat_at": 0,
+	})
+	c.JSON(200, gin.H{
+		"message":  "path agent update requested",
+		"agent_id": agent.ID,
+	})
+}
+
+func (api *API) GetPathManualUpdateCommand(c *gin.Context) {
+	var agent models.PathAgent
+	if err := api.DB.First(&agent, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "path agent not found"})
+		return
+	}
+	cfg, err := api.fetchManagerConfig(agent.ManagerURL, agent.ManagerToken)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	command, err := buildPathManualUpdateCommand(agent, cfg)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{
+		"command": command,
+		"name":    agent.Name,
+		"type":    "path",
+	})
+}
+
 func (api *API) RestartPathDocker(c *gin.Context) {
 	var req struct {
 		IDs []uint `json:"ids" binding:"required"`

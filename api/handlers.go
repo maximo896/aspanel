@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -330,6 +331,47 @@ func (api *API) TestAWVSServer(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"message": "Connected successfully", "info": info})
+}
+
+func (api *API) GetAWVSManualUpdateCommand(c *gin.Context) {
+	var server models.AWVSServer
+	if err := api.DB.First(&server, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "awvs server not found"})
+		return
+	}
+	command, err := buildAWVSManualUpdateCommand(server)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{
+		"command": command,
+		"name":    server.Name,
+		"type":    "awvs",
+	})
+}
+
+func (api *API) UpdateAWVSServerVersion(c *gin.Context) {
+	var server models.AWVSServer
+	if err := api.DB.First(&server, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "awvs server not found"})
+		return
+	}
+	if err := api.callNodeManager(server.ManagerURL, server.ManagerToken, "update"); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	api.DB.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
+		"is_active":        false,
+		"current_running":  0,
+		"last_checked_at":  time.Now().Unix(),
+		"last_heartbeat_at": 0,
+		"last_error":       "manual update requested",
+	})
+	c.JSON(200, gin.H{
+		"message":   "awvs server update requested",
+		"server_id": server.ID,
+	})
 }
 
 func (api *API) DeleteServer(c *gin.Context) {
@@ -731,6 +773,29 @@ func (api *API) UpdateSqlmapAgentVersion(c *gin.Context) {
 		"agent_id":        agent.ID,
 		"current_version": agent.AgentVersion,
 		"target_version":  latestVersion,
+	})
+}
+
+func (api *API) GetSqlmapManualUpdateCommand(c *gin.Context) {
+	var agent models.SqlmapAgent
+	if err := api.DB.First(&agent, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "sqlmap agent not found"})
+		return
+	}
+	cfg, err := api.fetchManagerConfig(agent.ManagerURL, agent.ManagerToken)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	command, err := api.buildSqlmapManualUpdateCommand(agent, cfg)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{
+		"command": command,
+		"name":    agent.Name,
+		"type":    "sqlmap",
 	})
 }
 
@@ -1925,6 +1990,18 @@ type githubTagResponse struct {
 	Name string `json:"name"`
 }
 
+type managerConfigPayload struct {
+	Containers        []string `json:"containers"`
+	UpdateScript      string   `json:"update_script"`
+	UpdateLog         string   `json:"update_log"`
+	CommandTimeoutSec int      `json:"command_timeout_sec"`
+}
+
+type managerHealthResponse struct {
+	OK     bool                 `json:"ok"`
+	Config managerConfigPayload `json:"config"`
+}
+
 func normalizeAgentVersionValue(version string) string {
 	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(version), "v"))
 }
@@ -2040,6 +2117,141 @@ func getLatestSQLMapAgentVersion() string {
 func isLatestSQLMapAgentVersion(version, latest string) bool {
 	normalized := normalizeAgentVersionValue(version)
 	return normalized != "" && normalized == normalizeAgentVersionValue(latest)
+}
+
+func maxIntValue(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func parseNodePort(rawURL string) (int, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return 0, fmt.Errorf("invalid node url: %v", err)
+	}
+	if portText := strings.TrimSpace(parsed.Port()); portText != "" {
+		port, convErr := strconv.Atoi(portText)
+		if convErr != nil || port <= 0 || port > 65535 {
+			return 0, fmt.Errorf("invalid node port")
+		}
+		return port, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(parsed.Scheme)) {
+	case "https":
+		return 443, nil
+	case "http":
+		return 80, nil
+	default:
+		return 0, fmt.Errorf("missing node port")
+	}
+}
+
+func deriveDataRootBase(updateScript string) string {
+	scriptPath := filepath.Clean(strings.TrimSpace(updateScript))
+	if scriptPath == "" || scriptPath == "." {
+		return ""
+	}
+	dataRoot := filepath.Dir(scriptPath)
+	if dataRoot == "." || dataRoot == string(filepath.Separator) {
+		return ""
+	}
+	base := filepath.Dir(dataRoot)
+	if base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return filepath.ToSlash(base)
+}
+
+func (api *API) fetchManagerConfig(managerURL, managerToken string) (*managerConfigPayload, error) {
+	managerURL = normalizeBaseURL(managerURL)
+	managerToken = strings.TrimSpace(managerToken)
+	if managerURL == "" || managerToken == "" {
+		return nil, fmt.Errorf("manager api is not configured for this node")
+	}
+	req, _ := http.NewRequest("GET", managerURL+"/health", nil)
+	req.Header.Set("X-Manager-Token", managerToken)
+	resp, err := httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = fmt.Sprintf("manager api returned %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("%s", message)
+	}
+	var payload managerHealthResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("invalid manager health response: %v", err)
+	}
+	return &payload.Config, nil
+}
+
+func buildAWVSManualUpdateCommand(server models.AWVSServer) (string, error) {
+	port, err := parseNodePort(server.URL)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(
+		`MANAGER_ALLOW_REUSE_PORT=1 curl -fsSL https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/awvs-agent-entrypoint.sh | bash -s -- -n %s -p %d -c %d`,
+		shellQuote(strings.TrimSpace(server.Name)),
+		port,
+		maxIntValue(1, server.MaxConcurrency),
+	), nil
+}
+
+func (api *API) buildSqlmapManualUpdateCommand(agent models.SqlmapAgent, cfg *managerConfigPayload) (string, error) {
+	port, err := parseNodePort(agent.URL)
+	if err != nil {
+		return "", err
+	}
+	dataRootBase := "/opt/aspanel/sqlmap-agent"
+	if cfg != nil {
+		if derived := deriveDataRootBase(cfg.UpdateScript); derived != "" {
+			dataRootBase = derived
+		}
+	}
+	cmd := fmt.Sprintf(
+		`MANAGER_ALLOW_REUSE_PORT=1 curl -fsSL https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/sqlmap-agent-entrypoint.sh | bash -s -- -n %s -p %d -c %d -d %s`,
+		shellQuote(strings.TrimSpace(agent.Name)),
+		port,
+		maxIntValue(1, agent.MaxConcurrency),
+		shellQuote(dataRootBase),
+	)
+	if agent.ProxyAgentID != 0 {
+		var proxyAgent models.ProxyAgent
+		if err := api.DB.First(&proxyAgent, agent.ProxyAgentID).Error; err == nil {
+			if proxyLink := strings.TrimSpace(buildProxyAgentLink(proxyAgent)); proxyLink != "" {
+				cmd += fmt.Sprintf(` -l %s`, shellQuote(proxyLink))
+			}
+		}
+	}
+	return cmd, nil
+}
+
+func buildPathManualUpdateCommand(agent models.PathAgent, cfg *managerConfigPayload) (string, error) {
+	port, err := parseNodePort(agent.URL)
+	if err != nil {
+		return "", err
+	}
+	dataRootBase := "/opt/aspanel/path-agent"
+	if cfg != nil {
+		if derived := deriveDataRootBase(cfg.UpdateScript); derived != "" {
+			dataRootBase = derived
+		}
+	}
+	return fmt.Sprintf(
+		`MANAGER_ALLOW_REUSE_PORT=1 curl -fsSL https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/path-agent-entrypoint.sh | bash -s -- -n %s -p %d -c %d -d %s`,
+		shellQuote(strings.TrimSpace(agent.Name)),
+		port,
+		maxIntValue(1, agent.MaxConcurrency),
+		shellQuote(dataRootBase),
+	), nil
 }
 
 func generateDockerCommand(name string, maxConcurrency int, agentPort int) string {
