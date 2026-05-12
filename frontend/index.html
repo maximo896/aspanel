@@ -135,7 +135,7 @@
             background: rgba(255,255,255,0.02); 
             border: 1px solid var(--border-subtle); 
             border-radius: 10px; 
-            padding: 20px; 
+            padding: 16px; 
         }
         
         .selected-row td { background: rgba(59, 130, 246, 0.1) !important; border-left: 2px solid var(--accent-blue); }
@@ -149,6 +149,13 @@
         .tree-database { background: var(--bg-base); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
         .tree-table { border-left: 2px solid var(--border-focus); margin-left: 8px; padding-left: 16px; margin-top: 16px; }
         .tree-columns { margin-left: 0; margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+        .db-tree-compact { font-size: 0.82rem; }
+        .db-tree-compact .tree-database { padding: 10px; margin-bottom: 10px; }
+        .db-tree-compact .tree-table { margin-left: 4px; padding-left: 10px; margin-top: 10px; }
+        .db-tree-compact .tree-columns { margin-top: 8px; gap: 4px; }
+        .db-tree-compact .badge { font-size: 0.66rem; padding: 3px 6px; }
+        .db-tree-compact .btn-sm { padding: 4px 8px; font-size: 0.75rem; }
+        .badge-match { background: rgba(239, 68, 68, 0.14); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.25); }
         
         .preview-table { font-size: 0.8rem; background: var(--bg-base); border-radius: 6px; overflow: hidden; border-style: hidden; box-shadow: 0 0 0 1px var(--border-subtle); }
         .preview-table th { background: rgba(255,255,255,0.02); }
@@ -586,7 +593,12 @@
                             <div class="tree-box h-100">
                                 <div class="d-flex justify-content-between align-items-center mb-3">
                                     <h6 class="mb-0">{{ t('search') }}</h6>
-                                    <button class="btn btn-sm btn-primary" :disabled="searchBusy || !searchQuery || !selectedActionDb" @click="searchTaskTree">{{ t('search') }}</button>
+                                    <button class="btn btn-sm btn-primary" :disabled="searchBusy || !searchQuery || !canRunSqlmapSearch()" @click="searchTaskTree">{{ t('search') }}</button>
+                                </div>
+                                <div class="btn-group btn-group-sm mb-3">
+                                    <button class="btn" :class="searchKind === 'database' ? 'btn-primary' : 'btn-outline-secondary'" @click="searchKind = 'database'">{{ t('search_kind_database') }}</button>
+                                    <button class="btn" :class="searchKind === 'table' ? 'btn-primary' : 'btn-outline-secondary'" @click="searchKind = 'table'">{{ t('search_kind_table') }}</button>
+                                    <button class="btn" :class="searchKind === 'column' ? 'btn-primary' : 'btn-outline-secondary'" @click="searchKind = 'column'">{{ t('search_kind_column') }}</button>
                                 </div>
                                 <div class="input-group mb-3">
                                     <input class="form-control" v-model="searchQuery" :placeholder="t('search_placeholder')" @keyup.enter="searchTaskTree">
@@ -609,9 +621,16 @@
                             <div class="tree-box">
                                 <div class="d-flex justify-content-between align-items-center mb-3">
                                     <h6 class="mb-0">{{ t('database_tree') }}</h6>
-                                    <button class="btn btn-sm btn-outline-primary" :disabled="taskActionBusy" @click="runTaskAction('get_dbs')">{{ t('auto_run_databases') }}</button>
+                                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                                        <label class="form-check-label small text-muted">
+                                            <input class="form-check-input me-2" type="checkbox" v-model="treeKeywordFilterEnabled">
+                                            {{ t('tree_keyword_filter') }}
+                                        </label>
+                                        <button class="btn btn-sm btn-outline-primary" :disabled="taskActionBusy" @click="runTaskAction('get_dbs')">{{ t('auto_run_databases') }}</button>
+                                    </div>
                                 </div>
-                                <div v-if="getTreeDatabases().length === 0" class="muted text-center py-4">{{ t('no_db_tree_data') }}</div>
+                                <div v-if="treeKeywordFilterEnabled" class="small text-muted mb-3">{{ t('tree_keyword_filter_hint') }}: {{ treeKeywordTerms.join(', ') }}</div>
+                                <div v-if="displayTreeDatabases.length === 0" class="muted text-center py-4">{{ t('no_db_tree_data') }}</div>
                                 <div v-else>
                                     <div class="d-flex justify-content-between align-items-center p-2 mb-2 rounded" style="background: rgba(148,163,184,0.08); border: 1px solid rgba(148,163,184,0.2);">
                                         <div>
@@ -619,19 +638,19 @@
                                                 {{ treeRootExpanded ? '-' : '+' }}
                                             </button>
                                             <strong class="text-white">{{ t('all_databases_root') }}</strong>
-                                            <span class="badge badge-soft ms-2">{{ getTreeDatabases().length }}</span>
+                                            <span class="badge badge-soft ms-2">{{ displayTreeDatabases.length }}</span>
                                         </div>
                                         <span class="text-muted small">{{ treeRootExpanded ? t('collapse') : t('expand') }}</span>
                                     </div>
 
-                                    <div v-if="treeRootExpanded">
-                                        <div v-for="database in getTreeDatabases()" :key="database.name" class="tree-database">
+                                    <div v-if="treeRootExpanded" class="db-tree-compact">
+                                        <div v-for="database in displayTreeDatabases" :key="database.name" class="tree-database">
                                             <div class="d-flex justify-content-between align-items-start">
                                                 <div>
                                                     <button class="btn btn-sm btn-outline-light me-2" @click="toggleDatabaseExpand(database.name)">
                                                         {{ isDatabaseExpanded(database.name) ? '-' : '+' }}
                                                     </button>
-                                                    <strong class="fs-5 text-white">{{ database.name }}</strong>
+                                                    <strong class="text-white">{{ database.name }}</strong>
                                                     <span v-if="database.priority_table" class="badge badge-soft ms-2">{{ t('priority') }}: {{ database.priority_table }}</span>
                                                 </div>
                                                 <div class="tree-actions">
@@ -648,9 +667,12 @@
                                                             </button>
                                                             <strong class="text-info">{{ table.name }}</strong>
                                                             <span v-if="table.priority" class="badge bg-warning text-dark ms-2" title="adm priority">★</span>
+                                                            <span v-if="table.row_count !== undefined && table.row_count !== null && table.row_count !== ''" class="badge badge-soft ms-2">{{ t('rows_count') }}: {{ table.row_count }}</span>
+                                                            <span v-if="table.matched_keywords && table.matched_keywords.length" class="badge badge-match ms-2">{{ t('matched_terms') }}: {{ table.matched_keywords.join(', ') }}</span>
                                                         </div>
                                                         <div class="tree-actions">
                                                             <button class="btn btn-sm btn-outline-secondary" :disabled="taskActionBusy" @click="runTaskAction('get_columns', { db: database.name, table: table.name })">{{ t('cols_short') }}</button>
+                                                            <button class="btn btn-sm btn-outline-secondary" :disabled="taskActionBusy" @click="runTaskAction('count_rows', { db: database.name, table: table.name })">{{ t('count_short') }}</button>
                                                             <button class="btn btn-sm btn-outline-success" :disabled="taskActionBusy" @click="runTaskAction('dump_table_data', { db: database.name, table: table.name, limit_start: 1, limit_stop: 20 })">{{ t('data_short') }}</button>
                                                         </div>
                                                     </div>
@@ -1722,8 +1744,16 @@ const I18N = {
         no_injection_data: 'No injection data yet',
         search: 'Search',
         clear: 'Clear',
-        search_placeholder: 'Find in DBs, tables, columns, or data...',
+        search_placeholder: 'Find in DBs, tables, or columns...',
+        search_kind_database: 'Database',
+        search_kind_table: 'Table',
+        search_kind_column: 'Column',
         no_search_results: 'No search results',
+        rows_count: 'Rows',
+        count_short: 'Count',
+        matched_terms: 'Matched',
+        tree_keyword_filter: 'Sensitive filter',
+        tree_keyword_filter_hint: 'Keywords',
         proxy_requested: 'Requested Proxy',
         proxy_effective: 'Runtime Proxy (from temp config)',
         proxy_config_file: 'Runtime Config File',
@@ -2042,8 +2072,16 @@ const I18N = {
         no_injection_data: '\u6682\u65e0\u6ce8\u5165\u6570\u636e',
         search: '\u641c\u7d22',
         clear: '\u6e05\u7a7a',
-        search_placeholder: '\u641c\u7d22\u6570\u636e\u5e93\u3001\u8868\u3001\u5217\u6216\u6570\u636e...',
+        search_placeholder: '\u641c\u7d22\u6570\u636e\u5e93\u3001\u8868\u6216\u5217...',
+        search_kind_database: '\u6570\u636e\u5e93',
+        search_kind_table: '\u8868',
+        search_kind_column: '\u5217',
         no_search_results: '\u65e0\u641c\u7d22\u7ed3\u679c',
+        rows_count: '\u884c\u6570',
+        count_short: '\u8ba1\u6570',
+        matched_terms: '\u5339\u914d',
+        tree_keyword_filter: '\u654f\u611f\u8bcd\u7b5b\u9009',
+        tree_keyword_filter_hint: '\u7b5b\u9009\u8bcd',
         proxy_requested: '\u671f\u671b\u4ee3\u7406',
         proxy_effective: '\u5b9e\u9645\u4ee3\u7406\uff08\u4ece\u4e34\u65f6\u914d\u7f6e\u8bfb\u53d6\uff09',
         proxy_config_file: '\u5b9e\u9645\u914d\u7f6e\u6587\u4ef6',
@@ -2147,8 +2185,11 @@ new Vue({
         searchBusy: false,
         selectedActionDb: '',
         selectedActionTable: '',
+        searchKind: 'column',
         dumpLimitMode: 'head',
         dumpLimitRows: 20,
+        treeKeywordFilterEnabled: true,
+        treeKeywordTerms: ['admin', 'administrator', 'manager', 'user', 'username', 'password', 'passwd', 'pass', 'senha', 'usuario', 'usuarios', 'administracao', 'gerente', 'login'],
         taskFilter: 'all',
         findingFilter: 'all',
         selectedTech: '',
@@ -2323,6 +2364,25 @@ new Vue({
                 const count = entry && entry.scan ? entry.scan.forms_count : 0;
                 return Number(count || 0) > 0;
             });
+        },
+        displayTreeDatabases() {
+            const databases = this.getTreeDatabases();
+            if (!this.treeKeywordFilterEnabled) {
+                return databases;
+            }
+            return databases.map(database => {
+                const tables = (database.tables || []).map(table => {
+                    const matchedKeywords = this.collectTableKeywordMatches(table);
+                    if (!matchedKeywords.length) return null;
+                    return Object.assign({}, table, {
+                        matched_keywords: matchedKeywords
+                    });
+                }).filter(Boolean);
+                if (!tables.length) return null;
+                return Object.assign({}, database, {
+                    tables: tables
+                });
+            }).filter(Boolean);
         },
         paginatedFindings() {
             const start = (this.findingPage - 1) * this.findingPageSize;
@@ -3575,6 +3635,7 @@ new Vue({
             axios.get('/api/findings/' + findingId + '/sqlmap').then(res => {
                 this.taskDetail = res.data.scan || res.data;
                 this.syncActionSelectors();
+                this.loadSearchResults(this.searchQuery, this.searchKind);
                 this.taskDetailError = '';
                 this.taskActionMessage = '';
                 if (!this.requestEditMode) {
@@ -3646,16 +3707,51 @@ new Vue({
                 this.taskActionBusy = false;
             });
         },
-        searchTaskTree() {
-            if (!this.selectedFindingId || !this.searchQuery || !this.selectedActionDb) return;
-            this.searchBusy = true;
-            this.runTaskAction('search_column', {
-                db: this.selectedActionDb,
-                table: this.selectedActionTable || '',
-                column: this.searchQuery
+        canRunSqlmapSearch() {
+            const kind = String(this.searchKind || '').trim().toLowerCase();
+            return kind === 'database' || kind === 'table' || kind === 'column';
+        },
+        loadSearchResults(query, kind) {
+            const needle = String(query || '').trim();
+            if (!needle || !this.selectedFindingId || !this.canRunSqlmapSearch()) {
+                this.searchResults = [];
+                return;
+            }
+            axios.get('/api/findings/' + this.selectedFindingId + '/sqlmap/search', {
+                params: {
+                    q: needle,
+                    kind: kind || this.searchKind
+                }
+            }).then(res => {
+                this.searchResults = (res.data && res.data.results) || [];
+            }).catch(() => {
+                this.searchResults = [];
             });
-            axios.get('/api/findings/' + this.selectedFindingId + '/sqlmap/search?q=' + encodeURIComponent(this.searchQuery)).then(res => {
-                this.searchResults = res.data.results || [];
+        },
+        searchTaskTree() {
+            if (!this.selectedFindingId || !this.searchQuery) return;
+            if (!this.canRunSqlmapSearch()) return;
+            this.searchBusy = true;
+            this.taskActionMessage = '';
+            const payload = {
+                action: 'search',
+                search_kind: this.searchKind,
+                search_query: this.searchQuery
+            };
+            if (this.selectedActionDb) {
+                payload.db = this.selectedActionDb;
+            }
+            if (this.selectedActionTable) {
+                payload.table = this.selectedActionTable;
+            }
+            if (this.selectedTech) {
+                payload.technique = this.selectedTech;
+            }
+            axios.post('/api/findings/' + this.selectedFindingId + '/sqlmap/action', payload).then(res => {
+                this.taskActionMessage = (res.data.message || 'ok') + ' (search)';
+                this.fetchData();
+                this.loadFindingDetail(this.selectedFindingId, false);
+                this.loadSearchResults(this.searchQuery, this.searchKind);
             }).catch(err => {
                 this.taskActionMessage = this.extractError(err);
             }).finally(() => {
@@ -3772,6 +3868,23 @@ new Vue({
                 return treeDatabases;
             }
             return this.buildFallbackTreeDatabases();
+        },
+        collectTableKeywordMatches(table) {
+            const haystacks = [];
+            if (table && table.name) {
+                haystacks.push(String(table.name));
+            }
+            (table && table.columns ? table.columns : []).forEach(column => {
+                haystacks.push(String(column || ''));
+            });
+            (table && table.rows ? table.rows : []).forEach(row => {
+                Object.keys(row || {}).forEach(key => {
+                    haystacks.push(String(key || ''));
+                    haystacks.push(String(row[key] || ''));
+                });
+            });
+            const blob = haystacks.join('\n').toLowerCase();
+            return (this.treeKeywordTerms || []).filter(term => blob.indexOf(String(term || '').toLowerCase()) >= 0);
         },
         buildFallbackTreeDatabases() {
             const content = this.getTaskDetailValue(this.taskDetail, ['content']) || {};

@@ -175,31 +175,27 @@ func (c *Client) GetLatestScanID(targetID string) (string, error) {
 }
 
 func (c *Client) CountActiveScans() (int, error) {
-	res, err := c.doReq("GET", "/api/v1/scans?l=1000", nil)
-	if err != nil {
-		return 0, err
+	statusQueries := []string{
+		"/api/v1/scans?l=1000&q=status:processing;",
+		"/api/v1/scans?l=1000&q=status:starting;",
 	}
-
-	var data struct {
-		Scans []struct {
-			CurrentSession struct {
-				Status string `json:"status"`
-			} `json:"current_session"`
-		} `json:"scans"`
-	}
-	if err := json.Unmarshal(res, &data); err != nil {
-		return 0, err
-	}
-
-	active := 0
-	for _, scan := range data.Scans {
-		status := strings.ToLower(strings.TrimSpace(scan.CurrentSession.Status))
-		switch status {
-		case "processing", "in_progress", "in progress":
-			active++
+	total := 0
+	for _, query := range statusQueries {
+		res, err := c.doReq("GET", query, nil)
+		if err != nil {
+			return 0, err
 		}
+		var data struct {
+			Scans []struct {
+				ScanID string `json:"scan_id"`
+			} `json:"scans"`
+		}
+		if err := json.Unmarshal(res, &data); err != nil {
+			return 0, err
+		}
+		total += len(data.Scans)
 	}
-	return active, nil
+	return total, nil
 }
 
 func (c *Client) GetScanStatus(scanID string) (string, error) {

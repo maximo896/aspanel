@@ -34,6 +34,7 @@ type API struct {
 const (
 	defaultLatestSQLMapAgentVersion = "2.1.2"
 	sqlmapAgentReleaseAPI           = "https://api.github.com/repos/maximo896/as/releases/latest"
+	sqlmapAgentTagsAPI              = "https://api.github.com/repos/maximo896/as/tags?per_page=1"
 	sqlmapAgentVersionCacheTTL      = 10 * time.Minute
 )
 
@@ -1148,7 +1149,12 @@ func (api *API) SearchFindingSqlmap(c *gin.Context) {
 	}
 
 	query := url.QueryEscape(c.Query("q"))
-	req, _ := http.NewRequest("GET", fmt.Sprintf("%s/scan/%s/search?q=%s", agent.URL, finding.SqlmapTaskID, query), nil)
+	kind := url.QueryEscape(strings.TrimSpace(c.Query("kind")))
+	searchURL := fmt.Sprintf("%s/scan/%s/search?q=%s", agent.URL, finding.SqlmapTaskID, query)
+	if kind != "" {
+		searchURL += "&kind=" + kind
+	}
+	req, _ := http.NewRequest("GET", searchURL, nil)
 	req.Header.Set("X-Api-Token", agent.APIKey)
 	resp, err := httpClient().Do(req)
 	if err != nil {
@@ -1915,6 +1921,10 @@ type githubLatestReleaseResponse struct {
 	TagName string `json:"tag_name"`
 }
 
+type githubTagResponse struct {
+	Name string `json:"name"`
+}
+
 func normalizeAgentVersionValue(version string) string {
 	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(version), "v"))
 }
@@ -1954,27 +1964,33 @@ func fetchLatestSQLMapAgentVersionFromAPI() (string, error) {
 	return version, nil
 }
 
-func fetchLatestSQLMapAgentVersionFromRedirect() (string, error) {
-	req, _ := http.NewRequest("GET", "https://github.com/maximo896/as/releases/latest", nil)
+func fetchLatestSQLMapAgentVersionFromTagsAPI() (string, error) {
+	req, _ := http.NewRequest("GET", sqlmapAgentTagsAPI, nil)
 	req.Header.Set("User-Agent", "awvs-sqlmap-panel")
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if token := githubAPIToken(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	finalURL := ""
-	if resp.Request != nil && resp.Request.URL != nil {
-		finalURL = resp.Request.URL.String()
-	}
-	matches := regexp.MustCompile(`/releases/tag/([^/?#]+)`).FindStringSubmatch(finalURL)
-	if len(matches) < 2 {
+	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("release redirect parse failed status=%d url=%s body=%s", resp.StatusCode, strings.TrimSpace(finalURL), strings.TrimSpace(string(body)))
+		return "", fmt.Errorf("tags api status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	version := normalizeAgentVersionValue(matches[1])
+	var tags []githubTagResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+		return "", err
+	}
+	if len(tags) == 0 {
+		return "", fmt.Errorf("empty tags api result")
+	}
+	version := normalizeAgentVersionValue(tags[0].Name)
 	if version == "" {
-		return "", fmt.Errorf("empty tag parsed from redirect url=%s", finalURL)
+		return "", fmt.Errorf("empty tag parsed from tags api")
 	}
 	return version, nil
 }
@@ -1984,12 +2000,12 @@ func fetchLatestSQLMapAgentVersion() (string, error) {
 	if err == nil {
 		return version, nil
 	}
-	redirectVersion, redirectErr := fetchLatestSQLMapAgentVersionFromRedirect()
-	if redirectErr == nil {
-		log.Printf("[sqlmap-agent-version] api fetch failed, using redirect fallback version=%s err=%v", redirectVersion, err)
-		return redirectVersion, nil
+	tagVersion, tagErr := fetchLatestSQLMapAgentVersionFromTagsAPI()
+	if tagErr == nil {
+		log.Printf("[sqlmap-agent-version] release api fetch failed, using tags fallback version=%s err=%v", tagVersion, err)
+		return tagVersion, nil
 	}
-	return "", fmt.Errorf("api error: %v; redirect error: %v", err, redirectErr)
+	return "", fmt.Errorf("release api error: %v; tags api error: %v", err, tagErr)
 }
 
 func getLatestSQLMapAgentVersion() string {
