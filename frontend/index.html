@@ -377,6 +377,8 @@
                             <option :value="0">{{ t('retry_target_auto') }}</option>
                             <option v-for="a in agents" :key="'retry-task-agent-' + a.ID" :value="a.ID">{{ a.name }}</option>
                         </select>
+                        <button class="btn btn-outline-info btn-sm" :disabled="!paginatedFindings.length" @click="updateVisibleFindingsProxy(true)">{{ t('use_proxy_current_page') }}</button>
+                        <button class="btn btn-outline-secondary btn-sm" :disabled="!paginatedFindings.length" @click="updateVisibleFindingsProxy(false, true)">{{ t('clear_proxy_current_page') }}</button>
                         <button class="btn btn-outline-warning btn-sm" :disabled="taskActionBusy || !selectedTaskId" @click="retryTaskLevelPush">{{ t('force_retry_task_push') }}</button>
                     </div>
                 </div>
@@ -393,11 +395,7 @@
                                 <th>{{ t('th_agent') }}</th>
                                 <th>{{ t('th_sqlmap_status') }}</th>
                                 <th>{{ t('th_sqlmap_techniques') }}</th>
-                                <th>
-                                    <label class="proxy-toggle-label mb-0" :title="t('use_proxy_toggle_all')">
-                                        <input class="form-check-input" type="checkbox" :checked="allPaginatedFindingsUseProxy" @change="updateVisibleFindingsProxy($event.target.checked)">
-                                    </label>
-                                </th>
+                                <th>{{ t('use_proxy') }}</th>
                                 <th>{{ t('results') }}</th>
                                 <th>{{ t('action') }}</th>
                             </tr>
@@ -1667,7 +1665,8 @@ const I18N = {
         proxy_agent: 'Proxy Agent',
         proxy_none: 'None',
         use_proxy: 'Use Proxy',
-        use_proxy_toggle_all: 'Toggle proxy for current page',
+        use_proxy_current_page: 'Current Page Use Proxy',
+        clear_proxy_current_page: 'Current Page No Proxy',
         generate_proxy_cmd: 'Generate Proxy Install Command',
         register_installed_proxy: 'Register Installed Proxy Agent',
         register_proxy: 'Register Proxy Agent',
@@ -2008,7 +2007,8 @@ const I18N = {
         proxy_agent: '\u4ee3\u7406\u8282\u70b9',
         proxy_none: '\u4e0d\u4f7f\u7528',
         use_proxy: '\u4f7f\u7528\u4ee3\u7406',
-        use_proxy_toggle_all: '\u5207\u6362\u5f53\u524d\u9875\u5168\u90e8\u4ee3\u7406',
+        use_proxy_current_page: '\u5f53\u524d\u9875\u5168\u90e8\u4f7f\u7528\u4ee3\u7406',
+        clear_proxy_current_page: '\u5f53\u524d\u9875\u5168\u90e8\u4e0d\u4f7f\u7528\u4ee3\u7406',
         generate_proxy_cmd: '\u751f\u6210\u4ee3\u7406\u5b89\u88c5\u547d\u4ee4',
         register_installed_proxy: '\u6ce8\u518c\u5df2\u5b89\u88c5\u7684\u4ee3\u7406\u8282\u70b9',
         register_proxy: '\u6ce8\u518c\u4ee3\u7406\u8282\u70b9',
@@ -2435,9 +2435,6 @@ new Vue({
             if (this.findingFilter === 'has_shell') return this.taskFindings.filter(f => f.has_shell);
             if (this.findingFilter === 'has_injection') return this.taskFindings.filter(f => f.has_injection);
             return this.taskFindings;
-        },
-        allPaginatedFindingsUseProxy() {
-            return this.paginatedFindings.length > 0 && this.paginatedFindings.every(f => !!f.use_proxy);
         },
         filteredTaskPathScans() {
             return (this.taskPathScans || []).map(entry => {
@@ -3051,8 +3048,12 @@ new Vue({
                 this.notifyError(this.extractError(err));
             });
         },
-        updateVisibleFindingsProxy(enabled) {
-            const targets = this.paginatedFindings.filter(item => !!item && !!item.ID && !!item.sent_to_sqlmap);
+        updateVisibleFindingsProxy(enabled, includeAllCurrentPage = false) {
+            const targets = this.paginatedFindings.filter(item => {
+                if (!item || !item.ID) return false;
+                if (!enabled && includeAllCurrentPage) return true;
+                return !!item.sent_to_sqlmap;
+            });
             if (!targets.length) return;
             Promise.all(targets.map(item => axios.put('/api/findings/' + item.ID, { use_proxy: !!enabled })))
                 .then(results => {
