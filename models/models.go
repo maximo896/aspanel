@@ -50,6 +50,27 @@ type SqlmapAgent struct {
 	ProxyURL        string `json:"proxy_url"`
 }
 
+type PathAgent struct {
+	gorm.Model
+	Name            string `json:"name"`
+	URL             string `json:"url"`
+	APIKey          string `json:"api_key"`
+	ManagerURL      string `json:"manager_url"`
+	ManagerToken    string `json:"-"`
+	AgentVersion    string `json:"agent_version"`
+	MaxConcurrency  int    `json:"max_concurrency"`
+	IsActive        bool   `json:"is_active" gorm:"default:true"`
+	Updating        bool   `json:"updating" gorm:"default:false"`
+	CurrentRunning  int    `json:"current_running"`
+	CurrentQueued   int    `json:"current_queued"`
+	LastCheckedAt   int64  `json:"last_checked_at"`
+	LastHeartbeatAt int64  `json:"last_heartbeat_at"`
+	Provider        string `json:"provider" gorm:"default:'manual'"`
+	InstanceID      string `json:"instance_id"`
+	Region          string `json:"region"`
+	Zone            string `json:"zone"`
+}
+
 type Task struct {
 	gorm.Model
 	URL            string `json:"url"`
@@ -67,6 +88,24 @@ type Task struct {
 	HasInjection   bool   `json:"has_injection"`
 	LastRequeuedAt int64  `json:"last_requeued_at"`
 	RequeueReason  string `json:"requeue_reason"`
+}
+
+type TaskPathScan struct {
+	gorm.Model
+	TaskID           uint   `json:"task_id" gorm:"index:idx_task_path_scope,unique"`
+	ScopeDomain      string `json:"scope_domain" gorm:"index:idx_task_path_scope,unique"`
+	ForceSSL         bool   `json:"force_ssl" gorm:"index:idx_task_path_scope,unique"`
+	TargetURL        string `json:"target_url"`
+	PathAgentID      uint   `json:"path_agent_id"`
+	PathAgentURL     string `json:"path_agent_url"`
+	PathTaskID       string `json:"path_task_id"`
+	PathStatus       string `json:"path_status" gorm:"default:'none'"`
+	AgentVersion     string `json:"agent_version"`
+	PathsCount       int    `json:"paths_count"`
+	FormsCount       int    `json:"forms_count"`
+	ResultJSON       string `json:"result_json" gorm:"type:text"`
+	LastError        string `json:"last_error" gorm:"type:text"`
+	LastDispatchedAt int64  `json:"last_dispatched_at"`
 }
 
 type TaskFinding struct {

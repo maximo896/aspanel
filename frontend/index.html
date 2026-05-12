@@ -213,6 +213,9 @@
             <a class="nav-link" :class="{active: activeTab==='sqlmap'}" href="#" @click.prevent="activeTab='sqlmap'">{{ t('tab_sqlmap') }}</a>
         </li>
         <li class="nav-item">
+            <a class="nav-link" :class="{active: activeTab==='path'}" href="#" @click.prevent="activeTab='path'">{{ t('tab_path') }}</a>
+        </li>
+        <li class="nav-item">
             <a class="nav-link" :class="{active: activeTab==='proxy'}" href="#" @click.prevent="activeTab='proxy'">{{ t('tab_proxy') }}</a>
         </li>
         <li class="nav-item">
@@ -436,6 +439,58 @@
                             <button class="btn btn-outline-secondary" v-if="findingPage < findingTotalPages - 3" disabled>...</button>
                             <button class="btn btn-outline-secondary" v-if="findingPage < findingTotalPages - 2" @click="findingPage = findingTotalPages">{{ findingTotalPages }}</button>
                             <button class="btn btn-outline-secondary" :disabled="findingPage === findingTotalPages || findingTotalPages === 0" @click="findingPage++">{{ t('next') }}</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="tree-box mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="mb-0">{{ t('path_scan_results') }}</h6>
+                        <button class="btn btn-sm btn-outline-warning" :disabled="taskPathActionBusy || !selectedTaskId" @click="retryTaskPathScan">{{ t('retry_path_scan') }}</button>
+                    </div>
+                    <div v-if="taskPathScanError" class="alert alert-danger mb-3">{{ taskPathScanError }}</div>
+                    <div v-if="taskPathScans.length === 0" class="muted">{{ t('no_path_scan') }}</div>
+                    <div v-for="entry in taskPathScans" :key="'path-scan-' + entry.scan.ID" class="code-box mb-3">
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <div>
+                                <div class="text-white fw-bold">{{ entry.scan.target_url || '-' }}</div>
+                                <div class="small text-muted">{{ t('label_url') }}: {{ entry.scan.scope_domain || '-' }}</div>
+                            </div>
+                            <div class="d-flex gap-2 flex-wrap">
+                                <span class="badge" :class="getSqlmapBadgeClass(entry.scan.path_status || 'none')">{{ entry.scan.path_status || 'none' }}</span>
+                                <span class="badge bg-primary">{{ t('path_paths_count') }}: {{ entry.scan.paths_count || 0 }}</span>
+                                <span class="badge bg-success">{{ t('path_forms_count') }}: {{ entry.scan.forms_count || 0 }}</span>
+                            </div>
+                        </div>
+                        <div v-if="entry.scan.last_error" class="small text-danger mt-3">{{ entry.scan.last_error }}</div>
+                        <div v-if="entry.result && entry.result.result && entry.result.result.paths && entry.result.result.paths.length" class="table-responsive mt-3">
+                            <table class="table table-sm align-middle mb-0">
+                                <thead>
+                                <tr>
+                                    <th>{{ t('path_url') }}</th>
+                                    <th>{{ t('status') }}</th>
+                                    <th>{{ t('path_sources') }}</th>
+                                    <th>{{ t('path_forms') }}</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                <tr v-for="pathItem in entry.result.result.paths" :key="entry.scan.ID + ':' + pathItem.url">
+                                    <td>
+                                        <div class="text-break"><a :href="pathItem.url" target="_blank" style="color:var(--accent-blue); text-decoration:none">{{ pathItem.url }}</a></div>
+                                        <div class="small text-muted" v-if="pathItem.title">{{ pathItem.title }}</div>
+                                    </td>
+                                    <td>{{ pathItem.status_code || '-' }}</td>
+                                    <td><small>{{ (pathItem.sources || []).join(', ') || '-' }}</small></td>
+                                    <td>
+                                        <div v-if="!(pathItem.forms || []).length" class="text-muted small">-</div>
+                                        <div v-for="form in pathItem.forms || []" :key="pathItem.url + ':' + form.form_index" class="mb-2">
+                                            <div><span class="badge bg-secondary me-2">{{ form.method || 'GET' }}</span><span class="small text-break">{{ form.action || '-' }}</span></div>
+                                            <div class="small text-muted mt-1">{{ (form.fields || []).map(field => field.name || '[' + (field.type || field.tag || 'field') + ']').join(', ') || '-' }}</div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
@@ -918,6 +973,93 @@
         </div>
     </div>
 
+    <div v-show="activeTab==='path'">
+        <div class="row">
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">{{ t('generate_path_cmd') }}</div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-8"><input class="form-control" v-model="newPathAgent.name" :placeholder="t('agent_name')"></div>
+                            <div class="col-md-2"><input class="form-control" type="number" v-model.number="newPathAgent.max_concurrency" :placeholder="t('max_concurrency')"></div>
+                            <div class="col-md-2"><button class="btn btn-primary w-100" @click="createPathAgentConfig" :disabled="!newPathAgent.name">{{ t('generate') }}</button></div>
+                        </div>
+                        <div v-if="pathDockerCmd" class="mt-4">
+                            <div class="install-box mb-3">{{ pathDockerCmd }}</div>
+                            <button class="btn btn-success" @click="copyText(pathDockerCmd)">{{ t('copy_command') }}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">{{ t('register_installed_path') }}</div>
+                    <div class="card-body">
+                        <textarea class="form-control mb-3" v-model="pathProtocolLink" rows="2" placeholder="pathagent://..."></textarea>
+                        <button class="btn btn-success" @click="registerPathAgent" :disabled="!pathProtocolLink">{{ t('register_agent') }}</button>
+                        <div v-if="pathRegisterResult" class="alert mt-3 mb-0" :class="pathRegisterResult.error ? 'alert-danger' : 'alert-success'">
+                            {{ pathRegisterResult.error || pathRegisterResult.message }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>{{ t('path_agents') }}</span>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-warning" v-if="selectedPathAgentIds.length > 0" @click="restartDockerNodes('path')">{{ t('batch_restart_docker') }} ({{ selectedPathAgentIds.length }})</button>
+                    <button class="btn btn-outline-warning" @click="cleanupOfflineNodes('path')">{{ t('cleanup_offline_nodes') }}</button>
+                    <button class="btn btn-outline-secondary" @click="fetchPathAgents">{{ t('refresh') }}</button>
+                </div>
+            </div>
+            <div class="card-body p-0 table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                    <tr>
+                        <th><input class="form-check-input" type="checkbox" @change="toggleAllPathAgents" :checked="selectedPathAgentIds.length === pathAgents.length && pathAgents.length > 0"></th>
+                        <th>{{ t('name') }}</th>
+                        <th>{{ t('label_url') }}</th>
+                        <th>{{ t('token') }}</th>
+                        <th>{{ t('version') }}</th>
+                        <th>{{ t('running') }} / {{ t('limit') }}</th>
+                        <th>{{ t('queued') }}</th>
+                        <th>{{ t('status') }}</th>
+                        <th>{{ t('action') }}</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr v-for="agent in pathAgents" :key="agent.ID">
+                        <td><input class="form-check-input" type="checkbox" :value="agent.ID" v-model="selectedPathAgentIds"></td>
+                        <td class="text-white">{{ agent.name }}</td>
+                        <td><small class="text-muted">{{ agent.url }}</small></td>
+                        <td><small class="text-muted">{{ (agent.api_key || '').substring(0,8) + '...' }}</small></td>
+                        <td><span class="text-white">{{ formatSqlmapAgentVersion(agent.agent_version) }}</span></td>
+                        <td><span class="text-info fw-bold">{{ agent.current_running }}</span> / {{ agent.max_concurrency }}</td>
+                        <td><span class="text-warning fw-bold">{{ agent.current_queued }}</span></td>
+                        <td>
+                            <span class="badge bg-warning text-dark" v-if="agent.updating">{{ t('updating') }}</span>
+                            <span class="badge" :class="agent.is_active ? 'bg-success' : 'bg-secondary'" v-else>{{ agent.is_active ? t('online') : t('offline') }}</span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" @click="refreshPathAgent(agent.ID)">{{ t('sync') }}</button>
+                                <button class="btn btn-outline-warning" @click="restartDockerNodes('path', [agent.ID])">{{ t('restart_docker') }}</button>
+                                <button class="btn btn-outline-danger" @click="deletePathAgent(agent.ID)">{{ t('del') }}</button>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr v-if="pathAgents.length === 0">
+                        <td colspan="9" class="text-center muted py-5">{{ t('no_path_agents') }}</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <div v-show="activeTab==='proxy'">
         <div class="row">
             <div class="col-lg-6 mb-4">
@@ -1303,6 +1445,7 @@ const I18N = {
         tab_tasks: 'Tasks',
         tab_awvs: 'AWVS Nodes',
         tab_sqlmap: 'Sqlmap Agents',
+        tab_path: 'Path Agents',
         tab_proxy: 'Proxy Agents',
         tab_cloud: 'Cloud Spot',
         add_targets: 'Add Targets',
@@ -1360,11 +1503,15 @@ const I18N = {
         recent_logs: 'Recent Logs',
 
         generate_awvs_cmd: 'Generate AWVS Install Command',
+        generate_path_cmd: 'Generate Path Agent Command',
+        generate_path_cmd: 'Generate Path Agent Command',
         awvs_node_name: 'AWVS node name',
         concurrency: 'Concurrency',
         generate: 'Generate',
         copy_command: 'Copy Command',
         register_installed_awvs: 'Register Installed AWVS',
+        register_installed_path: 'Register Installed Path Agent',
+        register_installed_path: 'Register Installed Path Agent',
         register_awvs: 'Register AWVS',
         manual_add_awvs: 'Manual Add AWVS Node',
         awvs_nodes: 'AWVS Nodes',
@@ -1393,6 +1540,8 @@ const I18N = {
         register_installed_agent: 'Register Installed Agent',
         register_agent: 'Register Agent',
         managed_agents: 'Managed Agents',
+        path_agents: 'Path Agents',
+        path_agents: 'Path Agents',
         name: 'Name',
         token: 'Token',
         version: 'Version',
@@ -1405,6 +1554,8 @@ const I18N = {
         status: 'Status',
         sync: 'Sync',
         no_sqlmap_agents: 'No sqlmap agents registered.',
+        no_path_agents: 'No path agents registered.',
+        no_path_agents: 'No path agents registered.',
         edit_sqlmap_agent: 'Edit Sqlmap Agent',
         sqlmap_agent_defaults: 'Sqlmap Agent Global Defaults',
         sqlmap_new_agent_default_proxy: 'Default use proxy for new agents (manual and cloud auto-created)',
@@ -1507,6 +1658,9 @@ const I18N = {
         confirm_batch_restart_awvs_docker: 'Restart docker for {count} AWVS nodes now?',
         confirm_restart_sqlmap_docker: 'Restart docker for this sqlmap node now?',
         confirm_batch_restart_sqlmap_docker: 'Restart docker for {count} sqlmap nodes now?',
+        confirm_restart_path_docker: 'Restart docker for this path agent now?',
+        confirm_batch_restart_path_docker: 'Restart docker for {count} path agents now?',
+        confirm_cleanup_offline_path: 'Delete all offline path agents now?',
         confirm_update_sqlmap_agent: 'Update this sqlmap agent to the latest version now?'
         ,
         summary_awvs_node: 'AWVS Node',
@@ -1579,6 +1733,14 @@ const I18N = {
         shell_capability: 'Shell Capability',
         session_state: 'Session State',
         sqlmap_request_title: 'Sqlmap Request (request.txt)',
+        path_scan_results: 'Path Scan Results',
+        retry_path_scan: 'Retry Path Scan',
+        no_path_scan: 'No path scan results yet.',
+        path_paths_count: 'Paths',
+        path_forms_count: 'Forms',
+        path_url: 'Path URL',
+        path_sources: 'Sources',
+        path_forms: 'Forms',
         awvs_original_payload: 'AWVS Original Payload',
         price_total: 'Total',
         price_instance: 'Instance',
@@ -1661,11 +1823,13 @@ const I18N = {
         recent_logs: '\u6700\u8fd1\u65e5\u5fd7',
 
         generate_awvs_cmd: '\u751f\u6210 AWVS \u5b89\u88c5\u547d\u4ee4',
+        generate_path_cmd: '\u751f\u6210\u8def\u5f84\u4ee3\u7406\u5b89\u88c5\u547d\u4ee4',
         awvs_node_name: 'AWVS \u8282\u70b9\u540d\u79f0',
         concurrency: '\u5e76\u53d1',
         generate: '\u751f\u6210',
         copy_command: '\u590d\u5236\u547d\u4ee4',
         register_installed_awvs: '\u6ce8\u518c\u5df2\u5b89\u88c5\u7684 AWVS',
+        register_installed_path: '\u6ce8\u518c\u5df2\u5b89\u88c5\u7684\u8def\u5f84\u4ee3\u7406',
         register_awvs: '\u6ce8\u518c AWVS',
         manual_add_awvs: '\u624b\u52a8\u6dfb\u52a0 AWVS \u8282\u70b9',
         awvs_nodes: 'AWVS \u8282\u70b9',
@@ -1698,6 +1862,7 @@ const I18N = {
         register_installed_agent: '\u6ce8\u518c\u5df2\u5b89\u88c5\u7684\u4ee3\u7406',
         register_agent: '\u6ce8\u518c\u4ee3\u7406',
         managed_agents: '\u5df2\u7ba1\u7406\u7684\u4ee3\u7406',
+        path_agents: '\u8def\u5f84\u4ee3\u7406',
         name: '\u540d\u79f0',
         token: 'Token',
         running: '\u8fd0\u884c\u4e2d',
@@ -1706,6 +1871,7 @@ const I18N = {
         status: '\u72b6\u6001',
         sync: '\u540c\u6b65',
         no_sqlmap_agents: '\u5f53\u524d\u6ca1\u6709 sqlmap \u4ee3\u7406\u3002',
+        no_path_agents: '\u5f53\u524d\u6ca1\u6709\u8def\u5f84\u4ee3\u7406\u3002',
         edit_sqlmap_agent: '\u7f16\u8f91 Sqlmap \u4ee3\u7406',
         sqlmap_agent_defaults: 'Sqlmap \u4ee3\u7406\u5168\u5c40\u9ed8\u8ba4',
         sqlmap_new_agent_default_proxy: '\u65b0\u589e\u4ee3\u7406\u9ed8\u8ba4\u4f7f\u7528\u4ee3\u7406\uff08\u624b\u52a8+\u4e91\u81ea\u52a8\u521b\u5efa\uff09',
@@ -1803,6 +1969,9 @@ const I18N = {
         confirm_batch_restart_awvs_docker: '\u73b0\u5728\u6279\u91cf\u91cd\u542f {count} \u4e2a AWVS \u8282\u70b9\u7684 Docker \u5417\uff1f',
         confirm_restart_sqlmap_docker: '\u73b0\u5728\u91cd\u542f\u8fd9\u4e2a sqlmap \u8282\u70b9\u7684 Docker \u5417\uff1f',
         confirm_batch_restart_sqlmap_docker: '\u73b0\u5728\u6279\u91cf\u91cd\u542f {count} \u4e2a sqlmap \u8282\u70b9\u7684 Docker \u5417\uff1f',
+        confirm_restart_path_docker: '\u73b0\u5728\u91cd\u542f\u8fd9\u4e2a\u8def\u5f84\u4ee3\u7406\u7684 Docker \u5417\uff1f',
+        confirm_batch_restart_path_docker: '\u73b0\u5728\u6279\u91cf\u91cd\u542f {count} \u4e2a\u8def\u5f84\u4ee3\u7406\u7684 Docker \u5417\uff1f',
+        confirm_cleanup_offline_path: '\u73b0\u5728\u5220\u9664\u6240\u6709\u79bb\u7ebf\u8def\u5f84\u4ee3\u7406\u5417\uff1f',
         confirm_update_sqlmap_agent: '\u73b0\u5728\u5c06\u8fd9\u4e2a sqlmap \u4ee3\u7406\u66f4\u65b0\u5230\u6700\u65b0\u7248\u672c\u5417\uff1f'
         ,
         summary_awvs_node: 'AWVS \u8282\u70b9',
@@ -1875,6 +2044,14 @@ const I18N = {
         shell_capability: 'Shell \u80fd\u529b',
         session_state: '\u4f1a\u8bdd\u72b6\u6001',
         sqlmap_request_title: 'Sqlmap \u8bf7\u6c42 (request.txt)',
+        path_scan_results: '\u8def\u5f84\u626b\u63cf\u7ed3\u679c',
+        retry_path_scan: '\u91cd\u8bd5\u8def\u5f84\u626b\u63cf',
+        no_path_scan: '\u6682\u65e0\u8def\u5f84\u626b\u63cf\u7ed3\u679c\u3002',
+        path_paths_count: '\u8def\u5f84',
+        path_forms_count: 'Form',
+        path_url: '\u8def\u5f84 URL',
+        path_sources: '\u6765\u6e90',
+        path_forms: 'Form',
         awvs_original_payload: 'AWVS \u539f\u59cb Payload',
         price_total: '\u603b\u4ef7',
         price_instance: '\u5b9e\u4f8b',
@@ -1903,16 +2080,21 @@ new Vue({
         language: 'en',
         servers: [],
         agents: [],
+        pathAgents: [],
         sqlmapLatestAgentVersion: '2.1.2',
         tasks: [],
         newUrls: '',
         newAWVS: { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 },
         newAgent: { name: '', max_concurrency: 10, proxy_agent_id: 0 },
+        newPathAgent: { name: '', max_concurrency: 5 },
         dockerCmd: '',
+        pathDockerCmd: '',
         awvsDockerCmd: '',
         protocolLink: '',
+        pathProtocolLink: '',
         awvsProtocolLink: '',
         registerResult: null,
+        pathRegisterResult: null,
         awvsRegisterResult: null,
         awvsActionResult: null,
         awvsEditId: null,
@@ -1946,9 +2128,13 @@ new Vue({
         selectedTaskIds: [],
         selectedAwvsServerIds: [],
         selectedSqlmapAgentIds: [],
+        selectedPathAgentIds: [],
         selectedAwvsCloudInstanceIds: [],
         selectedSqlmapCloudInstanceIds: [],
         retrySqlmapAgentId: 0,
+        taskPathScans: [],
+        taskPathScanError: '',
+        taskPathActionBusy: false,
         requestEditMode: false,
         requestDraft: '',
         currentPage: 1,
@@ -2489,6 +2675,7 @@ new Vue({
         fetchData() {
             axios.get('/api/servers').then(res => this.servers = res.data);
             axios.get('/api/sqlmap/agents').then(res => this.agents = res.data);
+            this.fetchPathAgents();
             this.fetchSqlmapAgentLatestVersion();
             this.fetchSqlmapDefaults();
             axios.get('/api/tasks').then(res => {
@@ -2723,22 +2910,27 @@ new Vue({
             });
         },
         async restartDockerNodes(kind, ids) {
-            const target = kind === 'sqlmap' ? 'sqlmap' : 'awvs';
-            const selected = (ids && ids.length ? ids : (target === 'sqlmap' ? this.selectedSqlmapAgentIds : this.selectedAwvsServerIds)).slice();
+            const target = kind === 'sqlmap' ? 'sqlmap' : (kind === 'path' ? 'path' : 'awvs');
+            const selected = (ids && ids.length ? ids : (target === 'sqlmap' ? this.selectedSqlmapAgentIds : (target === 'path' ? this.selectedPathAgentIds : this.selectedAwvsServerIds))).slice();
             if (!selected.length) return;
             let confirmText = '';
             if (target === 'sqlmap') {
                 confirmText = selected.length > 1 ? this.tf('confirm_batch_restart_sqlmap_docker', { count: selected.length }) : this.t('confirm_restart_sqlmap_docker');
+            } else if (target === 'path') {
+                confirmText = selected.length > 1 ? this.tf('confirm_batch_restart_path_docker', { count: selected.length }) : this.t('confirm_restart_path_docker');
             } else {
                 confirmText = selected.length > 1 ? this.tf('confirm_batch_restart_awvs_docker', { count: selected.length }) : this.t('confirm_restart_awvs_docker');
             }
             if (!(await this.askConfirm(confirmText))) return;
-            const url = target === 'sqlmap' ? '/api/sqlmap/agents/restart-docker' : '/api/servers/restart-docker';
+            const url = target === 'sqlmap' ? '/api/sqlmap/agents/restart-docker' : (target === 'path' ? '/api/path/agents/restart-docker' : '/api/servers/restart-docker');
             axios.post(url, { ids: selected }).then(res => {
                 this.notifySuccess((res.data.message || 'ok') + ' (' + (res.data.succeeded_count || 0) + '/' + selected.length + ')');
                 if (target === 'sqlmap') {
                     this.selectedSqlmapAgentIds = [];
                     this.fetchAgents();
+                } else if (target === 'path') {
+                    this.selectedPathAgentIds = [];
+                    this.fetchPathAgents();
                 } else {
                     this.selectedAwvsServerIds = [];
                     this.fetchData();
@@ -2748,9 +2940,9 @@ new Vue({
             });
         },
         async cleanupOfflineNodes(kind) {
-            const target = kind === 'sqlmap' ? 'sqlmap' : 'awvs';
-            const confirmKey = target === 'sqlmap' ? 'confirm_cleanup_offline_sqlmap' : 'confirm_cleanup_offline_awvs';
-            const url = target === 'sqlmap' ? '/api/sqlmap/agents/cleanup-offline' : '/api/servers/cleanup-offline';
+            const target = kind === 'sqlmap' ? 'sqlmap' : (kind === 'path' ? 'path' : 'awvs');
+            const confirmKey = target === 'sqlmap' ? 'confirm_cleanup_offline_sqlmap' : (target === 'path' ? 'confirm_cleanup_offline_path' : 'confirm_cleanup_offline_awvs');
+            const url = target === 'sqlmap' ? '/api/sqlmap/agents/cleanup-offline' : (target === 'path' ? '/api/path/agents/cleanup-offline' : '/api/servers/cleanup-offline');
             if (!(await this.askConfirm(this.t(confirmKey)))) return;
             axios.post(url).then(res => {
                 if (res && res.data && res.data.message) {
@@ -2758,12 +2950,16 @@ new Vue({
                 }
                 this.fetchData();
                 this.fetchAgents();
+                this.fetchPathAgents();
             }).catch(err => {
                 this.notifyError(this.extractError(err));
             });
         },
         fetchAgents() {
             axios.get('/api/sqlmap/agents').then(res => this.agents = res.data);
+        },
+        fetchPathAgents() {
+            axios.get('/api/path/agents').then(res => this.pathAgents = res.data);
         },
         addTasks() {
             const urls = this.newUrls.split('\n').map(item => item.trim()).filter(Boolean);
@@ -2849,6 +3045,9 @@ new Vue({
         },
         toggleAllSqlmapAgents(e) {
             this.selectedSqlmapAgentIds = e.target.checked ? this.agents.map(item => item.ID) : [];
+        },
+        toggleAllPathAgents(e) {
+            this.selectedPathAgentIds = e.target.checked ? this.pathAgents.map(item => item.ID) : [];
         },
         toggleAllCloudInstances(workload, e) {
             const items = workload === 'sqlmap' ? this.sqlmapCloudInstances : this.awvsCloudInstances;
@@ -2960,6 +3159,18 @@ new Vue({
                 this.notifyError(this.extractError(err));
             });
         },
+        createPathAgentConfig() {
+            const payload = {
+                name: this.newPathAgent.name,
+                max_concurrency: this.newPathAgent.max_concurrency
+            };
+            axios.post('/api/path/agents/config', payload).then(res => {
+                this.pathDockerCmd = res.data.docker_cmd;
+                this.pathRegisterResult = null;
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
+        },
         copyDockerCmd() {
             navigator.clipboard.writeText(this.dockerCmd).then(() => {
             });
@@ -2974,8 +3185,21 @@ new Vue({
                 this.registerResult = { error: this.extractError(err) };
             });
         },
+        registerPathAgent() {
+            this.pathRegisterResult = null;
+            axios.post('/api/path/agents/register', { protocol_link: this.pathProtocolLink }).then(res => {
+                this.pathRegisterResult = res.data;
+                this.pathProtocolLink = '';
+                this.fetchPathAgents();
+            }).catch(err => {
+                this.pathRegisterResult = { error: this.extractError(err) };
+            });
+        },
         deleteAgent(id) {
             axios.delete('/api/sqlmap/agents/' + id).then(() => this.fetchAgents());
+        },
+        deletePathAgent(id) {
+            axios.delete('/api/path/agents/' + id).then(() => this.fetchPathAgents());
         },
         openEditAgent(agent) {
             this.agentEditId = agent.ID;
@@ -3005,6 +3229,9 @@ new Vue({
         },
         refreshAgent(id) {
             axios.post('/api/sqlmap/agents/' + id + '/refresh').then(() => this.fetchAgents());
+        },
+        refreshPathAgent(id) {
+            axios.post('/api/path/agents/' + id + '/refresh').then(() => this.fetchPathAgents());
         },
         async updateSqlmapAgent(agent) {
             if (!agent || !agent.ID) return;
@@ -3040,6 +3267,7 @@ new Vue({
             this.searchResults = [];
             this.findingFilter = 'all';
             this.loadTaskDetail(task.ID);
+            this.loadTaskPathScans(task.ID);
         },
         clearTaskSelection() {
             this.pendingRouteTaskId = null;
@@ -3059,10 +3287,34 @@ new Vue({
             this.taskActionMessage = '';
             this.searchQuery = '';
             this.searchResults = [];
+            this.taskPathScans = [];
+            this.taskPathScanError = '';
+        },
+        loadTaskPathScans(taskId) {
+            this.taskPathScanError = '';
+            axios.get('/api/tasks/' + taskId + '/path-scan').then(res => {
+                this.taskPathScans = res.data.scans || [];
+            }).catch(err => {
+                this.taskPathScans = [];
+                this.taskPathScanError = this.extractError(err);
+            });
+        },
+        retryTaskPathScan() {
+            if (!this.selectedTaskId) return;
+            this.taskPathActionBusy = true;
+            axios.post('/api/tasks/' + this.selectedTaskId + '/path-scan/retry', {}).then(res => {
+                this.notifySuccess((res.data && res.data.message) || 'ok');
+                this.loadTaskPathScans(this.selectedTaskId);
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            }).finally(() => {
+                this.taskPathActionBusy = false;
+            });
         },
         loadTaskDetail(taskId) {
             this.taskDetailError = '';
             this.taskActionMessage = '';
+            this.loadTaskPathScans(taskId);
             axios.get('/api/tasks/' + taskId + '/sqlmap').then(res => {
                 this.taskFindings = res.data.findings || [];
                 if (this.selectedFindingId) {
@@ -3103,6 +3355,7 @@ new Vue({
         },
         refreshSelectedTaskSilently() {
             if (!this.selectedTaskId) return;
+            this.loadTaskPathScans(this.selectedTaskId);
             axios.get('/api/tasks/' + this.selectedTaskId + '/sqlmap').then(res => {
                 this.taskFindings = res.data.findings || [];
                 if (this.selectedFindingId) {

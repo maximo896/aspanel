@@ -42,7 +42,9 @@ func main() {
 	db.AutoMigrate(
 		&models.AWVSServer{},
 		&models.SqlmapAgent{},
+		&models.PathAgent{},
 		&models.Task{},
+		&models.TaskPathScan{},
 		&models.TaskFinding{},
 		&models.DomainSQLMapCache{},
 		&models.ProxyAgent{},
@@ -152,6 +154,17 @@ func main() {
 	r.POST("/api/proxy/agents/register", h.RegisterProxyAgentFromLink)
 	r.DELETE("/api/proxy/agents/:id", h.DeleteProxyAgent)
 	r.POST("/api/sqlmap/agents/:id/proxy", h.SetSqlmapAgentProxy)
+	r.GET("/api/path/agents", h.GetPathAgents)
+	r.POST("/api/path/agents/config", h.CreatePathAgentConfig)
+	r.POST("/api/path/agents/register", h.RegisterPathAgentFromProtocol)
+	r.PUT("/api/path/agents/:id", h.UpdatePathAgent)
+	r.DELETE("/api/path/agents/:id", h.DeletePathAgent)
+	r.POST("/api/path/agents/cleanup-offline", h.CleanupOfflinePathAgents)
+	r.POST("/api/path/agents/restart-docker", h.RestartPathDocker)
+	r.GET("/api/path/agents/:id/status", h.GetPathAgentStatus)
+	r.POST("/api/path/agents/:id/refresh", h.RefreshPathAgentStatus)
+	r.GET("/api/tasks/:id/path-scan", h.GetTaskPathScans)
+	r.POST("/api/tasks/:id/path-scan/retry", h.RetryTaskPathScan)
 
 	log.Printf("AWVS + Sqlmap Panel starting on %s", listenAddr)
 	if err := r.Run(listenAddr); err != nil {

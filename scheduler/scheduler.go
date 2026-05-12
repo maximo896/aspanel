@@ -40,7 +40,9 @@ func StartScheduler(db *gorm.DB) {
 	go checkAWVSStatus(db)
 	go refreshAWVSServersStatus(db)
 	go refreshSqlmapAgentsStatus(db)
+	go refreshPathAgentsStatus(db)
 	go syncSqlmapTaskStatus(db)
+	go syncTaskPathScanStatus(db)
 	go cleanupAWVSNoVulnTasksPeriodically(db)
 	go autoscaleSpotInstances(db)
 	go reconcileCloudInstances(db)
@@ -601,6 +603,7 @@ func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, 
 	confidenceSkipped := 0
 	alreadySentSkipped := 0
 	sentCount := 0
+	triggeredPathScopes := map[string]bool{}
 
 	globalOptions := loadGlobalSqlmapOptions(db)
 	for _, v := range vulns {
@@ -674,6 +677,11 @@ func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, 
 		parsedURL, _ := url.Parse(affectsURL)
 		domain := parsedURL.Hostname()
 		forceSSL := strings.EqualFold(parsedURL.Scheme, "https")
+		scopeKey := strings.ToLower(strings.TrimSpace(domain)) + "|" + strconv.FormatBool(forceSSL)
+		if domain != "" && !triggeredPathScopes[scopeKey] {
+			ensureTaskPathScanForURL(db, task, affectsURL)
+			triggeredPathScopes[scopeKey] = true
+		}
 		log.Printf("task=%d vuln=%s url=%s matched SQLi and will be sent to sqlmap", task.ID, vulnID, affectsURL)
 
 		var useProxyOverride *bool
