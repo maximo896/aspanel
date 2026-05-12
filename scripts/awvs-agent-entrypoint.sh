@@ -42,17 +42,10 @@ check_port_free() {
   return 0
 }
 
-# Re-allocate a random port when the requested one is occupied.
-while ! check_port_free "$AGENT_PORT"; do
-  echo "[!] Port $AGENT_PORT is already in use. Assigning a new random port..."
-  AGENT_PORT="$((30000 + RANDOM % 10001))"
-done
-
 AWVS_EMAIL="admin@admin.com"
 AWVS_PASSWORD="Admin123"
 AWVS_CONTAINER_PORT="3443"
 IMAGE="secfa/awvs:latest"
-CONTAINER_NAME="awvs-agent-${AGENT_NAME}"
 
 if [ "$(id -u)" -eq 0 ]; then
   SUDO=""
@@ -229,6 +222,7 @@ ensure_packages
 ensure_docker
 
 SAFE_NAME="$(sanitize_name "$AGENT_NAME")"
+CONTAINER_NAME="awvs-agent-${SAFE_NAME}"
 DATA_ROOT="/opt/aspanel/awvs-agent/${SAFE_NAME}"
 MANAGER_TOKEN_FILE="${DATA_ROOT}/manager_token"
 MANAGER_PORT_FILE="${DATA_ROOT}/manager_port"
@@ -301,6 +295,17 @@ if [ -z "$PUBLIC_HOST" ]; then
   PUBLIC_HOST="$(hostname -I | awk '{print $1}')"
 fi
 MANAGER_URL="http://${PUBLIC_HOST}:${MANAGER_PORT}"
+
+# Reuse the original port for in-place updates of the same node.
+if [ "${MANAGER_ALLOW_REUSE_PORT:-0}" = "1" ]; then
+  $SUDO docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+fi
+
+# Re-allocate a random port only when the requested one is truly occupied.
+while ! check_port_free "$AGENT_PORT"; do
+  echo "[!] Port $AGENT_PORT is already in use. Assigning a new random port..."
+  AGENT_PORT="$((30000 + RANDOM % 10001))"
+done
 
 $SUDO docker pull "$IMAGE" >/dev/null
 $SUDO docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
