@@ -659,9 +659,16 @@ func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, 
 		}
 
 		payload := finding.AWVSPayload
-
+		originalValue := extractAWVSOriginalValue(detailsHTML)
 		if payload != "" {
-			httpRequest = maskPayloadInRawRequest(httpRequest, payload)
+			rewritten := httpRequest
+			if originalValue != "" {
+				rewritten = replacePayloadUsingOriginalValue(httpRequest, payload, originalValue)
+			}
+			if rewritten == httpRequest {
+				rewritten = maskPayloadInRawRequest(httpRequest, payload)
+			}
+			httpRequest = rewritten
 		}
 
 		parsedURL, _ := url.Parse(affectsURL)
@@ -780,7 +787,9 @@ func sendToSqlmapAgent(task models.Task, domain, vulnID, requestData string, for
 		"vuln_id":         vulnID,
 		"request_data":    requestData,
 		"force_ssl":       forceSSL,
-		"share_by_domain": selectedAgent.ShareByDomain,
+		// Panel-level domain cache already shares DB trees. Reusing root scans here can mix
+		// request.txt across different findings on the same domain, so disable agent-side reuse.
+		"share_by_domain": false,
 	}
 	if effectiveUseProxy && strings.TrimSpace(selectedAgent.ProxyURL) != "" {
 		payload["proxy"] = strings.TrimSpace(selectedAgent.ProxyURL)

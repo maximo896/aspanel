@@ -1872,7 +1872,7 @@ type sqlmapAgentStatusPayload struct {
 	Version       string `json:"version"`
 }
 
-const latestSQLMapAgentVersion = "2.1.0"
+const latestSQLMapAgentVersion = "2.1.2"
 
 func normalizeAgentVersionValue(version string) string {
 	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(version), "v"))
