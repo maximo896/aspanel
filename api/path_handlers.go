@@ -384,7 +384,8 @@ func (api *API) GetTaskPathScans(c *gin.Context) {
 
 func (api *API) RetryTaskPathScan(c *gin.Context) {
 	var req struct {
-		PathAgentID uint `json:"path_agent_id"`
+		PathAgentID    uint   `json:"path_agent_id"`
+		KatanaSeedMode string `json:"katana_seed_mode"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil && err.Error() != "EOF" {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -396,7 +397,7 @@ func (api *API) RetryTaskPathScan(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid task id"})
 		return
 	}
-	if err := scheduler.RetryTaskPathScanToAgent(api.DB, uint(idValue), req.PathAgentID); err != nil {
+	if err := scheduler.RetryTaskPathScanToAgent(api.DB, uint(idValue), req.PathAgentID, req.KatanaSeedMode); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}

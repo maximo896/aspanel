@@ -471,6 +471,14 @@
                                 {{ t('path_keyword_filter') }}
                             </label>
                             <input class="form-control form-control-sm" style="min-width: 240px; max-width: 320px;" v-model.trim="pathCustomFilterQuery" :placeholder="t('path_custom_filter_placeholder')">
+                            <span class="small text-muted">{{ t('path_katana_seed_mode') }}</span>
+                            <select class="form-select form-select-sm w-auto bg-dark border-secondary text-white" v-model="pathKatanaSeedMode">
+                                <option value="auto">{{ t('path_seed_mode_auto') }}</option>
+                                <option value="20">{{ t('path_seed_mode_20') }}</option>
+                                <option value="50">{{ t('path_seed_mode_50') }}</option>
+                                <option value="100">{{ t('path_seed_mode_100') }}</option>
+                                <option value="unlimited">{{ t('path_seed_mode_unlimited') }}</option>
+                            </select>
                             <select class="form-select form-select-sm w-auto bg-dark border-secondary text-white" v-model.number="retryPathAgentId">
                                 <option :value="0">{{ t('retry_target_auto') }}</option>
                                 <option v-for="a in pathAgents" :key="'retry-path-agent-' + a.ID" :value="a.ID">{{ a.name }}</option>
@@ -1811,6 +1819,12 @@ const I18N = {
         path_keyword_filter: 'Sensitive filter',
         path_keyword_filter_hint: 'Keywords',
         path_custom_filter_placeholder: 'Custom filter in path/form',
+        path_katana_seed_mode: 'Katana seeds',
+        path_seed_mode_auto: 'Auto',
+        path_seed_mode_20: '20',
+        path_seed_mode_50: '50',
+        path_seed_mode_100: '100',
+        path_seed_mode_unlimited: 'Unlimited',
         custom_matched_terms: 'Custom',
         proxy_requested: 'Requested Proxy',
         proxy_effective: 'Runtime Proxy (from temp config)',
@@ -2153,6 +2167,12 @@ const I18N = {
         path_keyword_filter: '\u654f\u611f\u8bcd\u7b5b\u9009',
         path_keyword_filter_hint: '\u7b5b\u9009\u8bcd',
         path_custom_filter_placeholder: '\u81ea\u5b9a\u4e49\u7b5b\u9009\uff08\u8def\u5f84/\u8868\u5355\uff09',
+        path_katana_seed_mode: 'Katana \u79cd\u5b50',
+        path_seed_mode_auto: '\u81ea\u52a8',
+        path_seed_mode_20: '20',
+        path_seed_mode_50: '50',
+        path_seed_mode_100: '100',
+        path_seed_mode_unlimited: '\u65e0\u9650',
         custom_matched_terms: '\u81ea\u5b9a\u4e49\u547d\u4e2d',
         proxy_requested: '\u671f\u671b\u4ee3\u7406',
         proxy_effective: '\u5b9e\u9645\u4ee3\u7406\uff08\u4ece\u4e34\u65f6\u914d\u7f6e\u8bfb\u53d6\uff09',
@@ -2266,6 +2286,7 @@ new Vue({
         pathKeywordFilterEnabled: true,
         pathKeywordTerms: ['admin', 'administrator', 'manager', 'user', 'username', 'password', 'passwd', 'pass', 'senha', 'usuario', 'usuarios', 'administracao', 'gerente', 'login'],
         pathCustomFilterQuery: '',
+        pathKatanaSeedMode: 'auto',
         taskFilter: 'all',
         findingFilter: 'all',
         selectedTech: '',
@@ -2445,7 +2466,10 @@ new Vue({
                 }
                 const filteredPaths = rawPaths.map(pathItem => {
                     const forms = Array.isArray(pathItem && pathItem.forms) ? pathItem.forms : [];
-                    if (this.pathOnlyWithForms && !forms.length) {
+                    const sources = Array.isArray(pathItem && pathItem.sources) ? pathItem.sources.map(item => String(item || '').toLowerCase()) : [];
+                    const statusCode = Number((pathItem && pathItem.status_code) || 0);
+                    const keepDirsearchHit = sources.indexOf('dirsearch') >= 0 && statusCode > 0 && statusCode !== 404;
+                    if (this.pathOnlyWithForms && !forms.length && !keepDirsearchHit) {
                         return null;
                     }
                     const matchedKeywords = this.pathKeywordFilterEnabled ? this.collectPathKeywordMatches(pathItem) : [];
@@ -3728,7 +3752,8 @@ new Vue({
             if (!this.selectedTaskId) return;
             this.taskPathActionBusy = true;
             axios.post('/api/tasks/' + this.selectedTaskId + '/path-scan/retry', {
-                path_agent_id: this.retryPathAgentId || 0
+                path_agent_id: this.retryPathAgentId || 0,
+                katana_seed_mode: this.pathKatanaSeedMode || 'auto'
             }).then(res => {
                 this.notifySuccess((res.data && res.data.message) || 'ok');
                 this.loadTaskPathScans(this.selectedTaskId);
@@ -4089,6 +4114,9 @@ new Vue({
             if (pathItem && pathItem.title) {
                 haystacks.push(String(pathItem.title));
             }
+            if (pathItem && pathItem.status_code !== undefined && pathItem.status_code !== null) {
+                haystacks.push(String(pathItem.status_code));
+            }
             (pathItem && pathItem.sources ? pathItem.sources : []).forEach(source => {
                 haystacks.push(String(source || ''));
             });
@@ -4100,6 +4128,7 @@ new Vue({
                     haystacks.push(String((field && field.type) || ''));
                     haystacks.push(String((field && field.tag) || ''));
                     haystacks.push(String((field && field.value) || ''));
+                    haystacks.push(String((field && field.default_value) || ''));
                 });
             });
             return haystacks;

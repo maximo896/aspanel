@@ -38,6 +38,16 @@ type pathScanStatusResponse struct {
 	CompletedAt int64                  `json:"completed_at"`
 }
 
+func normalizeKatanaSeedMode(mode string) string {
+	normalized := strings.TrimSpace(strings.ToLower(mode))
+	switch normalized {
+	case "20", "50", "100", "unlimited":
+		return normalized
+	default:
+		return "auto"
+	}
+}
+
 func refreshPathAgentsStatus(db *gorm.DB) {
 	for {
 		time.Sleep(time.Duration(agentHeartbeatIntervalSec) * time.Second)
@@ -122,7 +132,7 @@ func syncTaskPathScanStatus(db *gorm.DB) {
 	}
 }
 
-func RetryTaskPathScanToAgent(db *gorm.DB, taskID uint, preferredPathAgentID uint) error {
+func RetryTaskPathScanToAgent(db *gorm.DB, taskID uint, preferredPathAgentID uint, katanaSeedMode string) error {
 	var task models.Task
 	if err := db.First(&task, taskID).Error; err != nil {
 		return err
@@ -140,14 +150,14 @@ func RetryTaskPathScanToAgent(db *gorm.DB, taskID uint, preferredPathAgentID uin
 	if targetURL == "" {
 		return fmt.Errorf("task has empty target url")
 	}
-	return dispatchTaskPathScan(db, task, targetURL, preferredPathAgentID, true)
+	return dispatchTaskPathScan(db, task, targetURL, preferredPathAgentID, normalizeKatanaSeedMode(katanaSeedMode), true)
 }
 
 func ensureTaskPathScanForURL(db *gorm.DB, task models.Task, rawURL string) {
-	_ = dispatchTaskPathScan(db, task, rawURL, 0, false)
+	_ = dispatchTaskPathScan(db, task, rawURL, 0, "auto", false)
 }
 
-func dispatchTaskPathScan(db *gorm.DB, task models.Task, rawURL string, preferredPathAgentID uint, forceRetry bool) error {
+func dispatchTaskPathScan(db *gorm.DB, task models.Task, rawURL string, preferredPathAgentID uint, katanaSeedMode string, forceRetry bool) error {
 	targetURL, domain, forceSSL, err := normalizePathScanTarget(rawURL)
 	if err != nil {
 		return err
@@ -158,7 +168,7 @@ func dispatchTaskPathScan(db *gorm.DB, task models.Task, rawURL string, preferre
 			return nil
 		}
 	}
-	pathTaskID, agentID, agentURL, status, agentVersion, sent := sendToPathAgent(task, targetURL, preferredPathAgentID, db)
+	pathTaskID, agentID, agentURL, status, agentVersion, sent := sendToPathAgent(task, targetURL, preferredPathAgentID, normalizeKatanaSeedMode(katanaSeedMode), db)
 	if !sent {
 		return fmt.Errorf("no available path agent")
 	}
@@ -188,7 +198,7 @@ func dispatchTaskPathScan(db *gorm.DB, task models.Task, rawURL string, preferre
 	return nil
 }
 
-func sendToPathAgent(task models.Task, targetURL string, preferredPathAgentID uint, db *gorm.DB) (string, uint, string, string, string, bool) {
+func sendToPathAgent(task models.Task, targetURL string, preferredPathAgentID uint, katanaSeedMode string, db *gorm.DB) (string, uint, string, string, string, bool) {
 	var agents []models.PathAgent
 	if err := db.Where("is_active = ?", true).Find(&agents).Error; err != nil || len(agents) == 0 {
 		return "", 0, "", "", "", false
@@ -226,8 +236,9 @@ func sendToPathAgent(task models.Task, targetURL string, preferredPathAgentID ui
 	}
 
 	payload := map[string]interface{}{
-		"task_id":    task.ID,
-		"target_url": targetURL,
+		"task_id":          task.ID,
+		"target_url":       targetURL,
+		"katana_seed_mode": normalizeKatanaSeedMode(katanaSeedMode),
 	}
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/scan", selected.URL), bytes.NewBuffer(body))
