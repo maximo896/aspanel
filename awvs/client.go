@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -17,6 +18,32 @@ type Client struct {
 	BaseURL string
 	APIKey  string
 	HTTP    *http.Client
+}
+
+type APIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if strings.TrimSpace(e.Body) == "" {
+		return fmt.Sprintf("API error: %d", e.StatusCode)
+	}
+	return fmt.Sprintf("API error: %d body=%s", e.StatusCode, strings.TrimSpace(e.Body))
+}
+
+func StatusCode(err error) int {
+	var apiErr *APIError
+	if err == nil {
+		return 0
+	}
+	if errors.As(err, &apiErr) && apiErr != nil {
+		return apiErr.StatusCode
+	}
+	return 0
 }
 
 func NewClient(baseURL, apiKey string) *Client {
@@ -69,11 +96,18 @@ func (c *Client) doReq(method, path string, body interface{}) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
+	respBody, readErr := ioutil.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, readErr
+	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("API error: %d", resp.StatusCode)
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Body:       string(respBody),
+		}
 	}
 
-	return ioutil.ReadAll(resp.Body)
+	return respBody, nil
 }
 
 func (c *Client) CreateTarget(url string) (string, error) {

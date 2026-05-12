@@ -6,23 +6,25 @@ import (
 
 type AWVSServer struct {
 	gorm.Model
-	Name            string `json:"name"`
-	URL             string `json:"url"`
-	APIKey          string `json:"api_key"`
-	ManagerURL      string `json:"manager_url"`
-	ManagerToken    string `json:"-"`
-	AWVSUsername    string `json:"awvs_username"`
-	AWVSPassword    string `json:"awvs_password"`
-	MaxConcurrency  int    `json:"max_concurrency"`
-	CurrentRunning  int    `json:"current_running"`
-	IsActive        bool   `json:"is_active" gorm:"default:true"`
-	LastCheckedAt   int64  `json:"last_checked_at"`
-	LastHeartbeatAt int64  `json:"last_heartbeat_at"`
-	LastError       string `json:"last_error"`
-	Provider        string `json:"provider" gorm:"default:'manual'"`
-	InstanceID      string `json:"instance_id"`
-	Region          string `json:"region"`
-	Zone            string `json:"zone"`
+	Name                 string `json:"name"`
+	URL                  string `json:"url"`
+	APIKey               string `json:"api_key"`
+	ManagerURL           string `json:"manager_url"`
+	ManagerToken         string `json:"-"`
+	AWVSUsername         string `json:"awvs_username"`
+	AWVSPassword         string `json:"awvs_password"`
+	MaxConcurrency       int    `json:"max_concurrency"`
+	CurrentRunning       int    `json:"current_running"`
+	AutoRestartOnAPI500  bool   `json:"auto_restart_on_api_500" gorm:"default:false"`
+	LastAutoRestartAt    int64  `json:"last_auto_restart_at"`
+	IsActive             bool   `json:"is_active" gorm:"default:true"`
+	LastCheckedAt        int64  `json:"last_checked_at"`
+	LastHeartbeatAt      int64  `json:"last_heartbeat_at"`
+	LastError            string `json:"last_error"`
+	Provider             string `json:"provider" gorm:"default:'manual'"`
+	InstanceID           string `json:"instance_id"`
+	Region               string `json:"region"`
+	Zone                 string `json:"zone"`
 }
 
 type SqlmapAgent struct {
@@ -86,6 +88,8 @@ type Task struct {
 	HasShell       bool   `json:"has_shell"`
 	HasFinding     bool   `json:"has_finding"`
 	HasInjection   bool   `json:"has_injection"`
+	HasPathScan    bool   `json:"has_path_scan" gorm:"-"`
+	PathScanStatus string `json:"path_scan_status" gorm:"-"`
 	LastRequeuedAt int64  `json:"last_requeued_at"`
 	RequeueReason  string `json:"requeue_reason"`
 }

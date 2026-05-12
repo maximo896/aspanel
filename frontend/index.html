@@ -164,6 +164,9 @@
         .filter-btn { background: transparent; border: 1px solid var(--border-subtle); color: var(--text-muted); padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; cursor: pointer; transition: all 0.2s; }
         .filter-btn:hover { color: var(--text-main); border-color: var(--text-muted); }
         .filter-btn.active { background: var(--text-main); color: var(--bg-base); border-color: var(--text-main); font-weight: 500; }
+        .proxy-toggle-cell { cursor: pointer; min-width: 70px; }
+        .proxy-toggle-label { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 36px; cursor: pointer; }
+        .proxy-toggle-label .form-check-input { width: 1.2rem; height: 1.2rem; margin: 0; cursor: pointer; }
         
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: var(--bg-base); }
@@ -297,7 +300,8 @@
                                     <span v-if="task.has_data" class="badge badge-data me-1">{{ t('badge_data') }}</span>
                                     <span v-if="task.has_shell" class="badge badge-shell me-1">{{ t('badge_shell') }}</span>
                                     <span v-if="task.has_injection" class="badge bg-primary">{{ t('badge_injection') }}</span>
-                                    <span v-if="!task.has_data && !task.has_shell && !task.has_injection" class="text-muted small">-</span>
+                                    <span class="badge badge-soft me-1">{{ task.has_path_scan ? t('path_scan_done') : t('path_scan_not_done') }}</span>
+                                    <span v-if="!task.has_data && !task.has_shell && !task.has_injection && !task.has_path_scan" class="text-muted small">-</span>
                                 </td>
                                 <td>
                                     <button class="btn btn-sm btn-outline-primary" @click="selectTask(task)">{{ t('details') }}</button>
@@ -389,7 +393,11 @@
                                 <th>{{ t('th_agent') }}</th>
                                 <th>{{ t('th_sqlmap_status') }}</th>
                                 <th>{{ t('th_sqlmap_techniques') }}</th>
-                                <th>{{ t('use_proxy') }}</th>
+                                <th>
+                                    <label class="proxy-toggle-label mb-0" :title="t('use_proxy_toggle_all')">
+                                        <input class="form-check-input" type="checkbox" :checked="allPaginatedFindingsUseProxy" @change="updateVisibleFindingsProxy($event.target.checked)">
+                                    </label>
+                                </th>
                                 <th>{{ t('results') }}</th>
                                 <th>{{ t('action') }}</th>
                             </tr>
@@ -405,8 +413,10 @@
                                     <span v-if="getFindingTechniqueList(finding).length === 0" class="text-muted small">-</span>
                                     <span v-for="tech in getFindingTechniqueList(finding)" :key="finding.ID + ':' + tech" class="badge bg-info text-dark me-1">{{ tech }}</span>
                                 </td>
-                                <td>
-                                    <input class="form-check-input" type="checkbox" :checked="finding.use_proxy" @change="updateFindingProxy(finding, $event.target.checked)">
+                                <td class="proxy-toggle-cell" @click="toggleFindingProxyFromRow(finding, $event)">
+                                    <label class="proxy-toggle-label mb-0">
+                                        <input class="form-check-input" type="checkbox" :checked="finding.use_proxy" @change.stop="updateFindingProxy(finding, $event.target.checked)">
+                                    </label>
                                 </td>
                                 <td>
                                     <span v-if="finding.has_data" class="badge badge-data me-1">{{ t('badge_data') }}</span>
@@ -847,6 +857,12 @@
                     <div class="col-md-2"><input class="form-control" v-model="newAWVS.awvs_username" :placeholder="t('awvs_username')"></div>
                     <div class="col-md-2"><input class="form-control" v-model="newAWVS.awvs_password" :placeholder="t('awvs_password')"></div>
                     <div class="col-md-2"><input class="form-control" type="number" v-model="newAWVS.max_concurrency" :placeholder="t('concurrency')"></div>
+                    <div class="col-12">
+                        <label class="form-check-label text-muted small">
+                            <input class="form-check-input me-2" type="checkbox" v-model="newAWVS.auto_restart_on_api_500">
+                            {{ t('awvs_auto_restart_on_api_500') }}
+                        </label>
+                    </div>
                 </div>
                 <button class="btn btn-outline-primary mt-3" @click="addAWVS">{{ t('add_node_manually') }}</button>
             </div>
@@ -890,7 +906,10 @@
                         <td><small class="text-muted">{{ server.awvs_username || '-' }}</small></td>
                         <td><small class="text-muted">{{ server.awvs_password || '-' }}</small></td>
                         <td><span class="text-info fw-bold">{{ server.current_running }}</span> / {{ server.max_concurrency }}</td>
-                        <td><span class="badge" :class="server.is_active ? 'bg-success' : 'bg-secondary'">{{ server.is_active ? t('online') : t('offline') }}</span></td>
+                        <td>
+                            <span class="badge" :class="server.is_active ? 'bg-success' : 'bg-secondary'">{{ server.is_active ? t('online') : t('offline') }}</span>
+                            <div class="mt-1" v-if="server.auto_restart_on_api_500"><small class="text-warning">{{ t('awvs_auto_restart_short') }}</small></div>
+                        </td>
                         <td><small class="text-muted">{{ formatUnixTime(server.last_checked_at) }}</small></td>
                         <td>
                             <div class="btn-group btn-group-sm">
@@ -1358,6 +1377,12 @@
                         <div class="col-md-2"><input class="form-control" type="number" v-model.number="awvsEdit.max_concurrency" :placeholder="t('concurrency')"></div>
                         <div class="col-md-6"><input class="form-control" v-model="awvsEdit.awvs_username" :placeholder="t('awvs_username')"></div>
                         <div class="col-md-6"><input class="form-control" v-model="awvsEdit.awvs_password" :placeholder="t('awvs_password')"></div>
+                        <div class="col-12">
+                            <label class="form-check-label text-muted small">
+                                <input class="form-check-input me-2" type="checkbox" v-model="awvsEdit.auto_restart_on_api_500">
+                                {{ t('awvs_auto_restart_on_api_500') }}
+                            </label>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -1514,6 +1539,8 @@ const I18N = {
         filter_has_shell: 'Has Shell',
         filter_has_injection: 'Injection Identified',
         filter_has_finding: 'Has Finding',
+        path_scan_done: 'Path Checked',
+        path_scan_not_done: 'Path Not Checked',
         title_delete_selected: 'Delete selected tasks',
         delete_selected: 'Delete Selected',
         title_batch_retry_push: 'Batch retry selected tasks to sqlmap',
@@ -1572,6 +1599,8 @@ const I18N = {
         register_installed_path: 'Register Installed Path Agent',
         register_awvs: 'Register AWVS',
         manual_add_awvs: 'Manual Add AWVS Node',
+        awvs_auto_restart_on_api_500: 'Auto restart Docker when AWVS API returns HTTP 500',
+        awvs_auto_restart_short: 'Auto restart on 500',
         awvs_nodes: 'AWVS Nodes',
         awvs_username: 'AWVS Username',
         awvs_password: 'AWVS Password',
@@ -1638,6 +1667,7 @@ const I18N = {
         proxy_agent: 'Proxy Agent',
         proxy_none: 'None',
         use_proxy: 'Use Proxy',
+        use_proxy_toggle_all: 'Toggle proxy for current page',
         generate_proxy_cmd: 'Generate Proxy Install Command',
         register_installed_proxy: 'Register Installed Proxy Agent',
         register_proxy: 'Register Proxy Agent',
@@ -1854,6 +1884,8 @@ const I18N = {
         filter_has_shell: '\u6709\u6a21\u62df Shell',
         filter_has_injection: '\u5df2\u8bc6\u522b\u6ce8\u5165\u70b9',
         filter_has_finding: '\u6709 Finding',
+        path_scan_done: '\u5df2\u626b\u8def\u5f84',
+        path_scan_not_done: '\u672a\u626b\u8def\u5f84',
         title_delete_selected: '\u5220\u9664\u9009\u4e2d\u4efb\u52a1',
         delete_selected: '\u5220\u9664\u9009\u4e2d',
         title_batch_retry_push: '\u6279\u91cf\u91cd\u65b0\u6295\u9012\u9009\u4e2d\u4efb\u52a1\u5230 sqlmap',
@@ -1910,6 +1942,8 @@ const I18N = {
         register_installed_path: '\u6ce8\u518c\u5df2\u5b89\u88c5\u7684\u8def\u5f84\u4ee3\u7406',
         register_awvs: '\u6ce8\u518c AWVS',
         manual_add_awvs: '\u624b\u52a8\u6dfb\u52a0 AWVS \u8282\u70b9',
+        awvs_auto_restart_on_api_500: 'AWVS API \u8fd4\u56de HTTP 500 \u65f6\u81ea\u52a8\u91cd\u542f Docker',
+        awvs_auto_restart_short: '500 \u81ea\u52a8\u91cd\u542f',
         awvs_nodes: 'AWVS \u8282\u70b9',
         awvs_username: 'AWVS \u7528\u6237\u540d',
         awvs_password: 'AWVS \u5bc6\u7801',
@@ -1974,6 +2008,7 @@ const I18N = {
         proxy_agent: '\u4ee3\u7406\u8282\u70b9',
         proxy_none: '\u4e0d\u4f7f\u7528',
         use_proxy: '\u4f7f\u7528\u4ee3\u7406',
+        use_proxy_toggle_all: '\u5207\u6362\u5f53\u524d\u9875\u5168\u90e8\u4ee3\u7406',
         generate_proxy_cmd: '\u751f\u6210\u4ee3\u7406\u5b89\u88c5\u547d\u4ee4',
         register_installed_proxy: '\u6ce8\u518c\u5df2\u5b89\u88c5\u7684\u4ee3\u7406\u8282\u70b9',
         register_proxy: '\u6ce8\u518c\u4ee3\u7406\u8282\u70b9',
@@ -2186,7 +2221,7 @@ new Vue({
         sqlmapLatestVersionCheckedAt: 0,
         tasks: [],
         newUrls: '',
-        newAWVS: { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 },
+        newAWVS: { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5, auto_restart_on_api_500: false },
         newAgent: { name: '', max_concurrency: 10, proxy_agent_id: 0 },
         newPathAgent: { name: '', max_concurrency: 5 },
         dockerCmd: '',
@@ -2200,7 +2235,7 @@ new Vue({
         awvsRegisterResult: null,
         awvsActionResult: null,
         awvsEditId: null,
-        awvsEdit: { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 },
+        awvsEdit: { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5, auto_restart_on_api_500: false },
         agentEditId: null,
         agentEdit: { name: '', url: '', api_key: '', max_concurrency: 10, default_use_proxy: true, share_by_domain: true },
         selectedTaskId: null,
@@ -2400,6 +2435,9 @@ new Vue({
             if (this.findingFilter === 'has_shell') return this.taskFindings.filter(f => f.has_shell);
             if (this.findingFilter === 'has_injection') return this.taskFindings.filter(f => f.has_injection);
             return this.taskFindings;
+        },
+        allPaginatedFindingsUseProxy() {
+            return this.paginatedFindings.length > 0 && this.paginatedFindings.every(f => !!f.use_proxy);
         },
         filteredTaskPathScans() {
             return (this.taskPathScans || []).map(entry => {
@@ -3013,6 +3051,29 @@ new Vue({
                 this.notifyError(this.extractError(err));
             });
         },
+        updateVisibleFindingsProxy(enabled) {
+            const targets = this.paginatedFindings.filter(item => !!item && !!item.ID && !!item.sent_to_sqlmap);
+            if (!targets.length) return;
+            Promise.all(targets.map(item => axios.put('/api/findings/' + item.ID, { use_proxy: !!enabled })))
+                .then(results => {
+                    results.forEach(res => {
+                        const updated = res.data && res.data.finding;
+                        if (!updated) return;
+                        const idx = this.taskFindings.findIndex(item => item.ID === updated.ID);
+                        if (idx >= 0) {
+                            this.taskFindings[idx].use_proxy = updated.use_proxy;
+                        }
+                    });
+                })
+                .catch(err => {
+                    this.notifyError(this.extractError(err));
+                });
+        },
+        toggleFindingProxyFromRow(finding, event) {
+            if (!finding || !finding.ID || !finding.sent_to_sqlmap) return;
+            if (event && event.target && String(event.target.tagName || '').toLowerCase() === 'input') return;
+            this.updateFindingProxy(finding, !finding.use_proxy);
+        },
         fetchCloud() {
             axios.get('/api/cloud/settings').then(res => {
                 this.cloud = Object.assign({}, this.cloud, res.data);
@@ -3317,7 +3378,7 @@ new Vue({
             this.awvsActionResult = null;
             axios.post('/api/servers', this.newAWVS).then(res => {
                 this.awvsActionResult = res.data;
-                this.newAWVS = { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 };
+                this.newAWVS = { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5, auto_restart_on_api_500: false };
                 this.fetchData();
             }).catch(err => {
                 this.awvsActionResult = { error: this.extractError(err) };
@@ -3356,12 +3417,13 @@ new Vue({
                 api_key: server.api_key || '',
                 awvs_username: server.awvs_username || '',
                 awvs_password: server.awvs_password || '',
-                max_concurrency: server.max_concurrency || 5
+                max_concurrency: server.max_concurrency || 5,
+                auto_restart_on_api_500: !!server.auto_restart_on_api_500
             };
         },
         cancelEditAWVS() {
             this.awvsEditId = null;
-            this.awvsEdit = { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 };
+            this.awvsEdit = { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5, auto_restart_on_api_500: false };
         },
         saveAWVS() {
             if (!this.awvsEditId) return;

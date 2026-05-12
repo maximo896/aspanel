@@ -37,6 +37,7 @@ const (
 	sqlmapAgentReleaseAPI           = "https://api.github.com/repos/maximo896/as/releases/latest"
 	sqlmapAgentTagsAPI              = "https://api.github.com/repos/maximo896/as/tags?per_page=1"
 	sqlmapAgentVersionCacheTTL      = 10 * time.Minute
+	awvsAutoRestartCooldown         = 10 * time.Minute
 )
 
 var sqlmapAgentLatestVersionCache = struct {
@@ -135,6 +136,41 @@ func getAWVSActiveScanCount(baseURL, apiKey string) (int, error) {
 	return client.CountActiveScans()
 }
 
+func shouldAutoRestartAWVSOnAPI500(server *models.AWVSServer, err error) bool {
+	if server == nil || !server.AutoRestartOnAPI500 {
+		return false
+	}
+	if awvs.StatusCode(err) != http.StatusInternalServerError {
+		return false
+	}
+	if strings.TrimSpace(server.ManagerURL) == "" || strings.TrimSpace(server.ManagerToken) == "" {
+		return false
+	}
+	now := time.Now().Unix()
+	return server.LastAutoRestartAt <= 0 || now-server.LastAutoRestartAt >= int64(awvsAutoRestartCooldown/time.Second)
+}
+
+func (api *API) triggerAWVSAutoRestartOnAPI500(server *models.AWVSServer, err error, source string) bool {
+	if !shouldAutoRestartAWVSOnAPI500(server, err) {
+		return false
+	}
+	now := time.Now().Unix()
+	if restartErr := api.callNodeManager(server.ManagerURL, server.ManagerToken, "restart"); restartErr != nil {
+		server.LastCheckedAt = now
+		server.LastError = fmt.Sprintf("%v | awvs api 500 auto restart failed: %v", err, restartErr)
+		api.DB.Save(server)
+		return false
+	}
+	server.IsActive = false
+	server.CurrentRunning = 0
+	server.LastCheckedAt = now
+	server.LastAutoRestartAt = now
+	server.LastError = fmt.Sprintf("%v | awvs api 500 detected (%s), docker restart requested", err, source)
+	api.DB.Save(server)
+	log.Printf("[awvs][auto-restart] docker restart requested id=%d name=%s source=%s", server.ID, server.Name, source)
+	return true
+}
+
 func (api *API) countAWVSBoundRunningTasks(serverID uint) int {
 	var count int64
 	api.DB.Model(&models.Task{}).
@@ -150,6 +186,9 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 		server.IsActive = false
 		server.CurrentRunning = 0
 		server.LastError = err.Error()
+		if api.triggerAWVSAutoRestartOnAPI500(server, err, "test_connection") {
+			return nil, fmt.Errorf("%v; docker restart requested", err)
+		}
 		api.DB.Save(server)
 		return nil, err
 	}
@@ -161,8 +200,10 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 	if countErr != nil {
 		server.CurrentRunning = 0
 		server.LastError = fmt.Sprintf("count active scans failed: %v", countErr)
+		api.triggerAWVSAutoRestartOnAPI500(server, countErr, "count_active_scans")
 	} else {
 		server.CurrentRunning = activeScans
+		server.LastError = ""
 	}
 	api.DB.Save(server)
 	return info, nil
@@ -267,12 +308,13 @@ func (api *API) UpdateServer(c *gin.Context) {
 	}
 
 	var req struct {
-		Name           string `json:"name"`
-		URL            string `json:"url"`
-		APIKey         string `json:"api_key"`
-		AWVSUsername   string `json:"awvs_username"`
-		AWVSPassword   string `json:"awvs_password"`
-		MaxConcurrency int    `json:"max_concurrency"`
+		Name                string `json:"name"`
+		URL                 string `json:"url"`
+		APIKey              string `json:"api_key"`
+		AWVSUsername        string `json:"awvs_username"`
+		AWVSPassword        string `json:"awvs_password"`
+		MaxConcurrency      int    `json:"max_concurrency"`
+		AutoRestartOnAPI500 *bool  `json:"auto_restart_on_api_500"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -286,6 +328,9 @@ func (api *API) UpdateServer(c *gin.Context) {
 	server.AWVSPassword = strings.TrimSpace(req.AWVSPassword)
 	if req.MaxConcurrency > 0 {
 		server.MaxConcurrency = req.MaxConcurrency
+	}
+	if req.AutoRestartOnAPI500 != nil {
+		server.AutoRestartOnAPI500 = *req.AutoRestartOnAPI500
 	}
 	if server.MaxConcurrency <= 0 {
 		server.MaxConcurrency = 5
@@ -853,7 +898,6 @@ func (api *API) GetTasks(c *gin.Context) {
 	var tasks []models.Task
 	api.DB.Order("id desc").Find(&tasks)
 
-	// Ensure task-level injection flag reflects finding-level detection in real time.
 	var injectedTaskIDs []uint
 	api.DB.Model(&models.TaskFinding{}).
 		Where("has_injection = ?", true).
@@ -864,6 +908,26 @@ func (api *API) GetTasks(c *gin.Context) {
 		injectionMap[taskID] = struct{}{}
 	}
 
+	var dataTaskIDs []uint
+	api.DB.Model(&models.TaskFinding{}).
+		Where("has_data = ?", true).
+		Distinct("task_id").
+		Pluck("task_id", &dataTaskIDs)
+	dataMap := make(map[uint]struct{}, len(dataTaskIDs))
+	for _, taskID := range dataTaskIDs {
+		dataMap[taskID] = struct{}{}
+	}
+
+	var shellTaskIDs []uint
+	api.DB.Model(&models.TaskFinding{}).
+		Where("has_shell = ?", true).
+		Distinct("task_id").
+		Pluck("task_id", &shellTaskIDs)
+	shellMap := make(map[uint]struct{}, len(shellTaskIDs))
+	for _, taskID := range shellTaskIDs {
+		shellMap[taskID] = struct{}{}
+	}
+
 	var findingTaskIDs []uint
 	api.DB.Model(&models.TaskFinding{}).
 		Distinct("task_id").
@@ -872,11 +936,27 @@ func (api *API) GetTasks(c *gin.Context) {
 	for _, taskID := range findingTaskIDs {
 		findingMap[taskID] = struct{}{}
 	}
+
+	var pathTaskIDs []uint
+	api.DB.Model(&models.TaskPathScan{}).
+		Distinct("task_id").
+		Pluck("task_id", &pathTaskIDs)
+	pathScanMap := make(map[uint]struct{}, len(pathTaskIDs))
+	for _, taskID := range pathTaskIDs {
+		pathScanMap[taskID] = struct{}{}
+	}
 	for i := range tasks {
 		_, hasFinding := findingMap[tasks[i].ID]
 		tasks[i].HasFinding = hasFinding
-		_, ok := injectionMap[tasks[i].ID]
-		tasks[i].HasInjection = ok
+		_, tasks[i].HasInjection = injectionMap[tasks[i].ID]
+		_, tasks[i].HasData = dataMap[tasks[i].ID]
+		_, tasks[i].HasShell = shellMap[tasks[i].ID]
+		_, tasks[i].HasPathScan = pathScanMap[tasks[i].ID]
+		if tasks[i].HasPathScan {
+			tasks[i].PathScanStatus = "scanned"
+		} else {
+			tasks[i].PathScanStatus = "not_scanned"
+		}
 	}
 
 	c.JSON(200, tasks)

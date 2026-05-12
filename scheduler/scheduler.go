@@ -34,7 +34,72 @@ const (
 	agentHeartbeatIntervalSec   = 60
 	agentHeartbeatTimeoutSec    = 1200
 	estimatedPublicTrafficUSD   = 0.02
+	awvsAutoRestartCooldownSec  = 600
 )
+
+func shouldAutoRestartAWVSOnAPI500(server *models.AWVSServer, err error) bool {
+	if server == nil || !server.AutoRestartOnAPI500 {
+		return false
+	}
+	if awvs.StatusCode(err) != http.StatusInternalServerError {
+		return false
+	}
+	if strings.TrimSpace(server.ManagerURL) == "" || strings.TrimSpace(server.ManagerToken) == "" {
+		return false
+	}
+	now := time.Now().Unix()
+	return server.LastAutoRestartAt <= 0 || now-server.LastAutoRestartAt >= awvsAutoRestartCooldownSec
+}
+
+func callNodeManager(managerURL, managerToken, action string) error {
+	managerURL = strings.TrimRight(strings.TrimSpace(managerURL), "/")
+	managerToken = strings.TrimSpace(managerToken)
+	if managerURL == "" || managerToken == "" {
+		return fmt.Errorf("manager api is not configured for this node")
+	}
+	body, _ := json.Marshal(map[string]string{"action": strings.TrimSpace(action)})
+	req, _ := http.NewRequest("POST", managerURL+"/docker/control", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Manager-Token", managerToken)
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	client := &http.Client{Timeout: 30 * time.Second, Transport: tr}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		message := strings.TrimSpace(string(respBody))
+		if message == "" {
+			message = fmt.Sprintf("manager api returned %d", resp.StatusCode)
+		}
+		return fmt.Errorf("%s", message)
+	}
+	return nil
+}
+
+func triggerAWVSAutoRestartOnAPI500(db *gorm.DB, server *models.AWVSServer, err error, source string) bool {
+	if !shouldAutoRestartAWVSOnAPI500(server, err) {
+		return false
+	}
+	now := time.Now().Unix()
+	if restartErr := callNodeManager(server.ManagerURL, server.ManagerToken, "restart"); restartErr != nil {
+		server.LastCheckedAt = now
+		server.LastError = fmt.Sprintf("%v | awvs api 500 auto restart failed: %v", err, restartErr)
+		db.Save(server)
+		return false
+	}
+	server.IsActive = false
+	server.CurrentRunning = 0
+	server.LastCheckedAt = now
+	server.LastAutoRestartAt = now
+	server.LastError = fmt.Sprintf("%v | awvs api 500 detected (%s), docker restart requested", err, source)
+	db.Save(server)
+	log.Printf("[awvs][auto-restart] docker restart requested id=%d name=%s source=%s", server.ID, server.Name, source)
+	return true
+}
 
 func StartScheduler(db *gorm.DB) {
 	go dispatchAWVSTasks(db)
@@ -68,6 +133,9 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 				server.IsActive = false
 				server.CurrentRunning = 0
 				server.LastError = err.Error()
+				if triggerAWVSAutoRestartOnAPI500(db, &server, err, "heartbeat_test_connection") {
+					continue
+				}
 				db.Save(&server)
 				if isServerStale(server.LastHeartbeatAt) {
 					requeueAWVSServerTasks(db, server.ID, "awvs_heartbeat_timeout")
@@ -81,6 +149,7 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 			if countErr != nil {
 				server.CurrentRunning = 0
 				server.LastError = fmt.Sprintf("count active scans failed: %v", countErr)
+				triggerAWVSAutoRestartOnAPI500(db, &server, countErr, "heartbeat_count_active_scans")
 			} else {
 				server.CurrentRunning = activeScans
 				server.LastError = ""
@@ -205,6 +274,9 @@ func checkAWVSStatus(db *gorm.DB) {
 				srv.IsActive = false
 				srv.LastCheckedAt = time.Now().Unix()
 				srv.LastError = err.Error()
+				if triggerAWVSAutoRestartOnAPI500(db, &srv, err, "scan_status") {
+					continue
+				}
 				db.Save(&srv)
 				log.Printf("Failed to get scan status for task %d: %v", task.ID, err)
 				if isServerStale(srv.LastHeartbeatAt) {
