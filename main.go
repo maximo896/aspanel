@@ -113,6 +113,7 @@ func main() {
 	r.POST("/api/cloud/instances/cleanup", h.CleanupCloudInstances)
 
 	r.GET("/api/sqlmap/agents", h.GetSqlmapAgents)
+	r.GET("/api/sqlmap/agents/latest-version", h.GetSqlmapAgentLatestVersion)
 	r.GET("/api/sqlmap/defaults", h.GetSqlmapDefaults)
 	r.PUT("/api/sqlmap/defaults", h.UpdateSqlmapDefaults)
 	r.POST("/api/sqlmap/agents/config", h.CreateAgentConfig)

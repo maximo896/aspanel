@@ -13,11 +13,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +29,18 @@ import (
 type API struct {
 	DB *gorm.DB
 }
+
+const (
+	defaultLatestSQLMapAgentVersion = "2.1.2"
+	sqlmapAgentReleaseAPI           = "https://api.github.com/repos/maximo896/as/releases/latest"
+	sqlmapAgentVersionCacheTTL      = 10 * time.Minute
+)
+
+var sqlmapAgentLatestVersionCache = struct {
+	mu        sync.Mutex
+	version   string
+	fetchedAt time.Time
+}{}
 
 func (api *API) getFinding(c *gin.Context) (*models.TaskFinding, error) {
 	var finding models.TaskFinding
@@ -674,12 +688,13 @@ func (api *API) UpdateSqlmapAgentVersion(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "sqlmap agent not found"})
 		return
 	}
-	if isLatestSQLMapAgentVersion(agent.AgentVersion) {
+	latestVersion := getLatestSQLMapAgentVersion()
+	if isLatestSQLMapAgentVersion(agent.AgentVersion, latestVersion) {
 		c.JSON(200, gin.H{
 			"message":         "sqlmap agent is already latest",
 			"agent_id":        agent.ID,
 			"current_version": agent.AgentVersion,
-			"target_version":  latestSQLMapAgentVersion,
+			"target_version":  latestVersion,
 		})
 		return
 	}
@@ -697,7 +712,14 @@ func (api *API) UpdateSqlmapAgentVersion(c *gin.Context) {
 		"message":         "sqlmap agent update requested",
 		"agent_id":        agent.ID,
 		"current_version": agent.AgentVersion,
-		"target_version":  latestSQLMapAgentVersion,
+		"target_version":  latestVersion,
+	})
+}
+
+func (api *API) GetSqlmapAgentLatestVersion(c *gin.Context) {
+	latestVersion := getLatestSQLMapAgentVersion()
+	c.JSON(200, gin.H{
+		"version": latestVersion,
 	})
 }
 
@@ -1872,15 +1894,66 @@ type sqlmapAgentStatusPayload struct {
 	Version       string `json:"version"`
 }
 
-const latestSQLMapAgentVersion = "2.1.2"
+type githubLatestReleaseResponse struct {
+	TagName string `json:"tag_name"`
+}
 
 func normalizeAgentVersionValue(version string) string {
 	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(version), "v"))
 }
 
-func isLatestSQLMapAgentVersion(version string) bool {
+func fetchLatestSQLMapAgentVersion() (string, error) {
+	req, _ := http.NewRequest("GET", sqlmapAgentReleaseAPI, nil)
+	req.Header.Set("User-Agent", "awvs-sqlmap-panel")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("release api status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var release githubLatestReleaseResponse
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", err
+	}
+	version := normalizeAgentVersionValue(release.TagName)
+	if version == "" {
+		return "", fmt.Errorf("empty tag_name from release api")
+	}
+	return version, nil
+}
+
+func getLatestSQLMapAgentVersion() string {
+	sqlmapAgentLatestVersionCache.mu.Lock()
+	defer sqlmapAgentLatestVersionCache.mu.Unlock()
+
+	if cached := normalizeAgentVersionValue(sqlmapAgentLatestVersionCache.version); cached != "" &&
+		time.Since(sqlmapAgentLatestVersionCache.fetchedAt) < sqlmapAgentVersionCacheTTL {
+		return cached
+	}
+
+	version, err := fetchLatestSQLMapAgentVersion()
+	if err == nil {
+		sqlmapAgentLatestVersionCache.version = version
+		sqlmapAgentLatestVersionCache.fetchedAt = time.Now()
+		return version
+	}
+
+	if cached := normalizeAgentVersionValue(sqlmapAgentLatestVersionCache.version); cached != "" {
+		log.Printf("[sqlmap-agent-version] using stale cached latest version=%s after fetch error: %v", cached, err)
+		return cached
+	}
+
+	log.Printf("[sqlmap-agent-version] using fallback latest version=%s after fetch error: %v", defaultLatestSQLMapAgentVersion, err)
+	return normalizeAgentVersionValue(defaultLatestSQLMapAgentVersion)
+}
+
+func isLatestSQLMapAgentVersion(version, latest string) bool {
 	normalized := normalizeAgentVersionValue(version)
-	return normalized != "" && normalized == normalizeAgentVersionValue(latestSQLMapAgentVersion)
+	return normalized != "" && normalized == normalizeAgentVersionValue(latest)
 }
 
 func generateDockerCommand(name string, maxConcurrency int, agentPort int) string {

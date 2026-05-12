@@ -1903,7 +1903,7 @@ new Vue({
         language: 'en',
         servers: [],
         agents: [],
-        sqlmapLatestAgentVersion: '2.1.0',
+        sqlmapLatestAgentVersion: '2.1.2',
         tasks: [],
         newUrls: '',
         newAWVS: { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 },
@@ -2489,6 +2489,7 @@ new Vue({
         fetchData() {
             axios.get('/api/servers').then(res => this.servers = res.data);
             axios.get('/api/sqlmap/agents').then(res => this.agents = res.data);
+            this.fetchSqlmapAgentLatestVersion();
             this.fetchSqlmapDefaults();
             axios.get('/api/tasks').then(res => {
                 this.tasks = res.data;
@@ -2507,6 +2508,14 @@ new Vue({
             axios.get('/api/sqlmap/defaults').then(res => {
                 this.sqlmapDefaults = Object.assign({}, this.sqlmapDefaults, res.data);
             });
+        },
+        fetchSqlmapAgentLatestVersion() {
+            axios.get('/api/sqlmap/agents/latest-version').then(res => {
+                const latest = this.normalizeSqlmapAgentVersion(res.data && res.data.version);
+                if (latest) {
+                    this.sqlmapLatestAgentVersion = latest;
+                }
+            }).catch(() => {});
         },
         saveSqlmapDefaults() {
             axios.put('/api/sqlmap/defaults', {
