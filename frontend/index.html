@@ -2930,6 +2930,18 @@ new Vue({
         normalizeSqlmapAgentVersion(version) {
             return String(version || '').trim().replace(/^v/i, '');
         },
+        compareSqlmapAgentVersions(current, latest) {
+            const left = this.normalizeSqlmapAgentVersion(current).split('.');
+            const right = this.normalizeSqlmapAgentVersion(latest).split('.');
+            const maxLen = Math.max(left.length, right.length);
+            for (let i = 0; i < maxLen; i += 1) {
+                const leftValue = parseInt((left[i] || '0').trim(), 10) || 0;
+                const rightValue = parseInt((right[i] || '0').trim(), 10) || 0;
+                if (leftValue < rightValue) return -1;
+                if (leftValue > rightValue) return 1;
+            }
+            return 0;
+        },
         formatSqlmapAgentVersion(version) {
             const normalized = this.normalizeSqlmapAgentVersion(version);
             return normalized || '-';
@@ -2937,7 +2949,7 @@ new Vue({
         isSqlmapAgentLatest(version) {
             const normalized = this.normalizeSqlmapAgentVersion(version);
             const latest = this.normalizeSqlmapAgentVersion(this.sqlmapLatestAgentVersion);
-            return !!normalized && normalized === latest;
+            return !!normalized && !!latest && this.compareSqlmapAgentVersions(normalized, latest) >= 0;
         },
         canUpdateSqlmapAgent(agent) {
             if (!agent) return false;

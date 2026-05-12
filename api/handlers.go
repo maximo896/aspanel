@@ -2095,6 +2095,36 @@ func normalizeAgentVersionValue(version string) string {
 	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(version), "v"))
 }
 
+func compareAgentVersions(current, target string) int {
+	leftParts := strings.Split(normalizeAgentVersionValue(current), ".")
+	rightParts := strings.Split(normalizeAgentVersionValue(target), ".")
+	maxLen := len(leftParts)
+	if len(rightParts) > maxLen {
+		maxLen = len(rightParts)
+	}
+	for i := 0; i < maxLen; i++ {
+		leftValue := 0
+		rightValue := 0
+		if i < len(leftParts) {
+			if parsed, err := strconv.Atoi(strings.TrimSpace(leftParts[i])); err == nil {
+				leftValue = parsed
+			}
+		}
+		if i < len(rightParts) {
+			if parsed, err := strconv.Atoi(strings.TrimSpace(rightParts[i])); err == nil {
+				rightValue = parsed
+			}
+		}
+		if leftValue < rightValue {
+			return -1
+		}
+		if leftValue > rightValue {
+			return 1
+		}
+	}
+	return 0
+}
+
 func githubAPIToken() string {
 	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
 		return token
@@ -2205,7 +2235,7 @@ func getLatestSQLMapAgentVersion() string {
 
 func isLatestSQLMapAgentVersion(version, latest string) bool {
 	normalized := normalizeAgentVersionValue(version)
-	return normalized != "" && normalized == normalizeAgentVersionValue(latest)
+	return normalized != "" && compareAgentVersions(normalized, latest) >= 0
 }
 
 func maxIntValue(a, b int) int {
