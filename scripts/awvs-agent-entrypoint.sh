@@ -253,13 +253,13 @@ backup_existing_awvs_state() {
 }
 
 restore_existing_awvs_state() {
-  local backup_path="${WORKDIR}/awvs-state/.acunetix"
+  local backup_path="${WORKDIR}/awvs-state"
   if [ ! -d "$backup_path" ]; then
     return 1
   fi
   echo "[*] Restoring previous AWVS state..."
   $SUDO docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
-  if ! $SUDO docker cp "$backup_path" "${CONTAINER_NAME}:/home/acunetix/" >/dev/null 2>&1; then
+  if ! $SUDO docker cp "$backup_path" "${CONTAINER_NAME}:/home/acunetix/.acunetix" >/dev/null 2>&1; then
     echo "[!] Failed to restore previous AWVS state."
     return 1
   fi
