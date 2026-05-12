@@ -973,13 +973,42 @@ func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "finding not found"})
 		return
 	}
+
+	loadCached := func(message string) bool {
+		var task models.Task
+		if err := api.DB.First(&task, finding.TaskID).Error; err != nil {
+			return false
+		}
+		rawURL := strings.TrimSpace(finding.AffectsURL)
+		if rawURL == "" {
+			rawURL = strings.TrimSpace(task.URL)
+		}
+		scan, ok, err := domaincache.LoadSnapshotByURL(api.DB, rawURL)
+		if err != nil || !ok {
+			return false
+		}
+		c.JSON(200, gin.H{
+			"scan":    scan,
+			"finding": finding,
+			"message": message,
+			"cached":  true,
+		})
+		return true
+	}
+
 	if finding.SqlmapTaskID == "" || finding.SqlmapAgentID == 0 {
+		if loadCached("finding is not bound to a sqlmap agent, showing cached database tree") {
+			return
+		}
 		c.JSON(400, gin.H{"error": "finding is not bound to a sqlmap agent"})
 		return
 	}
 
 	agent, err := api.getFindingAgent(finding)
 	if err != nil {
+		if loadCached("sqlmap agent not found, showing cached database tree") {
+			return
+		}
 		c.JSON(404, gin.H{"error": "sqlmap agent not found"})
 		return
 	}
@@ -988,6 +1017,9 @@ func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 	req.Header.Set("X-Api-Token", agent.APIKey)
 	resp, err := httpClient().Do(req)
 	if err != nil {
+		if loadCached("sqlmap agent unavailable, showing cached database tree") {
+			return
+		}
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -995,6 +1027,9 @@ func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
+		if loadCached("sqlmap detail unavailable, showing cached database tree") {
+			return
+		}
 		writeSqlmapUpstreamResponse(c, resp.StatusCode, body, "loading finding detail")
 		return
 	}

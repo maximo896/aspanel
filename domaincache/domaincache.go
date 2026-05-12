@@ -3,6 +3,7 @@ package domaincache
 import (
 	"awvs-sqlmap-panel/models"
 	"encoding/json"
+	"net/url"
 	"strings"
 
 	"gorm.io/gorm"
@@ -31,6 +32,45 @@ func ApplySnapshot(db *gorm.DB, snapshot map[string]interface{}) (map[string]int
 	merged["content"] = mergeContentMaps(cacheContent, normalizeContentMap(snapshot["content"]))
 	merged["tree"] = mergeTreeMaps(cacheTree, buildTreeFromContent(normalizeContentMap(snapshot["content"])))
 	return merged, nil
+}
+
+func LoadSnapshotByURL(db *gorm.DB, rawURL string) (map[string]interface{}, bool, error) {
+	if db == nil {
+		return nil, false, nil
+	}
+	domain, forceSSL, ok := scopeFromURL(rawURL)
+	if !ok {
+		return nil, false, nil
+	}
+	return LoadSnapshotByScope(db, domain, forceSSL)
+}
+
+func LoadSnapshotByScope(db *gorm.DB, domain string, forceSSL bool) (map[string]interface{}, bool, error) {
+	if db == nil {
+		return nil, false, nil
+	}
+	normalizedDomain := normalizeDomain(domain)
+	if normalizedDomain == "" {
+		return nil, false, nil
+	}
+	var cache models.DomainSQLMapCache
+	if err := db.Where("domain = ? AND force_ssl = ?", normalizedDomain, forceSSL).First(&cache).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	content := decodeMap(cache.ContentJSON)
+	tree := normalizeTreeMap(decodeMap(cache.TreeJSON))
+	if len(content) == 0 && len(tree) == 0 {
+		return nil, false, nil
+	}
+	return map[string]interface{}{
+		"domain":    normalizedDomain,
+		"force_ssl": forceSSL,
+		"content":   mergeContentMaps(map[string]interface{}{}, content),
+		"tree":      tree,
+	}, true, nil
 }
 
 func UpsertSnapshot(db *gorm.DB, snapshot map[string]interface{}) error {
@@ -71,6 +111,18 @@ func snapshotScope(snapshot map[string]interface{}) (string, bool, bool) {
 		return "", false, false
 	}
 	return domain, asBool(snapshot["force_ssl"]), true
+}
+
+func scopeFromURL(rawURL string) (string, bool, bool) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", false, false
+	}
+	host := normalizeDomain(parsed.Hostname())
+	if host == "" {
+		return "", false, false
+	}
+	return host, strings.EqualFold(parsed.Scheme, "https"), true
 }
 
 func normalizeDomain(raw string) string {

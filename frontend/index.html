@@ -3135,15 +3135,7 @@ new Vue({
         selectFinding(finding) {
             this.selectedFindingId = finding.ID;
             this.selectedFinding = finding;
-            if (this.findingHasSqlmapBinding(finding)) {
-                this.loadFindingDetail(finding.ID, false);
-            } else {
-                this.taskDetailError = '';
-                this.taskActionMessage = this.t('finding_not_bound_hint');
-                this.taskDetail = null;
-                this.requestEditMode = false;
-                this.requestDraft = '';
-            }
+            this.loadFindingDetail(finding.ID, false);
         },
         findingHasSqlmapBinding(finding) {
             if (!finding) return false;
@@ -3162,11 +3154,20 @@ new Vue({
             axios.get('/api/findings/' + findingId + '/sqlmap').then(res => {
                 this.taskDetail = res.data.scan || res.data;
                 this.syncActionSelectors();
+                this.taskDetailError = '';
+                this.taskActionMessage = '';
                 if (!this.requestEditMode) {
                     this.requestDraft = (this.taskDetail && this.taskDetail.request_content) ? this.taskDetail.request_content : '';
                 }
                 if (res.data.finding) {
                     this.selectedFinding = res.data.finding;
+                }
+                if (res.data.message) {
+                    this.taskActionMessage = res.data.message;
+                } else if (res.data.cached) {
+                    this.taskActionMessage = this.t('finding_not_bound_hint');
+                } else if (!this.findingHasSqlmapBinding(this.selectedFinding)) {
+                    this.taskActionMessage = this.t('finding_not_bound_hint');
                 }
             }).catch(err => {
                 this.taskDetail = null;

@@ -879,6 +879,11 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 				}
 
 				hasData := len(detail.DumpedTables) > 0 || detail.Content["dump_table"] != nil
+				if !hasData {
+					if currentDB, ok := detail.Content["current_db"].(string); ok && strings.TrimSpace(currentDB) != "" {
+						hasData = true
+					}
+				}
 				if hasData && !task.HasData {
 					task.HasData = true
 					changed = true
@@ -957,6 +962,11 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 			}
 
 			hasData := len(detail.DumpedTables) > 0 || detail.Content["dump_table"] != nil
+			if !hasData {
+				if currentDB, ok := detail.Content["current_db"].(string); ok && strings.TrimSpace(currentDB) != "" {
+					hasData = true
+				}
+			}
 			if hasData && !finding.HasData {
 				finding.HasData = true
 				changed = true
