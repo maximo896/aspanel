@@ -463,6 +463,10 @@
                                 {{ t('path_keyword_filter') }}
                             </label>
                             <input class="form-control form-control-sm" style="min-width: 240px; max-width: 320px;" v-model.trim="pathCustomFilterQuery" :placeholder="t('path_custom_filter_placeholder')">
+                            <select class="form-select form-select-sm w-auto bg-dark border-secondary text-white" v-model.number="retryPathAgentId">
+                                <option :value="0">{{ t('retry_target_auto') }}</option>
+                                <option v-for="a in pathAgents" :key="'retry-path-agent-' + a.ID" :value="a.ID">{{ a.name }}</option>
+                            </select>
                             <button class="btn btn-sm btn-outline-warning" :disabled="taskPathActionBusy || !selectedTaskId" @click="retryTaskPathScan">{{ t('retry_path_scan') }}</button>
                         </div>
                     </div>
@@ -2237,6 +2241,7 @@ new Vue({
         selectedAwvsCloudInstanceIds: [],
         selectedSqlmapCloudInstanceIds: [],
         retrySqlmapAgentId: 0,
+        retryPathAgentId: 0,
         taskPathScans: [],
         taskPathLogs: {},
         pathOnlyWithForms: true,
@@ -2251,6 +2256,7 @@ new Vue({
         currentUnixTs: Math.floor(Date.now() / 1000),
         fetchDataTimer: null,
         taskRefreshTimer: null,
+        taskActionRefreshTimer: null,
         taskPathLogTimer: null,
         recycleCountdownTimer: null,
         cloud: {
@@ -2560,6 +2566,9 @@ new Vue({
             this.taskRefreshTimer = setInterval(() => {
                 if (this.isAuthenticated) this.refreshSelectedTaskSilently();
             }, 10000);
+            this.taskActionRefreshTimer = setInterval(() => {
+                if (this.isAuthenticated) this.refreshFindingActionSilently();
+            }, 2000);
             this.taskPathLogTimer = setInterval(() => {
                 if (this.isAuthenticated) this.refreshPathScanLogsSilently();
             }, 2000);
@@ -2571,6 +2580,7 @@ new Vue({
         beforeDestroy() {
             if (this.fetchDataTimer) clearInterval(this.fetchDataTimer);
             if (this.taskRefreshTimer) clearInterval(this.taskRefreshTimer);
+            if (this.taskActionRefreshTimer) clearInterval(this.taskActionRefreshTimer);
             if (this.taskPathLogTimer) clearInterval(this.taskPathLogTimer);
             if (this.recycleCountdownTimer) clearInterval(this.recycleCountdownTimer);
             window.removeEventListener('popstate', this.handleLocationChange);
@@ -3533,6 +3543,7 @@ new Vue({
             this.selectedTask = task;
             this.resetTreeExpandState();
             this.retrySqlmapAgentId = 0;
+            this.retryPathAgentId = 0;
             this.findingPage = 1;
             this.selectedFindingId = null;
             this.selectedFinding = null;
@@ -3549,6 +3560,7 @@ new Vue({
             this.selectedTask = null;
             this.resetTreeExpandState();
             this.retrySqlmapAgentId = 0;
+            this.retryPathAgentId = 0;
             this.findingPage = 1;
             this.requestEditMode = false;
             this.requestDraft = '';
@@ -3652,7 +3664,9 @@ new Vue({
         retryTaskPathScan() {
             if (!this.selectedTaskId) return;
             this.taskPathActionBusy = true;
-            axios.post('/api/tasks/' + this.selectedTaskId + '/path-scan/retry', {}).then(res => {
+            axios.post('/api/tasks/' + this.selectedTaskId + '/path-scan/retry', {
+                path_agent_id: this.retryPathAgentId || 0
+            }).then(res => {
                 this.notifySuccess((res.data && res.data.message) || 'ok');
                 this.loadTaskPathScans(this.selectedTaskId);
             }).catch(err => {
@@ -3700,6 +3714,16 @@ new Vue({
                 this.selectedFinding = null;
                 this.taskDetailError = this.extractError(err);
             });
+        },
+        refreshFindingActionSilently() {
+            if (!this.selectedFindingId || this.requestEditMode) return;
+            const findingStatus = String((this.selectedFinding && this.selectedFinding.sqlmap_status) || '').trim().toLowerCase();
+            const detailStatus = String((this.taskDetail && this.taskDetail.sqlmap_status) || (this.taskDetail && this.taskDetail.status) || '').trim().toLowerCase();
+            const activeStatuses = ['queued', 'running'];
+            if (activeStatuses.indexOf(findingStatus) < 0 && activeStatuses.indexOf(detailStatus) < 0) {
+                return;
+            }
+            this.loadFindingDetail(this.selectedFindingId, true);
         },
         refreshSelectedTaskSilently() {
             if (!this.selectedTaskId) return;
@@ -3825,7 +3849,7 @@ new Vue({
             axios.post('/api/findings/' + this.selectedFindingId + '/sqlmap/action', payload).then(res => {
                 this.taskActionMessage = res.data.message + ' (' + action + ')';
                 this.fetchData();
-                this.loadFindingDetail(this.selectedFindingId, false);
+                this.loadFindingDetail(this.selectedFindingId, true);
             }).catch(err => {
                 this.taskActionMessage = this.extractError(err);
             }).finally(() => {
@@ -3875,7 +3899,7 @@ new Vue({
             axios.post('/api/findings/' + this.selectedFindingId + '/sqlmap/action', payload).then(res => {
                 this.taskActionMessage = (res.data.message || 'ok') + ' (search)';
                 this.fetchData();
-                this.loadFindingDetail(this.selectedFindingId, false);
+                this.loadFindingDetail(this.selectedFindingId, true);
                 this.loadSearchResults(this.searchQuery, this.searchKind);
             }).catch(err => {
                 this.taskActionMessage = this.extractError(err);
