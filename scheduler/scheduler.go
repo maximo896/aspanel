@@ -37,8 +37,19 @@ const (
 	awvsAutoRestartCooldownSec  = 600
 )
 
-func shouldAutoRestartAWVSOnAPI500(server *models.AWVSServer, err error) bool {
-	if server == nil || !server.AutoRestartOnAPI500 {
+func loadGlobalAWVSAutoRestartOnAPI500(db *gorm.DB) bool {
+	if db == nil {
+		return false
+	}
+	var settings models.CloudSettings
+	if err := db.Order("id desc").Select("awvs_auto_restart_on_api_500").First(&settings).Error; err != nil {
+		return false
+	}
+	return settings.AWVSAutoRestartOnAPI500
+}
+
+func shouldAutoRestartAWVSOnAPI500(db *gorm.DB, server *models.AWVSServer, err error) bool {
+	if server == nil || !loadGlobalAWVSAutoRestartOnAPI500(db) {
 		return false
 	}
 	if awvs.StatusCode(err) != http.StatusInternalServerError {
@@ -81,7 +92,7 @@ func callNodeManager(managerURL, managerToken, action string) error {
 }
 
 func triggerAWVSAutoRestartOnAPI500(db *gorm.DB, server *models.AWVSServer, err error, source string) bool {
-	if !shouldAutoRestartAWVSOnAPI500(server, err) {
+	if !shouldAutoRestartAWVSOnAPI500(db, server, err) {
 		return false
 	}
 	now := time.Now().Unix()
@@ -99,6 +110,56 @@ func triggerAWVSAutoRestartOnAPI500(db *gorm.DB, server *models.AWVSServer, err 
 	db.Save(server)
 	log.Printf("[awvs][auto-restart] docker restart requested id=%d name=%s source=%s", server.ID, server.Name, source)
 	return true
+}
+
+func cacheTaskSQLMapSnapshot(task *models.Task, snapshot map[string]interface{}) bool {
+	if task == nil || len(snapshot) == 0 {
+		return false
+	}
+	buf, err := json.Marshal(snapshot)
+	if err != nil {
+		return false
+	}
+	serialized := string(buf)
+	if task.SqlmapResultJSON == serialized && task.SqlmapCachedAt > 0 {
+		return false
+	}
+	task.SqlmapResultJSON = serialized
+	task.SqlmapCachedAt = time.Now().Unix()
+	return true
+}
+
+func cacheFindingSQLMapSnapshot(finding *models.TaskFinding, snapshot map[string]interface{}) bool {
+	if finding == nil || len(snapshot) == 0 {
+		return false
+	}
+	buf, err := json.Marshal(snapshot)
+	if err != nil {
+		return false
+	}
+	serialized := string(buf)
+	if finding.SqlmapResultJSON == serialized && finding.SqlmapCachedAt > 0 {
+		return false
+	}
+	finding.SqlmapResultJSON = serialized
+	finding.SqlmapCachedAt = time.Now().Unix()
+	return true
+}
+
+func clearTaskSQLMapSnapshot(task *models.Task) {
+	if task == nil {
+		return
+	}
+	task.SqlmapResultJSON = ""
+	task.SqlmapCachedAt = 0
+}
+
+func clearFindingSQLMapSnapshot(finding *models.TaskFinding) {
+	if finding == nil {
+		return
+	}
+	finding.SqlmapResultJSON = ""
+	finding.SqlmapCachedAt = 0
 }
 
 func StartScheduler(db *gorm.DB) {
@@ -623,6 +684,7 @@ func RetryFindingFromLocal(db *gorm.DB, findingID uint, sqlmapAgentID uint) erro
 		finding.HasData = false
 		finding.HasShell = false
 		finding.HasInjection = false
+		clearFindingSQLMapSnapshot(&finding)
 		db.Save(&finding)
 		return nil
 	}
@@ -742,6 +804,9 @@ func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, 
 		affectsURL, _ = details["affects_url"].(string)
 		httpRequest, _ := details["request"].(string)
 		detailsHTML, _ := details["details"].(string)
+		previousAffectsURL := finding.AffectsURL
+		previousPayload := finding.AWVSPayload
+		previousRaw := finding.AWVSRaw
 		finding.TaskID = task.ID
 		finding.VulnID = vulnID
 		finding.AffectsURL = affectsURL
@@ -751,6 +816,9 @@ func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, 
 		finding.AWVSPayload = extractAWVSPayload(details, detailsHTML)
 		if raw, err := json.Marshal(details); err == nil {
 			finding.AWVSRaw = string(raw)
+		}
+		if previousAffectsURL != "" && (previousAffectsURL != finding.AffectsURL || previousPayload != finding.AWVSPayload || previousRaw != finding.AWVSRaw) {
+			clearFindingSQLMapSnapshot(&finding)
 		}
 
 		payload := finding.AWVSPayload
@@ -799,6 +867,12 @@ func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, 
 		finding.SqlmapAgentID = agentID
 		finding.SqlmapAgentURL = agentURL
 		finding.SqlmapStatus = sqlmapStatus
+		if sent {
+			finding.HasData = false
+			finding.HasShell = false
+			finding.HasInjection = false
+			clearFindingSQLMapSnapshot(&finding)
+		}
 		db.Save(&finding)
 		if sent {
 			sentCount++
@@ -925,6 +999,7 @@ func sendToSqlmapAgent(task models.Task, domain, vulnID, requestData string, for
 		task.SqlmapStatus = sqlmapStatus
 		task.SqlmapAgentID = selectedAgent.ID
 		task.SqlmapAgentURL = selectedAgent.URL
+		clearTaskSQLMapSnapshot(&task)
 		db.Save(&task)
 		return taskID, selectedAgent.ID, selectedAgent.URL, sqlmapStatus, true, effectiveUseProxy
 	}
@@ -978,7 +1053,9 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 				}
 				var detailMap map[string]interface{}
 				if err := json.Unmarshal(body, &detailMap); err == nil {
-					_ = domaincache.UpsertSnapshot(db, detailMap)
+					if mergedDetail, mergeErr := domaincache.ApplySnapshot(db, detailMap); mergeErr == nil {
+						detailMap = mergedDetail
+					}
 				}
 
 				changed := false
@@ -1007,6 +1084,9 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 				hasShell := detail.ShellProbe.OK || strings.EqualFold(detail.ShellProbe.Status, "available")
 				if task.HasShell != hasShell {
 					task.HasShell = hasShell
+					changed = true
+				}
+				if cacheTaskSQLMapSnapshot(&task, detailMap) {
 					changed = true
 				}
 
@@ -1059,10 +1139,12 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 				if err := json.Unmarshal(body, &detail); err != nil {
 				continue
 			}
-				var detailMap map[string]interface{}
-				if err := json.Unmarshal(body, &detailMap); err == nil {
-					_ = domaincache.UpsertSnapshot(db, detailMap)
+			var detailMap map[string]interface{}
+			if err := json.Unmarshal(body, &detailMap); err == nil {
+				if mergedDetail, mergeErr := domaincache.ApplySnapshot(db, detailMap); mergeErr == nil {
+					detailMap = mergedDetail
 				}
+			}
 
 			changed := false
 			if detail.Status != "" && finding.SqlmapStatus != detail.Status {
@@ -1095,6 +1177,9 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 			hasShell := detail.ShellProbe.OK || strings.EqualFold(detail.ShellProbe.Status, "available")
 			if finding.HasShell != hasShell {
 				finding.HasShell = hasShell
+				changed = true
+			}
+			if cacheFindingSQLMapSnapshot(&finding, detailMap) {
 				changed = true
 			}
 

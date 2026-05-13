@@ -136,8 +136,19 @@ func getAWVSActiveScanCount(baseURL, apiKey string) (int, error) {
 	return client.CountActiveScans()
 }
 
-func shouldAutoRestartAWVSOnAPI500(server *models.AWVSServer, err error) bool {
-	if server == nil || !server.AutoRestartOnAPI500 {
+func loadGlobalAWVSAutoRestartOnAPI500(db *gorm.DB) bool {
+	if db == nil {
+		return false
+	}
+	var settings models.CloudSettings
+	if err := db.Order("id desc").Select("awvs_auto_restart_on_api_500").First(&settings).Error; err != nil {
+		return false
+	}
+	return settings.AWVSAutoRestartOnAPI500
+}
+
+func shouldAutoRestartAWVSOnAPI500(db *gorm.DB, server *models.AWVSServer, err error) bool {
+	if server == nil || !loadGlobalAWVSAutoRestartOnAPI500(db) {
 		return false
 	}
 	if awvs.StatusCode(err) != http.StatusInternalServerError {
@@ -151,7 +162,7 @@ func shouldAutoRestartAWVSOnAPI500(server *models.AWVSServer, err error) bool {
 }
 
 func (api *API) triggerAWVSAutoRestartOnAPI500(server *models.AWVSServer, err error, source string) bool {
-	if !shouldAutoRestartAWVSOnAPI500(server, err) {
+	if !shouldAutoRestartAWVSOnAPI500(api.DB, server, err) {
 		return false
 	}
 	now := time.Now().Unix()
@@ -1169,6 +1180,21 @@ func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 	}
 
 	loadCached := func(message string) bool {
+		if strings.TrimSpace(finding.SqlmapResultJSON) != "" {
+			var cachedScan map[string]interface{}
+			if err := json.Unmarshal([]byte(finding.SqlmapResultJSON), &cachedScan); err == nil {
+				if mergedScan, mergeErr := domaincache.ApplySnapshot(api.DB, cachedScan); mergeErr == nil {
+					cachedScan = mergedScan
+				}
+				c.JSON(200, gin.H{
+					"scan":    cachedScan,
+					"finding": finding,
+					"message": message,
+					"cached":  true,
+				})
+				return true
+			}
+		}
 		var task models.Task
 		if err := api.DB.First(&task, finding.TaskID).Error; err != nil {
 			return false
@@ -1235,6 +1261,11 @@ func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 	}
 	if mergedScan, err := domaincache.ApplySnapshot(api.DB, scan); err == nil {
 		scan = mergedScan
+	}
+	if cachedBody, err := json.Marshal(scan); err == nil {
+		finding.SqlmapResultJSON = string(cachedBody)
+		finding.SqlmapCachedAt = time.Now().Unix()
+		api.DB.Save(finding)
 	}
 
 	c.JSON(200, gin.H{
@@ -2516,6 +2547,7 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 		"launch_started_at":              masked.LaunchStartedAt,
 		"port_min":                       masked.PortMin,
 		"port_max":                       masked.PortMax,
+		"awvs_auto_restart_on_api_500":   masked.AWVSAutoRestartOnAPI500,
 		"autoscale_status":               status,
 		"autoscale_remaining_sec":        remaining,
 		"awvs_auto_enabled":              masked.AWVSAutoEnabled,
@@ -2652,6 +2684,7 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	if req.PortMax > 0 {
 		settings.PortMax = req.PortMax
 	}
+	settings.AWVSAutoRestartOnAPI500 = req.AWVSAutoRestartOnAPI500
 	settings.Enabled = req.Enabled
 	if strings.TrimSpace(req.InstanceType) != "" {
 		settings.InstanceType = strings.TrimSpace(req.InstanceType)

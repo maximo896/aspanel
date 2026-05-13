@@ -84,6 +84,8 @@ type Task struct {
 	SqlmapTaskID   string `json:"sqlmap_task_id"`
 	SqlmapStatus   string `json:"sqlmap_status" gorm:"default:'none'"`
 	SqlmapAgentURL string `json:"sqlmap_agent_url"`
+	SqlmapResultJSON string `json:"sqlmap_result_json" gorm:"type:text"`
+	SqlmapCachedAt int64 `json:"sqlmap_cached_at"`
 	HasData        bool   `json:"has_data"`
 	HasShell       bool   `json:"has_shell"`
 	HasFinding     bool   `json:"has_finding"`
@@ -128,6 +130,8 @@ type TaskFinding struct {
 	SqlmapStatus     string `json:"sqlmap_status"`
 	SqlmapAgentURL   string `json:"sqlmap_agent_url"`
 	SqlmapTechniques string `json:"sqlmap_techniques"`
+	SqlmapResultJSON string `json:"sqlmap_result_json" gorm:"type:text"`
+	SqlmapCachedAt   int64  `json:"sqlmap_cached_at"`
 	HasData          bool   `json:"has_data"`
 	HasShell         bool   `json:"has_shell"`
 	HasInjection     bool   `json:"has_injection"`
@@ -182,6 +186,7 @@ type CloudSettings struct {
 	LaunchStartedAt            int64   `json:"launch_started_at"`
 	PortMin                    int     `json:"port_min" gorm:"default:30000"`
 	PortMax                    int     `json:"port_max" gorm:"default:40000"`
+	AWVSAutoRestartOnAPI500    bool    `json:"awvs_auto_restart_on_api_500" gorm:"default:false"`
 	AWVSAutoEnabled            bool    `json:"awvs_auto_enabled" gorm:"default:false"`
 	AWVSLaunchStartedAt        int64   `json:"awvs_launch_started_at"`
 	AWVSMaxPriceUSDPerHour     float64 `json:"awvs_max_price_usd_per_hour" gorm:"default:0.02"`
