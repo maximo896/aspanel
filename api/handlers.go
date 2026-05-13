@@ -14,6 +14,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -166,7 +167,7 @@ func (api *API) triggerAWVSAutoRestartOnAPI500(server *models.AWVSServer, err er
 		return false
 	}
 	now := time.Now().Unix()
-	if restartErr := api.callNodeManager(server.ManagerURL, server.ManagerToken, "restart"); restartErr != nil {
+	if restartErr := api.callNodeManagerForNode(server.ManagerURL, server.ManagerToken, server.URL, "restart"); restartErr != nil {
 		server.LastCheckedAt = now
 		server.LastError = fmt.Sprintf("%v | awvs api 500 auto restart failed: %v", err, restartErr)
 		api.DB.Save(server)
@@ -422,16 +423,16 @@ func (api *API) UpdateAWVSServerVersion(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "awvs server not found"})
 		return
 	}
-	if err := api.callNodeManager(server.ManagerURL, server.ManagerToken, "update"); err != nil {
+	if err := api.callNodeManagerForNode(server.ManagerURL, server.ManagerToken, server.URL, "update"); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 	api.DB.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
-		"is_active":        false,
-		"current_running":  0,
-		"last_checked_at":  time.Now().Unix(),
+		"is_active":         false,
+		"current_running":   0,
+		"last_checked_at":   time.Now().Unix(),
 		"last_heartbeat_at": 0,
-		"last_error":       "manual update requested",
+		"last_error":        "manual update requested",
 	})
 	c.JSON(200, gin.H{
 		"message":   "awvs server update requested",
@@ -823,7 +824,7 @@ func (api *API) UpdateSqlmapAgentVersion(c *gin.Context) {
 		})
 		return
 	}
-	if err := api.callNodeManager(agent.ManagerURL, agent.ManagerToken, "update"); err != nil {
+	if err := api.callNodeManagerForNode(agent.ManagerURL, agent.ManagerToken, agent.URL, "update"); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -905,6 +906,65 @@ func (api *API) TestSqlmapAgent(c *gin.Context) {
 	})
 }
 
+func snapshotHasCurrentDB(snapshot map[string]interface{}) bool {
+	if len(snapshot) == 0 {
+		return false
+	}
+	if currentDB, ok := snapshot["current_db"].(string); ok && strings.TrimSpace(currentDB) != "" {
+		return true
+	}
+	content, _ := snapshot["content"].(map[string]interface{})
+	if currentDB, ok := content["current_db"].(string); ok && strings.TrimSpace(currentDB) != "" {
+		return true
+	}
+	return false
+}
+
+func rawSnapshotHasCurrentDB(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return false
+	}
+	return snapshotHasCurrentDB(snapshot)
+}
+
+func taskHasDataFromSQLite(db *gorm.DB, task *models.Task) bool {
+	if task == nil {
+		return false
+	}
+	if task.HasData || rawSnapshotHasCurrentDB(task.SqlmapResultJSON) {
+		return true
+	}
+	rawURL := strings.TrimSpace(task.URL)
+	if rawURL == "" {
+		return false
+	}
+	snapshot, ok, err := domaincache.LoadSnapshotByURL(db, rawURL)
+	return err == nil && ok && snapshotHasCurrentDB(snapshot)
+}
+
+func findingHasDataFromSQLite(db *gorm.DB, finding *models.TaskFinding, fallbackURL string) bool {
+	if finding == nil {
+		return false
+	}
+	if finding.HasData || rawSnapshotHasCurrentDB(finding.SqlmapResultJSON) {
+		return true
+	}
+	rawURL := strings.TrimSpace(finding.AffectsURL)
+	if rawURL == "" {
+		rawURL = strings.TrimSpace(fallbackURL)
+	}
+	if rawURL == "" {
+		return false
+	}
+	snapshot, ok, err := domaincache.LoadSnapshotByURL(db, rawURL)
+	return err == nil && ok && snapshotHasCurrentDB(snapshot)
+}
+
 func (api *API) GetTasks(c *gin.Context) {
 	var tasks []models.Task
 	api.DB.Order("id desc").Find(&tasks)
@@ -961,6 +1021,10 @@ func (api *API) GetTasks(c *gin.Context) {
 		tasks[i].HasFinding = hasFinding
 		_, tasks[i].HasInjection = injectionMap[tasks[i].ID]
 		_, tasks[i].HasData = dataMap[tasks[i].ID]
+		if !tasks[i].HasData && taskHasDataFromSQLite(api.DB, &tasks[i]) {
+			tasks[i].HasData = true
+			api.DB.Model(&models.Task{}).Where("id = ?", tasks[i].ID).Update("has_data", true)
+		}
 		_, tasks[i].HasShell = shellMap[tasks[i].ID]
 		_, tasks[i].HasPathScan = pathScanMap[tasks[i].ID]
 		if tasks[i].HasPathScan {
@@ -1149,6 +1213,17 @@ func (api *API) GetTaskFindings(c *gin.Context) {
 
 	var findings []models.TaskFinding
 	api.DB.Where("task_id = ?", task.ID).Order("id desc").Find(&findings)
+	if !task.HasData && taskHasDataFromSQLite(api.DB, &task) {
+		task.HasData = true
+		api.DB.Model(&models.Task{}).Where("id = ?", task.ID).Update("has_data", true)
+	}
+	for i := range findings {
+		if !findings[i].HasData && findingHasDataFromSQLite(api.DB, &findings[i], task.URL) {
+			findings[i].HasData = true
+			api.DB.Model(&models.TaskFinding{}).Where("id = ?", findings[i].ID).Update("has_data", true)
+			task.HasData = true
+		}
+	}
 	c.JSON(200, gin.H{"task": task, "findings": findings})
 }
 
@@ -2881,6 +2956,57 @@ func (api *API) callNodeManager(managerURL, managerToken, action string) error {
 	return nil
 }
 
+func buildManagerBaseURLs(managerURL, nodeURL string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 2)
+	push := func(raw string) {
+		candidate := normalizeBaseURL(raw)
+		if candidate == "" {
+			return
+		}
+		if _, ok := seen[candidate]; ok {
+			return
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+
+	push(managerURL)
+
+	managerParsed, err := url.Parse(normalizeBaseURL(managerURL))
+	if err != nil || strings.TrimSpace(managerParsed.Port()) == "" {
+		return out
+	}
+	nodeParsed, err := url.Parse(normalizeBaseURL(nodeURL))
+	if err != nil || strings.TrimSpace(nodeParsed.Hostname()) == "" {
+		return out
+	}
+	scheme := strings.TrimSpace(managerParsed.Scheme)
+	if scheme == "" {
+		scheme = strings.TrimSpace(nodeParsed.Scheme)
+	}
+	if scheme == "" {
+		scheme = "http"
+	}
+	push(fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(strings.TrimSpace(nodeParsed.Hostname()), strings.TrimSpace(managerParsed.Port()))))
+	return out
+}
+
+func (api *API) callNodeManagerForNode(managerURL, managerToken, nodeURL, action string) error {
+	var lastErr error
+	for _, candidate := range buildManagerBaseURLs(managerURL, nodeURL) {
+		if err := api.callNodeManager(candidate, managerToken, action); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("manager api is not configured for this node")
+}
+
 func (api *API) RebootCloudInstances(c *gin.Context) {
 	var req struct {
 		IDs []uint `json:"ids" binding:"required"`
@@ -2965,7 +3091,7 @@ func (api *API) RestartAWVSDocker(c *gin.Context) {
 	succeeded := 0
 	failed := make([]map[string]interface{}, 0)
 	for _, server := range servers {
-		if err := api.callNodeManager(server.ManagerURL, server.ManagerToken, "restart"); err != nil {
+		if err := api.callNodeManagerForNode(server.ManagerURL, server.ManagerToken, server.URL, "restart"); err != nil {
 			failed = append(failed, gin.H{"id": server.ID, "name": server.Name, "error": err.Error()})
 			continue
 		}
@@ -3004,13 +3130,13 @@ func (api *API) RestartSQLMapDocker(c *gin.Context) {
 	succeeded := 0
 	failed := make([]map[string]interface{}, 0)
 	for _, agent := range agents {
-		if err := api.callNodeManager(agent.ManagerURL, agent.ManagerToken, "restart"); err != nil {
+		if err := api.callNodeManagerForNode(agent.ManagerURL, agent.ManagerToken, agent.URL, "restart"); err != nil {
 			failed = append(failed, gin.H{"id": agent.ID, "name": agent.Name, "error": err.Error()})
 			continue
 		}
 		api.DB.Model(&models.SqlmapAgent{}).Where("id = ?", agent.ID).Updates(map[string]interface{}{
-			"is_active":        false,
-			"last_checked_at":  time.Now().Unix(),
+			"is_active":         false,
+			"last_checked_at":   time.Now().Unix(),
 			"last_heartbeat_at": 0,
 		})
 		succeeded++
@@ -3068,7 +3194,12 @@ func (api *API) StartCloudScale(c *gin.Context) {
 	}
 	settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled
 	settings.LaunchStartedAt = now
-	api.DB.Save(&settings)
+	if err := api.DB.Save(&settings).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	log.Printf("[cloud][autoscale] manual start requested workload=%s", kind)
+	go scheduler.RunCloudAutoscaleOnce(api.DB)
 	c.JSON(200, gin.H{"message": "cloud autoscale enabled", "workload": kind})
 }
 

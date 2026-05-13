@@ -3401,25 +3401,29 @@ new Vue({
                 return;
             }
             this.taskActionBusy = true;
-            Promise.all(this.selectedTaskIds.map(taskId => axios.post('/api/tasks/' + taskId + '/path-scan/retry', {
-                path_agent_id: this.retryPathAgentId || 0,
-                katana_seed_mode: this.pathKatanaSeedMode || 'auto'
-            }).then(() => ({ ok: true })).catch(err => ({ ok: false, error: this.extractError(err) }))))
-                .then(results => {
-                    const successCount = results.filter(item => item.ok).length;
-                    const failure = results.find(item => !item.ok);
-                    if (failure) {
-                        this.notifyError((failure.error || 'batch path scan failed') + ' | success: ' + successCount + '/' + results.length);
-                    } else {
-                        this.notifySuccess('path scan tasks: ' + successCount + '/' + results.length);
-                    }
-                    this.selectedTaskIds = [];
-                    this.fetchData();
-                    this.refreshSelectedTaskSilently();
-                })
-                .finally(() => {
-                    this.taskActionBusy = false;
-                });
+            const results = [];
+            for (const taskId of this.selectedTaskIds) {
+                try {
+                    await axios.post('/api/tasks/' + taskId + '/path-scan/retry', {
+                        path_agent_id: this.retryPathAgentId || 0,
+                        katana_seed_mode: this.pathKatanaSeedMode || 'auto'
+                    });
+                    results.push({ ok: true });
+                } catch (err) {
+                    results.push({ ok: false, error: this.extractError(err) });
+                }
+            }
+            const successCount = results.filter(item => item.ok).length;
+            const failure = results.find(item => !item.ok);
+            if (failure) {
+                this.notifyError((failure.error || 'batch path scan failed') + ' | success: ' + successCount + '/' + results.length);
+            } else {
+                this.notifySuccess('path scan tasks: ' + successCount + '/' + results.length);
+            }
+            this.selectedTaskIds = [];
+            this.fetchData();
+            this.refreshSelectedTaskSilently();
+            this.taskActionBusy = false;
         },
         toggleAllTasks(e) {
             if (e.target.checked) {

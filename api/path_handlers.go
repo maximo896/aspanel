@@ -274,7 +274,7 @@ func (api *API) UpdatePathAgentVersion(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "path agent not found"})
 		return
 	}
-	if err := api.callNodeManager(agent.ManagerURL, agent.ManagerToken, "update"); err != nil {
+	if err := api.callNodeManagerForNode(agent.ManagerURL, agent.ManagerToken, agent.URL, "update"); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -333,7 +333,7 @@ func (api *API) RestartPathDocker(c *gin.Context) {
 	succeeded := 0
 	failed := make([]map[string]interface{}, 0)
 	for _, agent := range agents {
-		if err := api.callNodeManager(agent.ManagerURL, agent.ManagerToken, "restart"); err != nil {
+		if err := api.callNodeManagerForNode(agent.ManagerURL, agent.ManagerToken, agent.URL, "restart"); err != nil {
 			failed = append(failed, gin.H{"id": agent.ID, "name": agent.Name, "error": err.Error()})
 			continue
 		}

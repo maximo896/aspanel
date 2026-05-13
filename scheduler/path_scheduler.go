@@ -214,6 +214,9 @@ func sendToPathAgent(task models.Task, targetURL string, preferredPathAgentID ui
 		if selected.ID == 0 {
 			return "", 0, "", "", "", false
 		}
+		if selected.MaxConcurrency > 0 && selected.CurrentRunning+selected.CurrentQueued >= selected.MaxConcurrency {
+			return "", 0, "", "", "", false
+		}
 	} else {
 		bestScore := int(^uint(0) >> 1)
 		candidates := make([]models.PathAgent, 0)
@@ -260,6 +263,8 @@ func sendToPathAgent(task models.Task, targetURL string, preferredPathAgentID ui
 	if resp.StatusCode == http.StatusAccepted {
 		status = "queued"
 	}
+	selected.CurrentQueued++
+	db.Model(&models.PathAgent{}).Where("id = ?", selected.ID).Update("current_queued", selected.CurrentQueued)
 	return taskID, selected.ID, selected.URL, status, selected.AgentVersion, true
 }
 

@@ -245,9 +245,9 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 				continue
 			}
 			var statusResp struct {
-				RunningCount  int `json:"running_count"`
-				QueuedCount   int `json:"queued_count"`
-				MaxConcurrent int `json:"max_concurrent"`
+				RunningCount  int    `json:"running_count"`
+				QueuedCount   int    `json:"queued_count"`
+				MaxConcurrent int    `json:"max_concurrent"`
 				Version       string `json:"version"`
 			}
 			json.NewDecoder(resp.Body).Decode(&statusResp)
@@ -957,10 +957,10 @@ func sendToSqlmapAgent(task models.Task, domain, vulnID, requestData string, for
 		effectiveUseProxy = *useProxy
 	}
 	payload := map[string]interface{}{
-		"domain":          domain,
-		"vuln_id":         vulnID,
-		"request_data":    requestData,
-		"force_ssl":       forceSSL,
+		"domain":       domain,
+		"vuln_id":      vulnID,
+		"request_data": requestData,
+		"force_ssl":    forceSSL,
 		// Panel-level domain cache already shares DB trees. Reusing root scans here can mix
 		// request.txt across different findings on the same domain, so disable agent-side reuse.
 		"share_by_domain": false,
@@ -1122,12 +1122,12 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 				continue
 			}
 
-				body, err := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				if err != nil {
-					continue
-				}
-				var detail struct {
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				continue
+			}
+			var detail struct {
 				Status     string `json:"status"`
 				ShellProbe struct {
 					OK     bool   `json:"ok"`
@@ -1136,7 +1136,7 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 				DumpedTables []interface{}          `json:"dumped_tables"`
 				Content      map[string]interface{} `json:"content"`
 			}
-				if err := json.Unmarshal(body, &detail); err != nil {
+			if err := json.Unmarshal(body, &detail); err != nil {
 				continue
 			}
 			var detailMap map[string]interface{}
@@ -1241,41 +1241,49 @@ func syncScanningTaskVulnerabilities(db *gorm.DB) {
 	}
 }
 
+func runCloudAutoscaleCycle(db *gorm.DB) {
+	settings, ok := getCloudSettings(db)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(settings.SecretID) == "" || strings.TrimSpace(settings.SecretKey) == "" {
+		log.Printf("[cloud][autoscale] missing credentials, autoscale disabled for both workloads")
+		settings.Enabled = false
+		settings.AWVSAutoEnabled = false
+		settings.SQLMapAutoEnabled = false
+		settings.LaunchStartedAt = 0
+		settings.AWVSLaunchStartedAt = 0
+		settings.SQLMapLaunchStartedAt = 0
+		db.Save(&settings)
+		return
+	}
+	if settings.Enabled && !settings.AWVSAutoEnabled && !settings.SQLMapAutoEnabled {
+		settings.AWVSAutoEnabled = true
+		settings.SQLMapAutoEnabled = true
+		db.Save(&settings)
+	}
+	settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled
+	db.Save(&settings)
+	if settings.AWVSAutoEnabled {
+		autoscaleByWorkload(db, settings, "awvs")
+	}
+	if settings.SQLMapAutoEnabled {
+		autoscaleByWorkload(db, settings, "sqlmap")
+	}
+}
+
+func RunCloudAutoscaleOnce(db *gorm.DB) {
+	runCloudAutoscaleCycle(db)
+}
+
 func autoscaleSpotInstances(db *gorm.DB) {
 	for {
+		runCloudAutoscaleCycle(db)
 		sleepSec := 60
 		if s, ok := getCloudSettings(db); ok && s.PollIntervalSec >= 5 {
 			sleepSec = s.PollIntervalSec
 		}
 		time.Sleep(time.Duration(sleepSec) * time.Second)
-		settings, ok := getCloudSettings(db)
-		if !ok {
-			continue
-		}
-		if strings.TrimSpace(settings.SecretID) == "" || strings.TrimSpace(settings.SecretKey) == "" {
-			log.Printf("[cloud][autoscale] missing credentials, autoscale disabled for both workloads")
-			settings.Enabled = false
-			settings.AWVSAutoEnabled = false
-			settings.SQLMapAutoEnabled = false
-			settings.LaunchStartedAt = 0
-			settings.AWVSLaunchStartedAt = 0
-			settings.SQLMapLaunchStartedAt = 0
-			db.Save(&settings)
-			continue
-		}
-		if settings.Enabled && !settings.AWVSAutoEnabled && !settings.SQLMapAutoEnabled {
-			settings.AWVSAutoEnabled = true
-			settings.SQLMapAutoEnabled = true
-			db.Save(&settings)
-		}
-		settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled
-		db.Save(&settings)
-		if settings.AWVSAutoEnabled {
-			autoscaleByWorkload(db, settings, "awvs")
-		}
-		if settings.SQLMapAutoEnabled {
-			autoscaleByWorkload(db, settings, "sqlmap")
-		}
 	}
 }
 
