@@ -35,6 +35,7 @@ const statusColor: Record<string, 'default' | 'processing' | 'success' | 'error'
 
 export default function TasksPage() {
   const qc = useQueryClient()
+  const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
   const [selected, setSelected] = useState<number[]>([])
@@ -100,7 +101,18 @@ export default function TasksPage() {
       if (filter === 'has_finding') return t.has_finding
       return true
     })
-    .filter(t => !search.trim() || t.url.toLowerCase().includes(search.toLowerCase()))
+    .filter(t => {
+      const needle = search.trim().toLowerCase()
+      if (!needle) return true
+      const haystack = [
+        t.url,
+        String(t.ID),
+        t.status,
+        t.sqlmap_status,
+        t.sqlmap_task_id,
+      ].join(' ').toLowerCase()
+      return haystack.includes(needle)
+    })
 
   const columns: ColumnsType<Task> = [
     {
@@ -142,7 +154,13 @@ export default function TasksPage() {
       title: 'AWVS',
       dataIndex: 'status',
       width: 90,
-      render: (s: string) => <Badge status={statusColor[s] || 'default'} text={<Text style={{ fontSize: 11 }}>{s}</Text>} />,
+      render: (s: string, row: Task) => {
+        let displayStatus = s;
+        if (s === 'pending' && row.has_finding) {
+          displayStatus = 'exit';
+        }
+        return <Badge status={statusColor[displayStatus] || 'default'} text={<Text style={{ fontSize: 11 }}>{displayStatus}</Text>} />;
+      },
     },
     {
       title: 'Sqlmap',
@@ -202,11 +220,19 @@ export default function TasksPage() {
               size="small"
               prefix={<SearchOutlined />}
               placeholder="搜索URL..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
+              value={searchInput}
+              onChange={e => {
+                const value = e.target.value
+                setSearchInput(value)
+                if (!value) {
+                  setSearch('')
+                }
+              }}
+              onPressEnter={() => setSearch(searchInput.trim())}
               allowClear
               style={{ width: 180 }}
             />
+            <Button size="small" icon={<SearchOutlined />} onClick={() => setSearch(searchInput.trim())}>搜索</Button>
             <Select size="small" value={filter} onChange={setFilter} options={filterOptions} style={{ width: 100 }} />
             {selected.length > 0 && (
               <>
@@ -237,7 +263,7 @@ export default function TasksPage() {
           rowKey="ID"
           loading={isLoading}
           size="small"
-          pagination={{ pageSize: 20, showSizeChanger: true, showQuickJumper: true }}
+          pagination={{ defaultPageSize: 20, showSizeChanger: true, showQuickJumper: true }}
           scroll={{ x: 800 }}
           onRow={record => ({
             onClick: () => setSelectedTask(record),

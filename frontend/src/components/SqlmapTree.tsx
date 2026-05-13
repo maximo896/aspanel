@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import {
   Button, Space, Typography, Tag, Spin, message, Input, Select, Card,
@@ -29,13 +29,9 @@ function isSensitive(colName: string) {
 }
 
 export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props) {
-  const [_selectedDb, setSelectedDb] = useState<string>('')
-  const [_selectedTable, setSelectedTable] = useState<string>('')
-  const [dumpData, setDumpData] = useState<Record<string, Record<string, string[]>>>({})
-  const [dumpLoading, setDumpLoading] = useState(false)
-  const [searchKind, setSearchKind] = useState<'column' | 'table' | 'value'>('column')
+  const [searchKind, setSearchKind] = useState<'column' | 'table' | 'data'>('column')
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResult, setSearchResult] = useState<string | null>(null)
+  const [searchResult, setSearchResult] = useState<Array<Record<string, unknown>> | null>(null)
   const [searchLoading, setSearchLoading] = useState(false)
 
   const actionMut = useMutation({
@@ -44,66 +40,39 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
     onError: (e: unknown) => message.error(extractError(e)),
   })
 
-  const handleGetDatabases = () => actionMut.mutate({ action: 'get_databases' })
-  const handleGetTables = (db: string) => actionMut.mutate({ action: 'get_tables', database: db })
-  const handleGetColumns = (db: string, table: string) => actionMut.mutate({ action: 'get_columns', database: db, table })
-
-  const handleDump = async (db: string, table: string) => {
-    setDumpLoading(true)
-    try {
-      const result = await runFindingSqlmapAction(finding.ID, {
-        action: 'dump',
-        database: db,
-        table,
-        limit_rows: 20,
-      })
-      const key = `${db}.${table}`
-      setDumpData(prev => ({ ...prev, [key]: result?.data?.[db]?.[table] || result?.rows || {} }))
-    } catch (e) {
-      message.error(extractError(e))
-    } finally {
-      setDumpLoading(false)
-    }
-  }
+  const handleGetDatabases = () => actionMut.mutate({ action: 'get_dbs' })
+  const handleGetTables = (db: string) => actionMut.mutate({ action: 'get_tables', db })
+  const handleGetColumns = (db: string, table: string) => actionMut.mutate({ action: 'get_columns', db, table })
+  const handleDump = (db: string, table: string) => actionMut.mutate({ action: 'dump_table_data', db, table, limit_start: 1, limit_stop: 20 })
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
     setSearchLoading(true)
     try {
-      const result = await searchFindingSqlmap(finding.ID, { kind: searchKind, query: searchQuery })
-      setSearchResult(JSON.stringify(result, null, 2))
+      const result = await searchFindingSqlmap(finding.ID, {
+        q: searchQuery.trim(),
+        kind: searchKind === 'data' ? 'data' : searchKind,
+      })
+      setSearchResult(Array.isArray(result?.results) ? result.results : [])
     } catch (e) {
-      setSearchResult(extractError(e))
+      setSearchResult([{ error: extractError(e) }])
     } finally {
       setSearchLoading(false)
     }
   }
 
-  const databases = scan?.databases || []
-  const tables = scan?.tables || {}
-  const columns = scan?.columns || {}
+  const databases = scan?.tree?.databases || []
+  const currentDb = scan?.content?.current_db || scan?.current_db
+  const techniques = scan?.content?.techniques || []
 
-  // Build dump table columns for a given table
-  const buildDumpColumns = (db: string, table: string) => {
-    const key = `${db}.${table}`
-    const data = dumpData[key]
-    if (!data) return { cols: [], rows: [] }
-    const colNames = Object.keys(data)
-    const rowCount = colNames.length > 0 ? (data[colNames[0]] || []).length : 0
-    const rows = Array.from({ length: rowCount }, (_, i) => {
-      const row: Record<string, string> = { _key: String(i) }
-      colNames.forEach(c => { row[c] = data[c]?.[i] || '' })
-      return row
-    })
-    const cols = colNames.map(c => ({
-      title: <span style={{ color: isSensitive(c) ? '#ff7875' : undefined }}>{c}</span>,
-      dataIndex: c,
-      key: c,
-      ellipsis: true,
-      render: (v: string) => v ? <Text style={{ fontSize: 12 }} copyable>{v}</Text> : <Text type="secondary">-</Text>,
-    }))
-    return { cols, rows }
-  }
+  const searchableSummary = useMemo(() => {
+    return databases.flatMap(db => (db.tables || []).map(table => ({
+      db: db.name,
+      table: table.name,
+      rowCount: table.rows?.length || 0,
+      columnCount: table.columns?.length || 0,
+    })))
+  }, [databases])
 
   if (!scan) {
     return (
@@ -117,91 +86,114 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
   }
 
   return (
-    <Spin spinning={loading || actionMut.isPending || dumpLoading}>
+    <Spin spinning={loading || actionMut.isPending}>
       <Space direction="vertical" style={{ width: '100%' }} size={12}>
-        {/* Info bar */}
         <Space wrap>
-          {scan.dbms && <Tag color="blue">DBMS: {scan.dbms}</Tag>}
+          {(scan.session?.dbms || scan.dbms) && <Tag color="blue">DBMS: {scan.session?.dbms || scan.dbms}</Tag>}
           {scan.current_user && <Tag color="purple">User: {scan.current_user}</Tag>}
-          {scan.current_db && <Tag color="cyan">DB: {scan.current_db}</Tag>}
+          {currentDb && <Tag color="cyan">Current DB: {currentDb}</Tag>}
           {scan.hostname && <Tag>Host: {scan.hostname}</Tag>}
-          {scan.shell_probe?.status === 'ok' && <Tag color="red">Shell ✓</Tag>}
+          {scan.session?.session_file && (
+            <Tooltip title={scan.session.session_file}>
+              <Tag color="geekblue">Session Ready</Tag>
+            </Tooltip>
+          )}
+          {scan.shell_probe?.ok && <Tag color="red">Shell ✓</Tag>}
           <Button size="small" icon={<ReloadOutlined />} onClick={onRefresh}>刷新</Button>
         </Space>
 
-        {/* Injections */}
-        {scan.injections && scan.injections.length > 0 && (
+        {techniques.length > 0 && (
           <Collapse size="small" items={[{
             key: 'inj',
-            label: `注入点 (${scan.injections.length})`,
-            children: scan.injections.map((inj, i) => (
+            label: `注入点 (${techniques.length})`,
+            children: techniques.map((inj, i) => (
               <div key={i} style={{ marginBottom: 8 }}>
-                <Tag>{inj.parameter}</Tag>
-                <Text type="secondary" style={{ fontSize: 12 }}> {inj.title}</Text>
+                <Space wrap size={4}>
+                  <Tag>{inj.parameter || 'parameter'}</Tag>
+                  <Tag color="default">{inj.place || 'place'}</Tag>
+                  {(inj.entries || []).map((entry, index) => (
+                    <Tooltip key={index} title={entry.payload || ''}>
+                      <Tag color="orange">{entry.type || entry.title || 'technique'}</Tag>
+                    </Tooltip>
+                  ))}
+                </Space>
               </div>
             )),
           }]} />
         )}
 
-        {/* Database tree */}
         {databases.length === 0 ? (
-          <Button size="small" icon={<DatabaseOutlined />} onClick={handleGetDatabases}>
-            获取数据库列表
-          </Button>
+          <Space wrap>
+            <Button size="small" icon={<DatabaseOutlined />} onClick={handleGetDatabases}>
+              获取数据库列表
+            </Button>
+            {currentDb && (
+              <Button size="small" onClick={() => handleGetTables(currentDb)}>
+                获取当前库表
+              </Button>
+            )}
+          </Space>
         ) : (
           <Space direction="vertical" style={{ width: '100%' }} size={4}>
             {databases.map(db => (
               <Collapse
-                key={db}
+                key={db.name}
                 size="small"
-                onChange={() => { setSelectedDb(db) }}
                 items={[{
-                  key: db,
+                  key: db.name,
                   label: (
                     <Space>
                       <DatabaseOutlined style={{ color: '#1677ff' }} />
-                      <Text strong>{db}</Text>
-                      {tables[db] && <Tag color="geekblue">{tables[db].length} 张表</Tag>}
+                      <Text strong>{db.name}</Text>
+                      <Tag color={db.name === currentDb ? 'cyan' : 'geekblue'}>
+                        {(db.tables || []).length} 张表
+                      </Tag>
                     </Space>
                   ),
-                  extra: !tables[db] && (
+                  extra: (!db.tables || db.tables.length === 0) && (
                     <Button
                       size="small"
-                      onClick={e => { e.stopPropagation(); handleGetTables(db) }}
+                      onClick={e => { e.stopPropagation(); handleGetTables(db.name) }}
                     >
                       获取表
                     </Button>
                   ),
-                  children: (tables[db] || []).map(tbl => {
-                    const tblCols = columns[db]?.[tbl]
-                    const dumpKey = `${db}.${tbl}`
-                    const hasDump = !!dumpData[dumpKey]
+                  children: (db.tables || []).map(tbl => {
+                    const tblCols = tbl.column_types || {}
+                    const dumpColumns = (tbl.columns || []).map(c => ({
+                      title: <span style={{ color: isSensitive(c) ? '#ff7875' : undefined }}>{c}</span>,
+                      dataIndex: c,
+                      key: c,
+                      ellipsis: true,
+                      render: (v: string) => v ? <Text style={{ fontSize: 12 }} copyable>{v}</Text> : <Text type="secondary">-</Text>,
+                    }))
+                    const dumpRows = (tbl.rows || []).map((row, rowIndex) => ({ _key: `${tbl.name}-${rowIndex}`, ...row }))
                     return (
                       <Collapse
-                        key={tbl}
+                        key={tbl.name}
                         size="small"
-                        onChange={() => { setSelectedDb(db); setSelectedTable(tbl) }}
                         items={[{
-                          key: tbl,
+                          key: tbl.name,
                           label: (
                             <Space>
                               <TableOutlined style={{ color: '#52c41a' }} />
-                              <Text>{tbl}</Text>
-                              {tblCols && <Tag>{Object.keys(tblCols).length} 列</Tag>}
+                              <Text>{tbl.name}</Text>
+                              <Tag>{(tbl.columns || []).length} 列</Tag>
+                              {typeof tbl.row_count === 'number' && <Tag color="purple">{tbl.row_count} 行</Tag>}
+                              {tbl.priority && <Tag color="gold">Priority</Tag>}
                             </Space>
                           ),
                           extra: (
                             <Space size={4}>
-                              {!tblCols && (
-                                <Button size="small" onClick={e => { e.stopPropagation(); handleGetColumns(db, tbl) }}>
+                              {Object.keys(tblCols).length === 0 && (
+                                <Button size="small" onClick={e => { e.stopPropagation(); handleGetColumns(db.name, tbl.name) }}>
                                   获取列
                                 </Button>
                               )}
                               <Button
                                 size="small"
                                 type="primary"
-                                onClick={e => { e.stopPropagation(); handleDump(db, tbl) }}
-                                loading={dumpLoading}
+                                onClick={e => { e.stopPropagation(); handleDump(db.name, tbl.name) }}
                               >
                                 Dump
                               </Button>
@@ -209,7 +201,7 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
                           ),
                           children: (
                             <Space direction="vertical" style={{ width: '100%' }}>
-                              {tblCols && (
+                              {Object.keys(tblCols).length > 0 && (
                                 <Space wrap size={4}>
                                   {Object.entries(tblCols).map(([col, type]) => (
                                     <Tooltip key={col} title={type}>
@@ -223,19 +215,16 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
                                   ))}
                                 </Space>
                               )}
-                              {hasDump && (() => {
-                                const { cols, rows } = buildDumpColumns(db, tbl)
-                                return (
-                                  <Table
-                                    dataSource={rows}
-                                    columns={cols}
-                                    rowKey="_key"
-                                    size="small"
-                                    scroll={{ x: true }}
-                                    pagination={{ pageSize: 10, size: 'small' }}
-                                  />
-                                )
-                              })()}
+                              {dumpRows.length > 0 && (
+                                <Table
+                                  dataSource={dumpRows}
+                                  columns={dumpColumns}
+                                  rowKey="_key"
+                                  size="small"
+                                  scroll={{ x: true }}
+                                  pagination={{ pageSize: 10, size: 'small' }}
+                                />
+                              )}
                             </Space>
                           ),
                         }]}
@@ -248,7 +237,6 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
           </Space>
         )}
 
-        {/* Search */}
         <Card size="small" title="搜索">
           <Space.Compact style={{ width: '100%' }}>
             <Select
@@ -257,7 +245,7 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
               options={[
                 { label: '搜索列名', value: 'column' },
                 { label: '搜索表名', value: 'table' },
-                { label: '搜索数据', value: 'value' },
+                { label: '搜索数据', value: 'data' },
               ]}
               style={{ width: 120 }}
             />
@@ -275,15 +263,30 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
               搜索
             </Button>
           </Space.Compact>
-          {searchResult && (
-            <Paragraph
-              style={{ marginTop: 8, fontSize: 12, maxHeight: 200, overflow: 'auto' }}
-              copyable
-            >
-              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{searchResult}</pre>
-            </Paragraph>
+          {searchResult && searchResult.length > 0 && (
+            <Table
+              style={{ marginTop: 8 }}
+              size="small"
+              rowKey={(_, index) => String(index)}
+              dataSource={searchResult}
+              pagination={{ pageSize: 5, size: 'small' }}
+              columns={[
+                { title: '类型', dataIndex: 'kind', width: 90 },
+                { title: '数据库', dataIndex: 'database', width: 140 },
+                { title: '表', dataIndex: 'table', width: 140 },
+                { title: '列', dataIndex: 'column', width: 140 },
+                { title: '值', dataIndex: 'value', ellipsis: true },
+                { title: '错误', dataIndex: 'error', ellipsis: true },
+              ]}
+            />
           )}
         </Card>
+
+        {searchableSummary.length > 0 && (
+          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            已加载 {databases.length} 个数据库, {searchableSummary.length} 张表。
+          </Paragraph>
+        )}
       </Space>
     </Spin>
   )

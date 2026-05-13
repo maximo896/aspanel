@@ -206,6 +206,7 @@ export default function SqlmapPage() {
             <Switch />
           </Form.Item>
           <Form.Item name="manager_url" label="Manager URL"><Input placeholder="http://ip:port" /></Form.Item>
+          <Form.Item name="manager_token" label="Manager Token"><Input.Password placeholder="留空则保持不变" /></Form.Item>
         </Form>
       </Modal>
     </Space>

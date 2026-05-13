@@ -6,6 +6,7 @@ import (
 	"awvs-sqlmap-panel/domaincache"
 	"awvs-sqlmap-panel/models"
 	"awvs-sqlmap-panel/scheduler"
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
@@ -225,10 +226,8 @@ func (api *API) GetServers(c *gin.Context) {
 	var servers []models.AWVSServer
 	api.DB.Order("id desc").Find(&servers)
 	for i := range servers {
-		// PanelRunning: tasks the panel believes are actively scanning on this node.
-		var panelCount int64
-		api.DB.Model(&models.Task{}).Where("awvs_server_id = ? AND status = ?", servers[i].ID, "scanning").Count(&panelCount)
-		servers[i].PanelRunning = int(panelCount)
+		// Use the same task-status window everywhere to avoid misleading counts like 14/7.
+		servers[i].PanelRunning = api.countAWVSBoundRunningTasks(servers[i].ID)
 		// CurrentRunning: live count from AWVS API (may include externally-started scans).
 		activeScans, err := getAWVSActiveScanCount(servers[i].URL, servers[i].APIKey)
 		if err != nil {
@@ -325,13 +324,15 @@ func (api *API) UpdateServer(c *gin.Context) {
 	}
 
 	var req struct {
-		Name                string `json:"name"`
-		URL                 string `json:"url"`
-		APIKey              string `json:"api_key"`
-		AWVSUsername        string `json:"awvs_username"`
-		AWVSPassword        string `json:"awvs_password"`
-		MaxConcurrency      int    `json:"max_concurrency"`
-		AutoRestartOnAPI500 *bool  `json:"auto_restart_on_api_500"`
+		Name                string  `json:"name"`
+		URL                 string  `json:"url"`
+		APIKey              string  `json:"api_key"`
+		ManagerURL          *string `json:"manager_url"`
+		ManagerToken        *string `json:"manager_token"`
+		AWVSUsername        string  `json:"awvs_username"`
+		AWVSPassword        string  `json:"awvs_password"`
+		MaxConcurrency      int     `json:"max_concurrency"`
+		AutoRestartOnAPI500 *bool   `json:"auto_restart_on_api_500"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -341,6 +342,12 @@ func (api *API) UpdateServer(c *gin.Context) {
 	server.Name = strings.TrimSpace(req.Name)
 	server.URL = normalizeBaseURL(req.URL)
 	server.APIKey = strings.TrimSpace(req.APIKey)
+	if req.ManagerURL != nil {
+		server.ManagerURL = normalizeBaseURL(*req.ManagerURL)
+	}
+	if req.ManagerToken != nil {
+		server.ManagerToken = strings.TrimSpace(*req.ManagerToken)
+	}
 	server.AWVSUsername = strings.TrimSpace(req.AWVSUsername)
 	server.AWVSPassword = strings.TrimSpace(req.AWVSPassword)
 	if req.MaxConcurrency > 0 {
@@ -492,7 +499,7 @@ func (api *API) GetSqlmapAgents(c *gin.Context) {
 func (api *API) getSqlmapAgentDefaultUseProxy() bool {
 	var settings models.CloudSettings
 	if err := api.DB.Order("id desc").First(&settings).Error; err != nil {
-		return true
+		return false
 	}
 	return settings.SqlmapAgentDefaultUseProxy
 }
@@ -626,12 +633,14 @@ func (api *API) UpdateSqlmapAgent(c *gin.Context) {
 	}
 
 	var req struct {
-		Name            string `json:"name"`
-		URL             string `json:"url"`
-		APIKey          string `json:"api_key"`
-		MaxConcurrency  int    `json:"max_concurrency"`
-		DefaultUseProxy *bool  `json:"default_use_proxy"`
-		ShareByDomain   *bool  `json:"share_by_domain"`
+		Name            string  `json:"name"`
+		URL             string  `json:"url"`
+		APIKey          string  `json:"api_key"`
+		ManagerURL      *string `json:"manager_url"`
+		ManagerToken    *string `json:"manager_token"`
+		MaxConcurrency  int     `json:"max_concurrency"`
+		DefaultUseProxy *bool   `json:"default_use_proxy"`
+		ShareByDomain   *bool   `json:"share_by_domain"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -641,6 +650,12 @@ func (api *API) UpdateSqlmapAgent(c *gin.Context) {
 	agent.Name = strings.TrimSpace(req.Name)
 	agent.URL = normalizeBaseURL(req.URL)
 	agent.APIKey = strings.TrimSpace(req.APIKey)
+	if req.ManagerURL != nil {
+		agent.ManagerURL = normalizeBaseURL(*req.ManagerURL)
+	}
+	if req.ManagerToken != nil {
+		agent.ManagerToken = strings.TrimSpace(*req.ManagerToken)
+	}
 	if req.MaxConcurrency > 0 {
 		agent.MaxConcurrency = req.MaxConcurrency
 	}
@@ -2543,7 +2558,7 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 			InstanceType:             "S5.SMALL1",
 			AWVSMaxConcurrency:       5,
 			SQLMapMaxConcurrency:     10,
-			CloudProxyMode:           "round_robin",
+			CloudProxyMode:           "none",
 			AWVSMaxPriceUSDPerHour:   0.02,
 			SQLMapMaxPriceUSDPerHour: 0.02,
 			AWVSMinCPU:               1,
@@ -2567,7 +2582,7 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 		settings.SQLMapMaxConcurrency = 10
 	}
 	if strings.TrimSpace(settings.CloudProxyMode) == "" {
-		settings.CloudProxyMode = "round_robin"
+		settings.CloudProxyMode = "none"
 	}
 	if settings.AWVSMaxPriceUSDPerHour <= 0 {
 		settings.AWVSMaxPriceUSDPerHour = 0.02
@@ -2861,7 +2876,7 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 		settings.SQLMapMaxConcurrency = 10
 	}
 	if strings.TrimSpace(settings.CloudProxyMode) == "" {
-		settings.CloudProxyMode = "round_robin"
+		settings.CloudProxyMode = "none"
 	}
 	if settings.AWVSMaxPriceUSDPerHour <= 0 {
 		settings.AWVSMaxPriceUSDPerHour = 0.02
@@ -2905,6 +2920,65 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 		out.SecretKey = "********"
 	}
 	c.JSON(200, out)
+}
+
+func (api *API) GetPanelLogs(c *gin.Context) {
+	offset, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("offset", "0")))
+	limit, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "200")))
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	contains := strings.TrimSpace(c.DefaultQuery("contains", ""))
+	logPath := filepath.Join("data", "panel.log")
+	file, err := os.Open(logPath)
+	if err != nil {
+		c.JSON(200, gin.H{
+			"entries":     []interface{}{},
+			"next_offset": 0,
+			"total":       0,
+			"truncated":   false,
+		})
+		return
+	}
+	defer file.Close()
+
+	type entry struct {
+		Offset  int    `json:"offset"`
+		Message string `json:"message"`
+	}
+	entries := make([]entry, 0, limit)
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+	index := 0
+	for scanner.Scan() {
+		line := scanner.Text()
+		if contains != "" && !strings.Contains(line, contains) {
+			continue
+		}
+		if index >= offset && len(entries) < limit {
+			entries = append(entries, entry{Offset: index, Message: line})
+		}
+		index++
+	}
+	nextOffset := 0
+	truncated := false
+	if index > offset+len(entries) {
+		nextOffset = offset + len(entries)
+		truncated = true
+	}
+	c.JSON(200, gin.H{
+		"entries":     entries,
+		"next_offset": nextOffset,
+		"total":       index,
+		"truncated":   truncated,
+	})
 }
 
 func (api *API) GetCloudInstances(c *gin.Context) {
@@ -3007,7 +3081,8 @@ func buildManagerBaseURLs(managerURL, nodeURL string) []string {
 
 func (api *API) callNodeManagerForNode(managerURL, managerToken, nodeURL, action string) error {
 	var lastErr error
-	for _, candidate := range buildManagerBaseURLs(managerURL, nodeURL) {
+	candidates := buildManagerBaseURLs(managerURL, nodeURL)
+	for _, candidate := range candidates {
 		if err := api.callNodeManager(candidate, managerToken, action); err == nil {
 			return nil
 		} else {
@@ -3015,7 +3090,7 @@ func (api *API) callNodeManagerForNode(managerURL, managerToken, nodeURL, action
 		}
 	}
 	if lastErr != nil {
-		return lastErr
+		return fmt.Errorf("%v (tried manager urls: %s)", lastErr, strings.Join(candidates, ", "))
 	}
 	return fmt.Errorf("manager api is not configured for this node")
 }

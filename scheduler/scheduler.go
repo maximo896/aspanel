@@ -264,7 +264,7 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 	for {
 		time.Sleep(time.Duration(agentHeartbeatIntervalSec) * time.Second)
 		var agents []models.SqlmapAgent
-		if err := db.Where("is_active = ? OR updating = ?", true, true).Find(&agents).Error; err != nil || len(agents) == 0 {
+		if err := db.Find(&agents).Error; err != nil || len(agents) == 0 {
 			continue
 		}
 		for _, agent := range agents {
@@ -276,6 +276,9 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 			resp, err := client.Do(req)
 			if err != nil || resp.StatusCode != 200 {
 				agent.IsActive = false
+				agent.CurrentRunning = 0
+				agent.CurrentQueued = 0
+				agent.LastCheckedAt = time.Now().Unix()
 				db.Save(&agent)
 				if isServerStale(agent.LastHeartbeatAt) {
 					requeueSqlmapAgentTasks(db, agent.ID, "sqlmap_heartbeat_timeout")
@@ -999,9 +1002,7 @@ func sendToSqlmapAgent(task models.Task, domain, vulnID, requestData string, for
 		"vuln_id":      vulnID,
 		"request_data": requestData,
 		"force_ssl":    forceSSL,
-		// Panel-level domain cache already shares DB trees. Reusing root scans here can mix
-		// request.txt across different findings on the same domain, so disable agent-side reuse.
-		"share_by_domain": false,
+		"share_by_domain": selectedAgent.ShareByDomain,
 	}
 	if effectiveUseProxy && strings.TrimSpace(selectedAgent.ProxyURL) != "" {
 		payload["proxy"] = strings.TrimSpace(selectedAgent.ProxyURL)
@@ -1945,7 +1946,7 @@ func mergeSqlmapOptions(base, overlay map[string]interface{}) map[string]interfa
 func pickCloudProxyForLaunch(db *gorm.DB, settings models.CloudSettings, launchIndex int) (models.ProxyAgent, string) {
 	mode := strings.TrimSpace(settings.CloudProxyMode)
 	if mode == "" {
-		mode = "round_robin"
+		mode = "none"
 	}
 	if mode == "none" {
 		return models.ProxyAgent{}, ""
@@ -2146,21 +2147,33 @@ func requeueAWVSServerTasks(db *gorm.DB, serverID uint, reason string) {
 
 func requeueSqlmapAgentTasks(db *gorm.DB, agentID uint, reason string) {
 	now := time.Now().Unix()
-	db.Model(&models.Task{}).Where("sqlmap_agent_id = ? AND sqlmap_status IN ?", agentID, []string{"running", "queued"}).Updates(map[string]interface{}{
+	var activeTaskIDs []uint
+	db.Model(&models.Task{}).
+		Where("sqlmap_agent_id = ? AND sqlmap_status IN ?", agentID, []string{"running", "queued"}).
+		Pluck("id", &activeTaskIDs)
+	db.Model(&models.Task{}).Where("id IN ?", activeTaskIDs).Updates(map[string]interface{}{
 		"sqlmap_agent_id":  0,
 		"sqlmap_task_id":   "",
 		"sqlmap_status":    "none",
 		"sqlmap_agent_url": "",
+		"has_data":         false,
+		"has_shell":        false,
+		"has_injection":    false,
 		"status":           "pending",
 		"last_requeued_at": now,
 		"requeue_reason":   reason,
 	})
-	db.Model(&models.TaskFinding{}).Where("sqlmap_agent_id = ?", agentID).Updates(map[string]interface{}{
+	if len(activeTaskIDs) == 0 {
+		return
+	}
+	db.Model(&models.TaskFinding{}).Where("task_id IN ? AND sqlmap_agent_id = ? AND sqlmap_status IN ?", activeTaskIDs, agentID, []string{"running", "queued"}).Updates(map[string]interface{}{
 		"sent_to_sqlmap":    false,
 		"sqlmap_agent_id":   0,
 		"sqlmap_task_id":    "",
 		"sqlmap_status":     "none",
 		"sqlmap_agent_url":  "",
+		"has_data":          false,
+		"has_shell":         false,
 		"has_injection":     false,
 		"sqlmap_techniques": "",
 	})

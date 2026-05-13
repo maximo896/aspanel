@@ -5,6 +5,7 @@ export interface AWVSServer {
   url: string
   api_key: string
   manager_url: string
+  manager_token?: string
   awvs_username: string
   awvs_password: string
   max_concurrency: number
@@ -29,6 +30,7 @@ export interface SqlmapAgent {
   url: string
   api_key: string
   manager_url: string
+  manager_token?: string
   agent_version: string
   max_concurrency: number
   default_use_proxy: boolean
@@ -54,6 +56,7 @@ export interface PathAgent {
   url: string
   api_key: string
   manager_url: string
+  manager_token?: string
   agent_version: string
   max_concurrency: number
   is_active: boolean
@@ -153,6 +156,8 @@ export interface CloudSettings {
   interact_cmd: string
   sqlmap_default_options: string
   sqlmap_agent_default_use_proxy: boolean
+  awvs_launch_started_at: number
+  sqlmap_launch_started_at: number
   awvs_autoscale_status?: string
   sqlmap_autoscale_status?: string
   awvs_autoscale_remaining_sec?: number

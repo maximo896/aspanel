@@ -155,6 +155,7 @@ func main() {
 	r.POST("/api/cloud/scale/stop", h.StopCloudScale)
 	r.POST("/api/cloud/instances/reboot", h.RebootCloudInstances)
 	r.POST("/api/cloud/instances/cleanup", h.CleanupCloudInstances)
+	r.GET("/api/panel/logs", h.GetPanelLogs)
 
 	r.GET("/api/sqlmap/agents", h.GetSqlmapAgents)
 	r.GET("/api/sqlmap/agents/latest-version", h.GetSqlmapAgentLatestVersion)

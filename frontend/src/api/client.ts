@@ -59,14 +59,18 @@ export const cleanupNoVulnTasks = () => api.post('/api/tasks/cleanup-no-vuln').t
 export const getTaskFindings = (taskId: number) => api.get<{ task: Task; findings: TaskFinding[] }>(`/api/tasks/${taskId}/findings`).then(r => r.data)
 export const getFindingSqlmapDetail = (findingId: number) => api.get<{ scan: SqlmapScan; finding: TaskFinding; source?: string }>(`/api/findings/${findingId}/sqlmap`).then(r => r.data)
 export const runFindingSqlmapAction = (findingId: number, payload: Record<string, unknown>) => api.post(`/api/findings/${findingId}/sqlmap/action`, payload).then(r => r.data)
-export const searchFindingSqlmap = (findingId: number, params: Record<string, string>) => api.get(`/api/findings/${findingId}/sqlmap/search`, { params }).then(r => r.data)
+export const searchFindingSqlmap = (findingId: number, params: { q: string; kind?: string }) => api.get(`/api/findings/${findingId}/sqlmap/search`, { params }).then(r => r.data)
 export const retryFindingSqlmap = (findingId: number, agentId?: number) => api.post(`/api/findings/${findingId}/sqlmap/retry-push`, { sqlmap_agent_id: agentId || 0 }).then(r => r.data)
 export const updateFinding = (findingId: number, data: Partial<TaskFinding>) => api.put(`/api/findings/${findingId}`, data).then(r => r.data)
-export const updateFindingRequest = (findingId: number, requestData: string) => api.put(`/api/findings/${findingId}/sqlmap/request`, { request_data: requestData }).then(r => r.data)
+export const updateFindingRequest = (findingId: number, requestContent: string) => api.put(`/api/findings/${findingId}/sqlmap/request`, { request_content: requestContent }).then(r => r.data)
 
 // Path scans
 export const getTaskPathScans = (taskId: number) => api.get(`/api/tasks/${taskId}/path-scan`).then(r => r.data)
-export const retryTaskPathScan = (taskId: number, agentId?: number, mode?: string) => api.post(`/api/tasks/${taskId}/path-scan/retry`, { path_agent_id: agentId || 0, katana_seed_mode: mode || 'auto' }).then(r => r.data)
+export const retryTaskPathScan = (taskId: number, agentId?: number, mode?: string, customPaths?: string[]) => api.post(`/api/tasks/${taskId}/path-scan/retry`, {
+  path_agent_id: agentId || 0,
+  katana_seed_mode: mode || 'auto',
+  custom_paths: customPaths || [],
+}).then(r => r.data)
 export const getPathScanLogs = (taskId: number, scanId: number, offset = 0) => api.get(`/api/tasks/${taskId}/path-scan/${scanId}/logs`, { params: { offset } }).then(r => r.data)
 
 // Cloud
@@ -76,6 +80,7 @@ export const getCloudInstances = () => api.get<CloudInstance[]>('/api/cloud/inst
 export const startCloudScale = (workload: string) => api.post<{ message: string; workload: string; results: Record<string, string> }>(`/api/cloud/scale/start?workload=${workload}`).then(r => r.data)
 export const stopCloudScale = (workload: string) => api.post(`/api/cloud/scale/stop?workload=${workload}`).then(r => r.data)
 export const cleanupCloudInstances = (workload: string) => api.post<{ message: string; terminated_count: number }>(`/api/cloud/instances/cleanup?workload=${workload}`).then(r => r.data)
+export const getPanelLogs = (offset: number) => api.get<{ entries: { offset: number; message: string }[]; next_offset: number; total: number; truncated: boolean }>('/api/panel/logs', { params: { offset } }).then(r => r.data)
 
 // Proxy Agents
 export const getProxyAgents = () => api.get<ProxyAgent[]>('/api/proxy/agents').then(r => r.data)
@@ -83,16 +88,51 @@ export const deleteProxyAgent = (id: number) => api.delete(`/api/proxy/agents/${
 
 // SQLmap scan result type
 export interface SqlmapScan {
+  task_id?: string
+  current_sqlmap_task_id?: string
+  status?: string
+  sqlmap_status?: string
+  phase?: string
+  latest_action?: string
   dbms?: string
   hostname?: string
   current_user?: string
   current_db?: string
-  databases?: string[]
-  tables?: Record<string, string[]>
-  columns?: Record<string, Record<string, Record<string, string>>>
-  data?: Record<string, unknown>
-  shell_probe?: { status: string; message?: string }
-  injections?: Array<{ parameter: string; title: string; data: Record<string, unknown> }>
+  request_file?: string
+  request_content?: string
+  scan_root?: string
+  last_error?: string
+  runtime_proxy?: string
+  runtime_proxy_file?: string
+  content?: {
+    current_db?: string
+    dbs?: string[]
+    tables?: Record<string, string[]>
+    columns?: Record<string, Record<string, Record<string, string>>>
+    techniques?: Array<{ parameter?: string; place?: string; entries?: Array<{ title?: string; payload?: string; type?: string }> }>
+  }
+  tree?: {
+    databases?: Array<{
+      name: string
+      priority_table?: string
+      tables?: Array<{
+        name: string
+        columns?: string[]
+        column_types?: Record<string, string>
+        rows?: Array<Record<string, string>>
+        row_count?: number
+        priority?: boolean
+      }>
+    }>
+  }
+  session?: {
+    dbms?: string
+    os?: string
+    session_file?: string
+    xp_cmdshell_available?: boolean
+  }
+  shell_probe?: { ok?: boolean; status?: string; message?: string }
+  logs?: Array<{ time?: string; level?: string; message?: string }>
 }
 
 export { extractError }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Card, Row, Col, Form, InputNumber, Input, Button, Space, Tag, Table, message,
@@ -10,7 +10,7 @@ import type { CloudSettings, CloudInstance } from '../types'
 import {
   getCloudSettings, updateCloudSettings, getCloudInstances,
   startCloudScale, stopCloudScale, cleanupCloudInstances,
-  getProxyAgents, extractError,
+  getProxyAgents, extractError, getPanelLogs,
 } from '../api/client'
 
 const { Text } = Typography
@@ -18,6 +18,65 @@ const { Text } = Typography
 function formatTime(ts: number) {
   if (!ts) return '-'
   return new Date(ts * 1000).toLocaleString()
+}
+
+function CloudLogsPanel() {
+  const [logs, setLogs] = useState<{ offset: number; message: string }[]>([])
+  const [offset, setOffset] = useState(0)
+  const logsEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    let unmounted = false
+    const fetchLogs = async () => {
+      try {
+        const data = await getPanelLogs(offset)
+        if (unmounted) return
+        if (data.entries && data.entries.length > 0) {
+          setLogs(prev => {
+            const next = [...prev, ...data.entries]
+            return next.slice(-1000)
+          })
+          setOffset(data.next_offset)
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    const timer = setInterval(fetchLogs, 3000)
+    fetchLogs()
+    return () => {
+      unmounted = true
+      clearInterval(timer)
+    }
+  }, [offset])
+
+  useEffect(() => {
+    if (logsEndRef.current) {
+      logsEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [logs])
+
+  return (
+    <Card title="系统与竞价日志" size="small" style={{ marginTop: 16 }}>
+      <div style={{
+        height: 400,
+        overflowY: 'auto',
+        backgroundColor: '#141414',
+        padding: 12,
+        borderRadius: 4,
+        fontFamily: 'monospace',
+        fontSize: 12,
+        color: '#d4d4d4',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-all'
+      }}>
+        {logs.map((log, i) => (
+          <div key={`${log.offset}-${i}`}>{log.message}</div>
+        ))}
+        <div ref={logsEndRef} />
+      </div>
+    </Card>
+  )
 }
 
 export default function CloudPage() {
@@ -30,20 +89,28 @@ export default function CloudPage() {
   const { data: settings, isLoading: settingsLoading } = useQuery({
     queryKey: ['cloud-settings'],
     queryFn: getCloudSettings,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: 60_000,
   })
 
   const { data: instances = [] } = useQuery({
     queryKey: ['cloud-instances'],
     queryFn: getCloudInstances,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const { data: proxyAgents = [] } = useQuery({
     queryKey: ['proxy-agents'],
     queryFn: getProxyAgents,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   useEffect(() => {
-    if (settings && !dirty) {
+    const formsTouched = awvsForm.isFieldsTouched() || sqlmapForm.isFieldsTouched()
+    if (settings && !dirty && !formsTouched) {
       awvsForm.setFieldsValue(settings)
       sqlmapForm.setFieldsValue(settings)
     }
@@ -172,9 +239,14 @@ export default function CloudPage() {
             }
           >
             {settings && (
-              <Tag color={settings.awvs_autoscale_status === 'running' ? 'success' : 'default'} style={{ marginBottom: 12 }}>
-                {settings.awvs_autoscale_status || 'stopped'}
-              </Tag>
+              <Space style={{ marginBottom: 12 }} wrap>
+                <Tag color={settings.awvs_autoscale_status === 'running' ? 'success' : 'default'}>
+                  状态: {settings.awvs_autoscale_status || 'stopped'}
+                </Tag>
+                {settings.awvs_launch_started_at > 0 && (
+                  <Tag color="processing">启动时间: {formatTime(settings.awvs_launch_started_at)}</Tag>
+                )}
+              </Space>
             )}
             <Form
               form={awvsForm}
@@ -225,9 +297,14 @@ export default function CloudPage() {
             }
           >
             {settings && (
-              <Tag color={settings.sqlmap_autoscale_status === 'running' ? 'success' : 'default'} style={{ marginBottom: 12 }}>
-                {settings.sqlmap_autoscale_status || 'stopped'}
-              </Tag>
+              <Space style={{ marginBottom: 12 }} wrap>
+                <Tag color={settings.sqlmap_autoscale_status === 'running' ? 'success' : 'default'}>
+                  状态: {settings.sqlmap_autoscale_status || 'stopped'}
+                </Tag>
+                {settings.sqlmap_launch_started_at > 0 && (
+                  <Tag color="processing">启动时间: {formatTime(settings.sqlmap_launch_started_at)}</Tag>
+                )}
+              </Space>
             )}
             <Form
               form={sqlmapForm}
@@ -294,6 +371,8 @@ export default function CloudPage() {
         pagination={{ pageSize: 10 }}
         scroll={{ x: 800 }}
       />
+
+      <CloudLogsPanel />
     </Space>
   )
 }

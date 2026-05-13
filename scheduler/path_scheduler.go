@@ -48,6 +48,32 @@ func normalizeKatanaSeedMode(mode string) string {
 	}
 }
 
+func normalizeCustomPaths(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	normalized := make([]string, 0, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
+		value = strings.TrimPrefix(value, "/")
+		value = strings.TrimSpace(strings.SplitN(value, "?", 2)[0])
+		value = strings.TrimSpace(strings.SplitN(value, "#", 2)[0])
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
 func refreshPathAgentsStatus(db *gorm.DB) {
 	for {
 		time.Sleep(time.Duration(agentHeartbeatIntervalSec) * time.Second)
@@ -132,7 +158,7 @@ func syncTaskPathScanStatus(db *gorm.DB) {
 	}
 }
 
-func RetryTaskPathScanToAgent(db *gorm.DB, taskID uint, preferredPathAgentID uint, katanaSeedMode string) error {
+func RetryTaskPathScanToAgent(db *gorm.DB, taskID uint, preferredPathAgentID uint, katanaSeedMode string, customPaths []string) error {
 	var task models.Task
 	if err := db.First(&task, taskID).Error; err != nil {
 		return err
@@ -150,14 +176,30 @@ func RetryTaskPathScanToAgent(db *gorm.DB, taskID uint, preferredPathAgentID uin
 	if targetURL == "" {
 		return fmt.Errorf("task has empty target url")
 	}
-	return dispatchTaskPathScan(db, task, targetURL, preferredPathAgentID, normalizeKatanaSeedMode(katanaSeedMode), true)
+	return dispatchTaskPathScan(
+		db,
+		task,
+		targetURL,
+		preferredPathAgentID,
+		normalizeKatanaSeedMode(katanaSeedMode),
+		normalizeCustomPaths(customPaths),
+		true,
+	)
 }
 
 func ensureTaskPathScanForURL(db *gorm.DB, task models.Task, rawURL string) {
-	_ = dispatchTaskPathScan(db, task, rawURL, 0, "auto", false)
+	_ = dispatchTaskPathScan(db, task, rawURL, 0, "auto", nil, false)
 }
 
-func dispatchTaskPathScan(db *gorm.DB, task models.Task, rawURL string, preferredPathAgentID uint, katanaSeedMode string, forceRetry bool) error {
+func dispatchTaskPathScan(
+	db *gorm.DB,
+	task models.Task,
+	rawURL string,
+	preferredPathAgentID uint,
+	katanaSeedMode string,
+	customPaths []string,
+	forceRetry bool,
+) error {
 	targetURL, domain, forceSSL, err := normalizePathScanTarget(rawURL)
 	if err != nil {
 		return err
@@ -168,7 +210,14 @@ func dispatchTaskPathScan(db *gorm.DB, task models.Task, rawURL string, preferre
 			return nil
 		}
 	}
-	pathTaskID, agentID, agentURL, status, agentVersion, sent := sendToPathAgent(task, targetURL, preferredPathAgentID, normalizeKatanaSeedMode(katanaSeedMode), db)
+	pathTaskID, agentID, agentURL, status, agentVersion, sent := sendToPathAgent(
+		task,
+		targetURL,
+		preferredPathAgentID,
+		normalizeKatanaSeedMode(katanaSeedMode),
+		normalizeCustomPaths(customPaths),
+		db,
+	)
 	if !sent {
 		return fmt.Errorf("no available path agent")
 	}
@@ -198,7 +247,14 @@ func dispatchTaskPathScan(db *gorm.DB, task models.Task, rawURL string, preferre
 	return nil
 }
 
-func sendToPathAgent(task models.Task, targetURL string, preferredPathAgentID uint, katanaSeedMode string, db *gorm.DB) (string, uint, string, string, string, bool) {
+func sendToPathAgent(
+	task models.Task,
+	targetURL string,
+	preferredPathAgentID uint,
+	katanaSeedMode string,
+	customPaths []string,
+	db *gorm.DB,
+) (string, uint, string, string, string, bool) {
 	var agents []models.PathAgent
 	if err := db.Where("is_active = ?", true).Find(&agents).Error; err != nil || len(agents) == 0 {
 		return "", 0, "", "", "", false
@@ -242,6 +298,7 @@ func sendToPathAgent(task models.Task, targetURL string, preferredPathAgentID ui
 		"task_id":          task.ID,
 		"target_url":       targetURL,
 		"katana_seed_mode": normalizeKatanaSeedMode(katanaSeedMode),
+		"custom_paths":     normalizeCustomPaths(customPaths),
 	}
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/scan", selected.URL), bytes.NewBuffer(body))
@@ -288,7 +345,18 @@ func normalizePathScanTarget(rawURL string) (string, string, bool, error) {
 		scheme = "http"
 	}
 	forceSSL := scheme == "https"
-	return fmt.Sprintf("%s://%s/", scheme, host), host, forceSSL, nil
+	path := strings.TrimSpace(u.EscapedPath())
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	query := ""
+	if strings.TrimSpace(u.RawQuery) != "" {
+		query = "?" + strings.TrimSpace(u.RawQuery)
+	}
+	return fmt.Sprintf("%s://%s%s%s", scheme, u.Host, path, query), host, forceSSL, nil
 }
 
 func pathAgentTransport() *http.Transport {

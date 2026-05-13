@@ -136,7 +136,7 @@ type TaskFinding struct {
 	HasData          bool   `json:"has_data"`
 	HasShell         bool   `json:"has_shell"`
 	HasInjection     bool   `json:"has_injection"`
-	UseProxy         bool   `json:"use_proxy" gorm:"default:true"`
+	UseProxy         bool   `json:"use_proxy" gorm:"default:false"`
 	SqlmapOptions    string `json:"sqlmap_options" gorm:"type:text"`
 }
 
@@ -174,7 +174,7 @@ type CloudSettings struct {
 	InstanceType               string  `json:"instance_type"`
 	AWVSMaxConcurrency         int     `json:"awvs_max_concurrency" gorm:"default:5"`
 	SQLMapMaxConcurrency       int     `json:"sqlmap_max_concurrency" gorm:"default:10"`
-	CloudProxyMode             string  `json:"cloud_proxy_mode" gorm:"default:'round_robin'"`
+	CloudProxyMode             string  `json:"cloud_proxy_mode" gorm:"default:'none'"`
 	CloudProxyAgentID          uint    `json:"cloud_proxy_agent_id"`
 	SqlmapAgentDefaultUseProxy bool    `json:"sqlmap_agent_default_use_proxy" gorm:"default:false"`
 	ImageID                    string  `json:"image_id"`

@@ -117,10 +117,12 @@ func (api *API) UpdatePathAgent(c *gin.Context) {
 	}
 
 	var req struct {
-		Name           string `json:"name"`
-		URL            string `json:"url"`
-		APIKey         string `json:"api_key"`
-		MaxConcurrency int    `json:"max_concurrency"`
+		Name           string  `json:"name"`
+		URL            string  `json:"url"`
+		APIKey         string  `json:"api_key"`
+		ManagerURL     *string `json:"manager_url"`
+		ManagerToken   *string `json:"manager_token"`
+		MaxConcurrency int     `json:"max_concurrency"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -130,6 +132,12 @@ func (api *API) UpdatePathAgent(c *gin.Context) {
 	agent.Name = strings.TrimSpace(req.Name)
 	agent.URL = normalizeBaseURL(req.URL)
 	agent.APIKey = strings.TrimSpace(req.APIKey)
+	if req.ManagerURL != nil {
+		agent.ManagerURL = normalizeBaseURL(*req.ManagerURL)
+	}
+	if req.ManagerToken != nil {
+		agent.ManagerToken = strings.TrimSpace(*req.ManagerToken)
+	}
 	if req.MaxConcurrency > 0 {
 		agent.MaxConcurrency = req.MaxConcurrency
 	}
@@ -384,8 +392,9 @@ func (api *API) GetTaskPathScans(c *gin.Context) {
 
 func (api *API) RetryTaskPathScan(c *gin.Context) {
 	var req struct {
-		PathAgentID    uint   `json:"path_agent_id"`
-		KatanaSeedMode string `json:"katana_seed_mode"`
+		PathAgentID    uint     `json:"path_agent_id"`
+		KatanaSeedMode string   `json:"katana_seed_mode"`
+		CustomPaths    []string `json:"custom_paths"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil && err.Error() != "EOF" {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -397,7 +406,7 @@ func (api *API) RetryTaskPathScan(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid task id"})
 		return
 	}
-	if err := scheduler.RetryTaskPathScanToAgent(api.DB, uint(idValue), req.PathAgentID, req.KatanaSeedMode); err != nil {
+	if err := scheduler.RetryTaskPathScanToAgent(api.DB, uint(idValue), req.PathAgentID, req.KatanaSeedMode, req.CustomPaths); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}

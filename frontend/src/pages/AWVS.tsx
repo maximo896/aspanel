@@ -21,7 +21,7 @@ function formatTime(ts: number) {
 
 export default function AWVSPage() {
   const qc = useQueryClient()
-  const [showInactive, setShowInactive] = useState(false)
+  const [showInactive, setShowInactive] = useState(true)
   const [selected, setSelected] = useState<number[]>([])
   const [editingServer, setEditingServer] = useState<AWVSServer | null>(null)
   const [form] = Form.useForm()
@@ -193,6 +193,7 @@ export default function AWVSPage() {
           <Form.Item name="awvs_password" label="AWVS密码"><Input.Password /></Form.Item>
           <Form.Item name="max_concurrency" label="最大并发数"><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="manager_url" label="Manager URL"><Input placeholder="http://ip:port" /></Form.Item>
+          <Form.Item name="manager_token" label="Manager Token"><Input.Password placeholder="留空则保持不变" /></Form.Item>
         </Form>
       </Modal>
     </Space>

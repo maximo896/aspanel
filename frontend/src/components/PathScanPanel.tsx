@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Space, Tag, Typography, Switch, Input, Collapse, Tooltip, Empty, Button } from 'antd'
 import { FormOutlined, KeyOutlined, LinkOutlined } from '@ant-design/icons'
 
@@ -37,11 +37,26 @@ interface Props {
 }
 
 function matchesKeyword(item: PathItem, terms: string[]): boolean {
-  const blob = [item.url, item.title, String(item.status_code || ''),
+  const blob = [
+    item.url,
+    item.title,
+    String(item.status_code || ''),
     ...(item.sources || []),
-    ...(item.forms || []).flatMap(f => [f.action || '', ...(f.fields || []).map(fd => fd.name)])
+    ...(item.forms || []).flatMap(f => [
+      f.action || '',
+      f.method || '',
+      ...(f.fields || []).flatMap(fd => [fd.name || '', fd.type || '']),
+    ]),
   ].join(' ').toLowerCase()
   return terms.some(t => blob.includes(t.toLowerCase()))
+}
+
+function getStatusColor(status?: string) {
+  const normalized = (status || '').toLowerCase()
+  if (normalized === 'done' || normalized === 'completed' || normalized === 'success') return 'success'
+  if (normalized === 'running' || normalized === 'queued') return 'processing'
+  if (normalized === 'failed' || normalized === 'error') return 'error'
+  return 'default'
 }
 
 function StatusBadge({ code }: { code?: number }) {
@@ -120,13 +135,11 @@ export default function PathScanPanel({ scans }: Props) {
 
       const kept = paths.filter(item => {
         const hasForms = (item.forms || []).length > 0
-        const isDirsearch = (item.sources || []).includes('dirsearch') && item.status_code && item.status_code !== 404
-        if (onlyForms && !hasForms && !isDirsearch) return false
-        if (keywordFilter && !matchesKeyword(item, SENSITIVE_KEYWORDS)) {
-          if (customTerms.length > 0 && matchesKeyword(item, customTerms)) return true
-          return false
-        }
-        if (!keywordFilter && customTerms.length > 0 && !matchesKeyword(item, customTerms)) return false
+        const matchesSensitive = matchesKeyword(item, SENSITIVE_KEYWORDS)
+        const matchesCustom = customTerms.length === 0 || matchesKeyword(item, customTerms)
+        if (onlyForms && !hasForms) return false
+        if (keywordFilter && !matchesSensitive) return false
+        if (!matchesCustom) return false
         return true
       })
       return { scan, kept, total: paths.length }
@@ -175,10 +188,7 @@ export default function PathScanPanel({ scans }: Props) {
                 <LinkOutlined />
                 <Text style={{ fontSize: 12 }}>扫描 #{scan.ID}</Text>
                 <Tag>{kept.length} / {total}</Tag>
-                <Tag color={
-                  scan.result?.status === 'done' ? 'success' :
-                  scan.result?.status === 'running' ? 'processing' : 'default'
-                }>
+                <Tag color={getStatusColor(scan.result?.status)}>
                   {scan.result?.status || 'unknown'}
                 </Tag>
               </Space>
