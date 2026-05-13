@@ -226,15 +226,9 @@ func (api *API) GetServers(c *gin.Context) {
 	var servers []models.AWVSServer
 	api.DB.Order("id desc").Find(&servers)
 	for i := range servers {
-		// Use the same task-status window everywhere to avoid misleading counts like 14/7.
+		// Keep list responses fast by reading cached sqlite state only.
+		// Manual refresh is handled by RefreshAWVSServerStatus.
 		servers[i].PanelRunning = api.countAWVSBoundRunningTasks(servers[i].ID)
-		// CurrentRunning: live count from AWVS API (may include externally-started scans).
-		activeScans, err := getAWVSActiveScanCount(servers[i].URL, servers[i].APIKey)
-		if err != nil {
-			servers[i].CurrentRunning = 0
-		} else {
-			servers[i].CurrentRunning = activeScans
-		}
 	}
 	c.JSON(200, servers)
 }

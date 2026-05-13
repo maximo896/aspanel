@@ -24,6 +24,7 @@ export default function AWVSPage() {
   const [showInactive, setShowInactive] = useState(true)
   const [selected, setSelected] = useState<number[]>([])
   const [editingServer, setEditingServer] = useState<AWVSServer | null>(null)
+  const [refreshingId, setRefreshingId] = useState<number | null>(null)
   const [form] = Form.useForm()
 
   const { data: servers = [], isLoading, refetch } = useQuery({
@@ -46,9 +47,16 @@ export default function AWVSPage() {
   })
 
   const refreshMut = useMutation({
-    mutationFn: refreshServer,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['servers'] }),
+    mutationFn: async (id: number) => {
+      setRefreshingId(id)
+      return refreshServer(id)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['servers'] })
+      message.success('节点实时刷新成功')
+    },
     onError: (e) => message.error(extractError(e)),
+    onSettled: () => setRefreshingId(null),
   })
 
   const cleanupMut = useMutation({
@@ -106,8 +114,8 @@ export default function AWVSPage() {
           <Text type="warning">{r.panel_running}</Text>
           <Text type="secondary">/ {r.max_concurrency}</Text>
           {r.current_running !== r.panel_running && (
-            <Tooltip title={`AWVS API报告${r.current_running}个活跃扫描`}>
-              <Tag color="orange" style={{ fontSize: 11 }}>AWVS:{r.current_running}</Tag>
+            <Tooltip title={`最近同步的 AWVS 活跃扫描数: ${r.current_running}`}>
+              <Tag color="orange" style={{ fontSize: 11 }}>Synced:{r.current_running}</Tag>
             </Tooltip>
           )}
         </Space>
@@ -132,7 +140,14 @@ export default function AWVSPage() {
       render: (_, r) => (
         <Space size={4}>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>编辑</Button>
-          <Button size="small" icon={<SyncOutlined />} onClick={() => refreshMut.mutate(r.ID)} loading={refreshMut.isPending}>刷新</Button>
+          <Button
+            size="small"
+            icon={<SyncOutlined />}
+            onClick={() => refreshMut.mutate(r.ID)}
+            loading={refreshingId === r.ID && refreshMut.isPending}
+          >
+            实时刷新
+          </Button>
           <Popconfirm title="确认删除？" onConfirm={() => deleteMut.mutate(r.ID)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
@@ -161,7 +176,7 @@ export default function AWVSPage() {
             <Popconfirm title="清理所有离线节点？" onConfirm={() => cleanupMut.mutate()}>
               <Button size="small">清理离线节点</Button>
             </Popconfirm>
-            <Button size="small" icon={<ReloadOutlined />} onClick={() => refetch()} loading={isLoading}>刷新</Button>
+            <Button size="small" icon={<ReloadOutlined />} onClick={() => refetch()} loading={isLoading}>刷新列表</Button>
           </Space>
         }
       >
