@@ -20,7 +20,7 @@ import (
 	"gorm.io/gorm"
 )
 
-//go:embed frontend/*
+//go:embed frontend/index.html frontend/dist
 var frontendFiles embed.FS
 
 func main() {
@@ -77,12 +77,52 @@ func main() {
 	auth.RegisterRoutes(r, db)
 	r.Use(auth.SessionAuthMiddleware(db))
 
-	r.GET("/", func(c *gin.Context) {
+	// Serve the React SPA from dist/ if built; fall back to legacy Vue 2 index.html.
+	serveIndex := func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
+		if data, err := frontendFiles.ReadFile("frontend/dist/index-vite.html"); err == nil {
+			c.Data(200, "text/html; charset=utf-8", data)
+			return
+		}
 		data, _ := frontendFiles.ReadFile("frontend/index.html")
 		c.Data(200, "text/html; charset=utf-8", data)
+	}
+
+	r.GET("/", serveIndex)
+	// React Router SPA fallback — all non-API routes serve index.html.
+	r.GET("/tasks", serveIndex)
+	r.GET("/awvs", serveIndex)
+	r.GET("/sqlmap", serveIndex)
+	r.GET("/path-agent", serveIndex)
+	r.GET("/cloud", serveIndex)
+	r.GET("/proxy", serveIndex)
+
+	// Static assets from Vite build output.
+	r.GET("/assets/*filepath", func(c *gin.Context) {
+		fp := c.Param("filepath")
+		data, err := frontendFiles.ReadFile("frontend/dist/assets" + fp)
+		if err != nil {
+			c.Status(404)
+			return
+		}
+		ext := fp[strings.LastIndex(fp, "."):]
+		mime := "application/octet-stream"
+		switch ext {
+		case ".js":
+			mime = "application/javascript"
+		case ".css":
+			mime = "text/css"
+		case ".svg":
+			mime = "image/svg+xml"
+		case ".png":
+			mime = "image/png"
+		case ".woff2":
+			mime = "font/woff2"
+		}
+		c.Data(200, mime, data)
 	})
 
+	// Legacy static assets route.
 	r.GET("/static/*filepath", func(c *gin.Context) {
 		fp := c.Param("filepath")
 		data, err := frontendFiles.ReadFile("frontend" + fp)

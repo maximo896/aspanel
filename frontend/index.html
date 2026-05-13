@@ -247,9 +247,10 @@
             
             <div class="col-lg-8 mb-4">
                 <div class="card h-100">
-                    <div class="card-header d-flex justify-content-between align-items-center">
+                    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                         <span>{{ t('task_list') }}</span>
-                        <div class="d-flex align-items-center gap-3">
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <input class="form-control form-control-sm" style="width:200px" type="text" v-model="taskSearchQuery" :placeholder="t('search_tasks') || '搜索域名/URL'" @keydown.esc="taskSearchQuery=''">
                             <div class="filter-group">
                                 <button class="filter-btn" :class="{active: taskFilter === 'all'}" @click="taskFilter = 'all'">{{ t('filter_all') }}</button>
                                 <button class="filter-btn" :class="{active: taskFilter === 'has_data'}" @click="taskFilter = 'has_data'">{{ t('filter_has_data') }}</button>
@@ -464,13 +465,16 @@
                         <h6 class="mb-0">{{ t('path_scan_results') }}</h6>
                         <div class="d-flex align-items-center gap-3 flex-wrap">
                             <label class="form-check-label small text-muted">
-                                <input class="form-check-input me-2" type="checkbox" v-model="pathOnlyWithForms">
+                                <input class="form-check-input me-2" type="checkbox" v-model="pathOnlyWithForms" :key="'pof-' + pathOnlyWithForms">
                                 {{ t('path_only_with_forms') }}
                             </label>
                             <label class="form-check-label small text-muted">
-                                <input class="form-check-input me-2" type="checkbox" v-model="pathKeywordFilterEnabled">
+                                <input class="form-check-input me-2" type="checkbox" v-model="pathKeywordFilterEnabled" :key="'pkf-' + pathKeywordFilterEnabled">
                                 {{ t('path_keyword_filter') }}
                             </label>
+                            <span v-if="pathHiddenCount > 0" class="badge bg-secondary small" :title="t('paths_hidden_by_filter') || '被筛选隐藏的路径'">
+                                {{ pathHiddenCount }} {{ t('hidden') || '已隐藏' }}
+                            </span>
                             <input class="form-control form-control-sm" style="min-width: 240px; max-width: 320px;" v-model.trim="pathCustomFilterQuery" :placeholder="t('path_custom_filter_placeholder')">
                             <span class="small text-muted">{{ t('path_katana_seed_mode') }}</span>
                             <select class="form-select form-select-sm w-auto bg-dark border-secondary text-white" v-model="pathKatanaSeedMode">
@@ -881,6 +885,10 @@
                         <input class="form-check-input me-2" type="checkbox" v-model="cloud.awvs_auto_restart_on_api_500">
                         {{ t('awvs_auto_restart_global') }}
                     </label>
+                    <label class="form-check-label text-muted small">
+                        <input class="form-check-input me-2" type="checkbox" v-model="showInactiveAwvsNodes">
+                        {{ t('show_inactive') || '显示离线节点' }}
+                    </label>
                     <button class="btn btn-sm btn-outline-primary" @click="saveCloud">{{ t('save') }}</button>
                     <div class="btn-group btn-group-sm">
                         <button class="btn btn-outline-warning" v-if="selectedAwvsServerIds.length > 0" @click="restartDockerNodes('awvs')">{{ t('batch_restart_docker') }} ({{ selectedAwvsServerIds.length }})</button>
@@ -893,7 +901,7 @@
                 <table class="table table-hover align-middle mb-0">
                     <thead>
                     <tr>
-                        <th><input class="form-check-input" type="checkbox" @change="toggleAllAwvsServers" :checked="selectedAwvsServerIds.length === servers.length && servers.length > 0"></th>
+                        <th><input class="form-check-input" type="checkbox" @change="toggleAllAwvsServers" :checked="selectedAwvsServerIds.length === visibleAwvsServers.length && visibleAwvsServers.length > 0"></th>
                         <th>{{ t('name') }}</th>
                         <th>{{ t('label_url') }}</th>
                         <th>{{ t('token') }}</th>
@@ -906,14 +914,18 @@
                     </tr>
                     </thead>
                     <tbody>
-                    <tr v-for="server in servers" :key="server.ID">
+                    <tr v-for="server in visibleAwvsServers" :key="server.ID">
                         <td><input class="form-check-input" type="checkbox" :value="server.ID" v-model="selectedAwvsServerIds"></td>
                         <td class="text-white">{{ server.name || '-' }}</td>
                         <td><small class="text-muted">{{ server.url }}</small></td>
                         <td><small class="text-muted">{{ (server.api_key || '').substring(0,8) + '...' }}</small></td>
                         <td><small class="text-muted">{{ server.awvs_username || '-' }}</small></td>
                         <td><small class="text-muted">{{ server.awvs_password || '-' }}</small></td>
-                        <td><span class="text-info fw-bold">{{ server.current_running }}</span> / {{ server.max_concurrency }}</td>
+                        <td>
+                            <span class="text-info fw-bold" :title="'Panel: ' + server.panel_running + ' / AWVS: ' + server.current_running">{{ server.panel_running }}</span>
+                            <span class="text-muted"> / {{ server.max_concurrency }}</span>
+                            <span v-if="server.current_running !== server.panel_running" class="text-warning ms-1 small" :title="'AWVS API报告' + server.current_running + '个活跃扫描，面板记录' + server.panel_running + '个'">(AWVS: {{ server.current_running }})</span>
+                        </td>
                         <td>
                             <span class="badge" :class="server.is_active ? 'bg-success' : 'bg-secondary'">{{ server.is_active ? t('online') : t('offline') }}</span>
                         </td>
@@ -929,8 +941,8 @@
                             </div>
                         </td>
                     </tr>
-                    <tr v-if="servers.length === 0">
-                        <td colspan="10" class="text-center muted py-5">{{ t('no_awvs_nodes') }}</td>
+                    <tr v-if="visibleAwvsServers.length === 0">
+                        <td colspan="10" class="text-center muted py-5">{{ servers.length > 0 ? (t('all_nodes_offline_show_toggle') || '所有节点已离线，勾选"显示离线节点"查看') : t('no_awvs_nodes') }}</td>
                     </tr>
                     </tbody>
                 </table>
@@ -1271,7 +1283,10 @@
                             <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('min_cpu') }}</label><input class="form-control" type="number" min="1" v-model.number="cloud.awvs_min_cpu"></div>
                             <div class="col-6"><label class="form-label small text-muted mb-1">{{ t('min_memory_gb') }}</label><input class="form-control" type="number" min="1" v-model.number="cloud.awvs_min_memory_gb"></div>
                             <div class="col-12"><label class="form-label small text-muted mb-1">{{ t('instance_type_optional') }}</label><input class="form-control" v-model="cloud.awvs_instance_type" :placeholder="t('instance_type_example')"></div>
-                            <div class="col-12"><button class="btn btn-primary w-100" @click="saveCloud">{{ t('save') }}</button></div>
+                            <div class="col-12 d-flex align-items-center gap-2">
+                                <button class="btn btn-primary flex-grow-1" @click="saveCloud">{{ t('save') }}</button>
+                                <span v-if="cloudEditDirty" class="badge bg-warning text-dark">{{ t('unsaved_changes') || '未保存' }}</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1312,7 +1327,10 @@
                                     <option v-for="p in proxyAgents" :key="'cloud-proxy-' + p.ID" :value="p.ID">{{ p.name }}</option>
                                 </select>
                             </div>
-                            <div class="col-12"><button class="btn btn-primary w-100" @click="saveCloud">{{ t('save') }}</button></div>
+                            <div class="col-12 d-flex align-items-center gap-2">
+                                <button class="btn btn-primary flex-grow-1" @click="saveCloud">{{ t('save') }}</button>
+                                <span v-if="cloudEditDirty" class="badge bg-warning text-dark">{{ t('unsaved_changes') || '未保存' }}</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2296,6 +2314,10 @@ new Vue({
         pathCustomFilterQuery: '',
         pathKatanaSeedMode: 'auto',
         taskFilter: 'all',
+        taskSearchQuery: '',
+        cloudEditDirty: false,
+        cloudFetching: false,
+        showInactiveAwvsNodes: false,
         findingFilter: 'all',
         selectedTech: '',
         selectedTaskIds: [],
@@ -2428,11 +2450,19 @@ new Vue({
     },
     computed: {
         filteredTasks() {
-            if (this.taskFilter === 'has_data') return this.tasks.filter(t => t.has_data);
-            if (this.taskFilter === 'has_shell') return this.tasks.filter(t => t.has_shell);
-            if (this.taskFilter === 'has_injection') return this.tasks.filter(t => t.has_injection);
-            if (this.taskFilter === 'has_finding') return this.tasks.filter(t => t.has_finding);
-            return this.tasks;
+            let list = this.tasks;
+            if (this.taskFilter === 'has_data') list = list.filter(t => t.has_data);
+            else if (this.taskFilter === 'has_shell') list = list.filter(t => t.has_shell);
+            else if (this.taskFilter === 'has_injection') list = list.filter(t => t.has_injection);
+            else if (this.taskFilter === 'has_finding') list = list.filter(t => t.has_finding);
+            const q = String(this.taskSearchQuery || '').trim().toLowerCase();
+            if (q) {
+                list = list.filter(t => {
+                    const url = String(t.url || '').toLowerCase();
+                    return url.indexOf(q) >= 0;
+                });
+            }
+            return list;
         },
         paginatedTasks() {
             const start = (this.currentPage - 1) * this.pageSize;
@@ -2465,6 +2495,24 @@ new Vue({
             if (this.findingFilter === 'has_shell') return this.taskFindings.filter(f => f.has_shell);
             if (this.findingFilter === 'has_injection') return this.taskFindings.filter(f => f.has_injection);
             return this.taskFindings;
+        },
+        visibleAwvsServers() {
+            if (this.showInactiveAwvsNodes) return this.servers;
+            return (this.servers || []).filter(s => s.is_active);
+        },
+        pathHiddenCount() {
+            if (!this.pathOnlyWithForms && !this.pathKeywordFilterEnabled && !String(this.pathCustomFilterQuery || '').trim()) return 0;
+            let totalRaw = 0;
+            let totalFiltered = 0;
+            (this.taskPathScans || []).forEach(entry => {
+                const rawPaths = (((entry || {}).result || {}).result || {}).paths;
+                if (Array.isArray(rawPaths)) totalRaw += rawPaths.length;
+            });
+            (this.filteredTaskPathScans || []).forEach(entry => {
+                const paths = (((entry || {}).result || {}).result || {}).paths;
+                if (Array.isArray(paths)) totalFiltered += paths.length;
+            });
+            return Math.max(0, totalRaw - totalFiltered);
         },
         filteredTaskPathScans() {
             return (this.taskPathScans || []).map(entry => {
@@ -2576,6 +2624,18 @@ new Vue({
         }
     },
     watch: {
+            cloud: {
+                deep: true,
+                handler() {
+                    // Only mark dirty when the change comes from user input, not from a fetch update.
+                    if (!this.cloudFetching) {
+                        this.cloudEditDirty = true;
+                    }
+                }
+            },
+            taskSearchQuery() {
+                this.currentPage = 1;
+            },
             activeTab(newTab) {
                 this.syncRouteStateToURL();
             },
@@ -2927,6 +2987,9 @@ new Vue({
         notifySuccess(message) {
             this.notify(message, 'success');
         },
+        notifyInfo(message) {
+            this.notify(message, 'info');
+        },
         askConfirm(message) {
             return new Promise(resolve => {
                 this.confirmDialog = {
@@ -3122,8 +3185,13 @@ new Vue({
         },
         fetchCloud() {
             axios.get('/api/cloud/settings').then(res => {
-                this.cloud = Object.assign({}, this.cloud, res.data);
-                this.globalSqlmapOptions = this.decodeSqlmapOptions(this.cloud.sqlmap_default_options || '');
+                // Do not overwrite cloud form fields while the user is actively editing.
+                if (!this.cloudEditDirty) {
+                    this.cloudFetching = true;
+                    this.cloud = Object.assign({}, this.cloud, res.data);
+                    this.globalSqlmapOptions = this.decodeSqlmapOptions(this.cloud.sqlmap_default_options || '');
+                    this.$nextTick(() => { this.cloudFetching = false; });
+                }
             });
             axios.get('/api/cloud/credentials').then(res => this.cloudCredStatus = Object.assign({}, this.cloudCredStatus, res.data));
             axios.get('/api/cloud/instances').then(res => this.cloudInstances = res.data);
@@ -3173,7 +3241,10 @@ new Vue({
                 interact_cmd: this.cloud.interact_cmd,
                 sqlmap_default_options: this.encodeSqlmapOptions(this.globalSqlmapOptions)
             };
-            axios.put('/api/cloud/settings', payload).then(() => this.fetchCloud());
+            axios.put('/api/cloud/settings', payload).then(() => {
+                this.cloudEditDirty = false;
+                this.fetchCloud();
+            });
         },
         openGlobalSqlmapOptionsModal() {
             this.globalSqlmapOptions = this.decodeSqlmapOptions(this.cloud.sqlmap_default_options || '');
@@ -3221,7 +3292,19 @@ new Vue({
         },
         startCloudScale(workload) {
             const kind = workload || 'all';
-            axios.post('/api/cloud/scale/start?workload=' + encodeURIComponent(kind)).then(() => this.fetchCloud());
+            axios.post('/api/cloud/scale/start?workload=' + encodeURIComponent(kind)).then(res => {
+                const data = res.data || {};
+                const results = data.results || {};
+                const msgs = Object.entries(results).map(([k, v]) => `[${k}] ${v}`).join('\n');
+                if (msgs) {
+                    this.notifyInfo(msgs);
+                } else {
+                    this.notifySuccess(data.message || 'cloud autoscale started');
+                }
+                this.fetchCloud();
+            }).catch(err => {
+                this.notifyError(this.extractError(err));
+            });
         },
         stopCloudScale(workload) {
             const kind = workload || 'all';
@@ -3433,7 +3516,7 @@ new Vue({
             }
         },
         toggleAllAwvsServers(e) {
-            this.selectedAwvsServerIds = e.target.checked ? this.servers.map(item => item.ID) : [];
+            this.selectedAwvsServerIds = e.target.checked ? this.visibleAwvsServers.map(item => item.ID) : [];
         },
         toggleAllSqlmapAgents(e) {
             this.selectedSqlmapAgentIds = e.target.checked ? this.agents.map(item => item.ID) : [];
@@ -3739,7 +3822,8 @@ new Vue({
         loadTaskPathScans(taskId) {
             this.taskPathScanError = '';
             axios.get('/api/tasks/' + taskId + '/path-scan').then(res => {
-                this.taskPathScans = res.data.scans || [];
+                this.taskPathScans = (res.data.scans || []).map(s => Object.assign({}, s));
+                this.$nextTick(() => this.$forceUpdate());
                 this.syncTaskPathScanLogs();
             }).catch(err => {
                 this.taskPathScans = [];

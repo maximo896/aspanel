@@ -103,7 +103,13 @@ func HandleCLI(db *gorm.DB, args []string) (bool, error) {
 func SessionAuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		if path == "/" || strings.HasPrefix(path, "/static/") || path == "/api/auth/login" {
+		// Allow the SPA entry point, static assets, and login endpoint without auth.
+		if path == "/" || strings.HasPrefix(path, "/static/") ||
+			strings.HasPrefix(path, "/assets/") ||
+			path == "/tasks" || path == "/awvs" || path == "/sqlmap" ||
+			path == "/path-agent" || path == "/cloud" || path == "/proxy" ||
+			path == "/login" ||
+			path == "/api/auth/login" {
 			c.Next()
 			return
 		}

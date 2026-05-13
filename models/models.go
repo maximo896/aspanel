@@ -15,6 +15,7 @@ type AWVSServer struct {
 	AWVSPassword         string `json:"awvs_password"`
 	MaxConcurrency       int    `json:"max_concurrency"`
 	CurrentRunning       int    `json:"current_running"`
+	PanelRunning         int    `json:"panel_running" gorm:"-"`
 	AutoRestartOnAPI500  bool   `json:"auto_restart_on_api_500" gorm:"default:false"`
 	LastAutoRestartAt    int64  `json:"last_auto_restart_at"`
 	IsActive             bool   `json:"is_active" gorm:"default:true"`
@@ -36,7 +37,7 @@ type SqlmapAgent struct {
 	ManagerToken    string `json:"-"`
 	AgentVersion    string `json:"agent_version"`
 	MaxConcurrency  int    `json:"max_concurrency"`
-	DefaultUseProxy bool   `json:"default_use_proxy" gorm:"default:true"`
+	DefaultUseProxy bool   `json:"default_use_proxy" gorm:"default:false"`
 	ShareByDomain   bool   `json:"share_by_domain" gorm:"default:true"`
 	IsActive        bool   `json:"is_active" gorm:"default:true"`
 	Updating        bool   `json:"updating" gorm:"default:false"`
@@ -175,7 +176,7 @@ type CloudSettings struct {
 	SQLMapMaxConcurrency       int     `json:"sqlmap_max_concurrency" gorm:"default:10"`
 	CloudProxyMode             string  `json:"cloud_proxy_mode" gorm:"default:'round_robin'"`
 	CloudProxyAgentID          uint    `json:"cloud_proxy_agent_id"`
-	SqlmapAgentDefaultUseProxy bool    `json:"sqlmap_agent_default_use_proxy" gorm:"default:true"`
+	SqlmapAgentDefaultUseProxy bool    `json:"sqlmap_agent_default_use_proxy" gorm:"default:false"`
 	ImageID                    string  `json:"image_id"`
 	KeyID                      string  `json:"key_id"`
 	SecurityGroupID            string  `json:"security_group_id"`

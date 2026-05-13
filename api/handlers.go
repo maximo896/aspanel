@@ -225,6 +225,11 @@ func (api *API) GetServers(c *gin.Context) {
 	var servers []models.AWVSServer
 	api.DB.Order("id desc").Find(&servers)
 	for i := range servers {
+		// PanelRunning: tasks the panel believes are actively scanning on this node.
+		var panelCount int64
+		api.DB.Model(&models.Task{}).Where("awvs_server_id = ? AND status = ?", servers[i].ID, "scanning").Count(&panelCount)
+		servers[i].PanelRunning = int(panelCount)
+		// CurrentRunning: live count from AWVS API (may include externally-started scans).
 		activeScans, err := getAWVSActiveScanCount(servers[i].URL, servers[i].APIKey)
 		if err != nil {
 			servers[i].CurrentRunning = 0
@@ -2934,15 +2939,23 @@ func (api *API) callNodeManager(managerURL, managerToken, action string) error {
 	managerURL = normalizeBaseURL(managerURL)
 	managerToken = strings.TrimSpace(managerToken)
 	if managerURL == "" || managerToken == "" {
-		return fmt.Errorf("manager api is not configured for this node")
+		return fmt.Errorf("manager API is not configured for this node (set Manager URL and Manager Token)")
 	}
+	// Health pre-check before sending control command.
+	healthReq, _ := http.NewRequest("GET", managerURL+"/health", nil)
+	healthReq.Header.Set("X-Manager-Token", managerToken)
+	healthResp, healthErr := nodeManagerHTTPClient().Do(healthReq)
+	if healthErr != nil {
+		return fmt.Errorf("docker-manager is not reachable at %s — is the docker-manager process running? (%v)", managerURL, healthErr)
+	}
+	healthResp.Body.Close()
 	body, _ := json.Marshal(map[string]string{"action": strings.TrimSpace(action)})
 	req, _ := http.NewRequest("POST", managerURL+"/docker/control", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Manager-Token", managerToken)
 	resp, err := nodeManagerHTTPClient().Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("docker-manager control request failed at %s: %v", managerURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
@@ -3199,8 +3212,17 @@ func (api *API) StartCloudScale(c *gin.Context) {
 		return
 	}
 	log.Printf("[cloud][autoscale] manual start requested workload=%s", kind)
-	go scheduler.RunCloudAutoscaleOnce(api.DB)
-	c.JSON(200, gin.H{"message": "cloud autoscale enabled", "workload": kind})
+	resultCh := make(chan map[string]string, 1)
+	go func() {
+		scheduler.RunCloudAutoscaleOnce(api.DB)
+		resultCh <- scheduler.GetAutoscaleResults()
+	}()
+	select {
+	case results := <-resultCh:
+		c.JSON(200, gin.H{"message": "cloud autoscale cycle completed", "workload": kind, "results": results})
+	case <-time.After(15 * time.Second):
+		c.JSON(200, gin.H{"message": "cloud autoscale started (still running — check server logs for progress)", "workload": kind, "results": scheduler.GetAutoscaleResults()})
+	}
 }
 
 func (api *API) StopCloudScale(c *gin.Context) {

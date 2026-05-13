@@ -22,11 +22,35 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
 	"gorm.io/gorm"
 )
+
+// autoscaleResultStore holds the latest diagnostic result for each workload.
+var (
+	autoscaleResultMu   sync.RWMutex
+	autoscaleResultData = map[string]string{}
+)
+
+func setAutoscaleResult(workload, msg string) {
+	autoscaleResultMu.Lock()
+	autoscaleResultData[workload] = msg
+	autoscaleResultMu.Unlock()
+}
+
+// GetAutoscaleResults returns a copy of the latest autoscale diagnostic messages per workload.
+func GetAutoscaleResults() map[string]string {
+	autoscaleResultMu.RLock()
+	defer autoscaleResultMu.RUnlock()
+	result := map[string]string{}
+	for k, v := range autoscaleResultData {
+		result[k] = v
+	}
+	return result
+}
 
 const (
 	defaultTencentInstanceType  = "S5.SMALL1"
@@ -66,18 +90,26 @@ func callNodeManager(managerURL, managerToken, action string) error {
 	managerURL = strings.TrimRight(strings.TrimSpace(managerURL), "/")
 	managerToken = strings.TrimSpace(managerToken)
 	if managerURL == "" || managerToken == "" {
-		return fmt.Errorf("manager api is not configured for this node")
+		return fmt.Errorf("manager API is not configured for this node (set Manager URL and Manager Token)")
 	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	client := &http.Client{Timeout: 30 * time.Second, Transport: tr}
+	// Health pre-check before sending control command.
+	healthReq, _ := http.NewRequest("GET", managerURL+"/health", nil)
+	healthReq.Header.Set("X-Manager-Token", managerToken)
+	healthResp, healthErr := client.Do(healthReq)
+	if healthErr != nil {
+		return fmt.Errorf("docker-manager is not reachable at %s — is the docker-manager process running? (%v)", managerURL, healthErr)
+	}
+	healthResp.Body.Close()
 	body, _ := json.Marshal(map[string]string{"action": strings.TrimSpace(action)})
 	req, _ := http.NewRequest("POST", managerURL+"/docker/control", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Manager-Token", managerToken)
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.Proxy = nil
-	client := &http.Client{Timeout: 30 * time.Second, Transport: tr}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("docker-manager control request failed at %s: %v", managerURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
@@ -187,6 +219,7 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 		}
 
 		for _, server := range servers {
+			wasActive := server.IsActive
 			client := awvs.NewClient(server.URL, server.APIKey)
 			_, err := client.TestConnection()
 			server.LastCheckedAt = time.Now().Unix()
@@ -194,6 +227,9 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 				server.IsActive = false
 				server.CurrentRunning = 0
 				server.LastError = err.Error()
+				if wasActive {
+					log.Printf("[awvs][heartbeat] node went OFFLINE id=%d name=%s url=%s err=%v", server.ID, server.Name, server.URL, err)
+				}
 				if triggerAWVSAutoRestartOnAPI500(db, &server, err, "heartbeat_test_connection") {
 					continue
 				}
@@ -205,6 +241,9 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 				continue
 			}
 
+			if !wasActive {
+				log.Printf("[awvs][heartbeat] node came back ONLINE id=%d name=%s url=%s", server.ID, server.Name, server.URL)
+			}
 			server.IsActive = true
 			activeScans, countErr := client.CountActiveScans()
 			if countErr != nil {
@@ -681,10 +720,9 @@ func RetryFindingFromLocal(db *gorm.DB, findingID uint, sqlmapAgentID uint) erro
 	finding.SqlmapStatus = sqlmapStatus
 	finding.UseProxy = effectiveUseProxy
 	if sent {
-		finding.HasData = false
-		finding.HasShell = false
-		finding.HasInjection = false
-		clearFindingSQLMapSnapshot(&finding)
+		// Preserve prior scan results (HasData/HasShell/HasInjection) so that
+		// if the session on the agent already has injection data from a previous
+		// run, we do not lose them on display until the new run completes.
 		db.Save(&finding)
 		return nil
 	}
@@ -1298,6 +1336,7 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 	}
 	if budgetHours > 0 && time.Now().Unix()-launchStartedAt >= int64(budgetHours)*3600 {
 		log.Printf("[cloud][autoscale][%s] budget window expired, recycle workload instances", workload)
+		setAutoscaleResult(workload, fmt.Sprintf("budget window of %d hours expired — instances recycled and autoscale disabled", budgetHours))
 		recycleWorkloadInstances(db, workload)
 		disableWorkloadAutoscale(db, &settings, workload)
 		return
@@ -1386,14 +1425,18 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 	}
 	offers = tencent.FilterAndSortOffers(filtered, maxPrice)
 	if len(offers) == 0 {
-		log.Printf("[cloud][autoscale][%s] no offer under thresholds", workload)
+		msg := fmt.Sprintf("no spot offer found below max_price=%.4f USD/hr (min_cpu=%d min_memory=%dGB)", maxPrice, maxInt(1, minCPU), maxInt(1, minMemory))
+		log.Printf("[cloud][autoscale][%s] %s", workload, msg)
+		setAutoscaleResult(workload, msg)
 		return
 	}
 
 	currentHourlyCost := currentActiveHourlyCostByWorkload(db, workload)
 	remainingBudget := hourlyBudget - currentHourlyCost
 	if remainingBudget <= 0 {
-		log.Printf("[cloud][autoscale][%s] budget exhausted hourly_budget=%.4f current_hourly_cost=%.4f", workload, hourlyBudget, currentHourlyCost)
+		msg := fmt.Sprintf("hourly budget exhausted — budget=%.4f current_cost=%.4f USD/hr", hourlyBudget, currentHourlyCost)
+		log.Printf("[cloud][autoscale][%s] %s", workload, msg)
+		setAutoscaleResult(workload, msg)
 		return
 	}
 	plan := make([]tencent.SpotOffer, 0)
@@ -1406,6 +1449,10 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 		remain -= offer.PriceUSD
 	}
 	if len(plan) == 0 {
+		cheapest := offers[0].PriceUSD
+		msg := fmt.Sprintf("remaining budget %.4f USD/hr is less than the cheapest offer %.4f USD/hr — increase hourly_budget or lower max_price", remainingBudget, cheapest)
+		log.Printf("[cloud][autoscale][%s] %s", workload, msg)
+		setAutoscaleResult(workload, msg)
 		return
 	}
 	log.Printf("[cloud][autoscale][%s] capacity decision current_hourly_cost=%.4f remaining_budget=%.4f planned_create=%d", workload, currentHourlyCost, remainingBudget, len(plan))
@@ -1526,6 +1573,7 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 				return launchStartedAt + int64(budgetHours)*3600
 			}(),
 		})
+		setAutoscaleResult(workload, fmt.Sprintf("launched instance %s (%s %dC%dG) in %s/%s at %.4f USD/hr", ids[0], offer.InstanceType, offer.CPU, offer.MemoryGB, offer.Region, offer.Zone, offer.PriceUSD))
 	}
 }
 
@@ -1858,7 +1906,7 @@ func registerSQLMapFromProto(db *gorm.DB, sig interact.Signal, inst *models.Clou
 func sqlmapAgentDefaultUseProxy(db *gorm.DB) bool {
 	var settings models.CloudSettings
 	if err := db.Order("id desc").First(&settings).Error; err != nil {
-		return true
+		return false
 	}
 	return settings.SqlmapAgentDefaultUseProxy
 }
