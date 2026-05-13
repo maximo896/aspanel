@@ -8,6 +8,7 @@ frontend/dist/
 
 panel.db
 awvs-panel.exe
+awvs-sqlmap-panel.exe
 
 data/panel.log
 data/*.db
