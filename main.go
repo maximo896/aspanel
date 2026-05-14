@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -226,6 +227,7 @@ func initLogger() {
 		log.Printf("failed to create data directory: %v", err)
 		return
 	}
+	_ = os.MkdirAll(filepath.Join("data", "tmp"), 0755)
 
 	logFile, err := os.OpenFile("data/panel.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
