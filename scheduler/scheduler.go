@@ -66,7 +66,7 @@ func loadGlobalAWVSAutoRestartOnAPI500(db *gorm.DB) bool {
 		return false
 	}
 	var settings models.CloudSettings
-	if err := db.Order("id desc").Select("awvs_auto_restart_on_api_500").First(&settings).Error; err != nil {
+	if err := db.Order("id desc").Select("awvs_auto_restart_on_api500").First(&settings).Error; err != nil {
 		return false
 	}
 	return settings.AWVSAutoRestartOnAPI500

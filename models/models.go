@@ -188,7 +188,7 @@ type CloudSettings struct {
 	LaunchStartedAt            int64   `json:"launch_started_at"`
 	PortMin                    int     `json:"port_min" gorm:"default:30000"`
 	PortMax                    int     `json:"port_max" gorm:"default:40000"`
-	AWVSAutoRestartOnAPI500    bool    `json:"awvs_auto_restart_on_api_500" gorm:"default:false"`
+	AWVSAutoRestartOnAPI500    bool    `json:"awvs_auto_restart_on_api_500" gorm:"column:awvs_auto_restart_on_api500;default:false"`
 	AWVSAutoEnabled            bool    `json:"awvs_auto_enabled" gorm:"default:false"`
 	AWVSLaunchStartedAt        int64   `json:"awvs_launch_started_at"`
 	AWVSMaxPriceUSDPerHour     float64 `json:"awvs_max_price_usd_per_hour" gorm:"default:0.02"`
