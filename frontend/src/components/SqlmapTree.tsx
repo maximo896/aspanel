@@ -282,14 +282,15 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
                                     ))}
                                   </Space>
                                 )}
-                                {dumpRows.length > 0 && (
+                                {dumpColumns.length > 0 && (
                                   <Table
                                     dataSource={dumpRows}
                                     columns={dumpColumns}
                                     rowKey="_key"
                                     size="small"
                                     scroll={{ x: true }}
-                                    pagination={{ pageSize: 10, size: 'small' }}
+                                    pagination={dumpRows.length > 10 ? { pageSize: 10, size: 'small' } : false}
+                                    locale={{ emptyText: '暂无数据行' }}
                                   />
                                 )}
                               </Space>

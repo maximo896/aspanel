@@ -180,6 +180,7 @@ func main() {
 	r.POST("/api/tasks", h.AddTasks)
 	r.POST("/api/tasks/batch-delete", h.BatchDeleteTasks)
 	r.POST("/api/tasks/batch-retry-push", h.BatchRetryTaskSqlmapPush)
+	r.POST("/api/tasks/batch-probe-osshell", h.BatchProbeTaskOsshell)
 	r.POST("/api/tasks/batch-retry-path-scan", h.BatchRetryTaskPathScan)
 	r.POST("/api/tasks/cleanup", h.CleanupTasks)
 	r.POST("/api/tasks/cleanup-no-vuln", h.CleanupAWVSNoVulnTasks)

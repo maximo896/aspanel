@@ -11,7 +11,7 @@ import type { ColumnsType } from 'antd/es/table'
 import type { Task } from '../types'
 import {
   getTasks, batchDeleteTasks, batchRetryPush, cleanupTasks, cleanupNoVulnTasks,
-  addTasks, batchRetryPathScan, extractError,
+  addTasks, batchRetryPathScan, batchProbeTaskOsshell, extractError,
   getSqlmapAgents, getPathAgents,
 } from '../api/client'
 import TaskDrawer from '../components/TaskDrawer'
@@ -47,6 +47,8 @@ export default function TasksPage() {
   const [selected, setSelected] = useState<number[]>([])
   const [addUrlsText, setAddUrlsText] = useState('')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
 
   const { data: tasks = [], isLoading, error: tasksError, refetch } = useQuery({
     queryKey: ['tasks'],
@@ -72,6 +74,15 @@ export default function TasksPage() {
   const retryMut = useMutation({
     mutationFn: (ids: number[]) => batchRetryPush(ids),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['tasks'] }); message.success('批量重投成功') },
+    onError: (e) => message.error(extractError(e)),
+  })
+
+  const osshellMut = useMutation({
+    mutationFn: (ids: number[]) => batchProbeTaskOsshell(ids),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      message.success('批量 osshell 探测已触发')
+    },
     onError: (e) => message.error(extractError(e)),
   })
 
@@ -139,17 +150,47 @@ export default function TasksPage() {
     })
   }, [filtered])
 
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filtered.length / pageSize))
+    if (currentPage > maxPage) {
+      setCurrentPage(maxPage)
+    }
+  }, [filtered.length, pageSize, currentPage])
+
+  const currentPageTaskIds = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filtered.slice(start, start + pageSize).map(task => task.ID)
+  }, [filtered, currentPage, pageSize])
+
+  const allCurrentPageSelected = currentPageTaskIds.length > 0 && currentPageTaskIds.every(id => selected.includes(id))
+  const someCurrentPageSelected = currentPageTaskIds.some(id => selected.includes(id)) && !allCurrentPageSelected
+
   const columns: ColumnsType<Task> = [
     {
-      title: '',
+      title: (
+        <Checkbox
+          checked={allCurrentPageSelected}
+          indeterminate={someCurrentPageSelected}
+          disabled={currentPageTaskIds.length === 0}
+          onChange={e => {
+            const pageIDs = currentPageTaskIds
+            if (e.target.checked) {
+              setSelected(prev => Array.from(new Set([...prev, ...pageIDs])))
+              return
+            }
+            setSelected(prev => prev.filter(id => !pageIDs.includes(id)))
+          }}
+          onClick={e => e.stopPropagation()}
+        />
+      ),
       key: 'select',
-      width: 36,
+      width: 48,
       render: (_, record) => (
         <Checkbox
           checked={selected.includes(record.ID)}
           onChange={e => {
             e.stopPropagation()
-            if (e.target.checked) setSelected(p => [...p, record.ID])
+            if (e.target.checked) setSelected(p => (p.includes(record.ID) ? p : [...p, record.ID]))
             else setSelected(p => p.filter(id => id !== record.ID))
           }}
           onClick={e => e.stopPropagation()}
@@ -267,6 +308,9 @@ export default function TasksPage() {
                 <Button size="small" icon={<SendOutlined />} onClick={() => retryMut.mutate(selected)} loading={retryMut.isPending}>
                   重投
                 </Button>
+                <Button size="small" onClick={() => osshellMut.mutate(selected)} loading={osshellMut.isPending}>
+                  osshell
+                </Button>
                 <Button size="small" onClick={() => retryPathMut.mutate(selected)} loading={retryPathMut.isPending}>
                   路径扫描
                 </Button>
@@ -296,8 +340,12 @@ export default function TasksPage() {
           rowKey="ID"
           loading={isLoading}
           size="small"
-          pagination={{ defaultPageSize: 20, showSizeChanger: true, showQuickJumper: true }}
+          pagination={{ current: currentPage, pageSize, showSizeChanger: true, showQuickJumper: true }}
           scroll={{ x: 800 }}
+          onChange={pagination => {
+            setCurrentPage(pagination.current || 1)
+            setPageSize(pagination.pageSize || 20)
+          }}
           onRow={record => ({
             onClick: () => setSelectedTask(record),
             style: { cursor: 'pointer' },

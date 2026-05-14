@@ -1339,6 +1339,34 @@ func (api *API) RunTaskSqlmapAction(c *gin.Context) {
 	c.Data(resp.StatusCode, "application/json", respBody)
 }
 
+func (api *API) runFindingSqlmapAction(finding *models.TaskFinding, payload map[string]interface{}) (int, []byte, error) {
+	if finding.SqlmapTaskID == "" || finding.SqlmapAgentID == 0 {
+		return 0, nil, fmt.Errorf("finding is not bound to a sqlmap agent")
+	}
+
+	agent, err := api.getFindingAgent(finding)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	body, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/scan/%s/action", agent.URL, finding.SqlmapTaskID), bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Token", agent.APIKey)
+	resp, err := httpClient().Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 300 {
+		finding.SqlmapStatus = "queued"
+		api.DB.Save(finding)
+	}
+	return resp.StatusCode, respBody, nil
+}
+
 func (api *API) SearchTaskSqlmap(c *gin.Context) {
 	var task models.Task
 	if err := api.DB.First(&task, c.Param("id")).Error; err != nil {
@@ -1516,8 +1544,7 @@ func (api *API) RunFindingSqlmapAction(c *gin.Context) {
 		return
 	}
 
-	agent, err := api.getFindingAgent(finding)
-	if err != nil {
+	if _, err := api.getFindingAgent(finding); err != nil {
 		c.JSON(404, gin.H{"error": "sqlmap agent not found"})
 		return
 	}
@@ -1528,23 +1555,12 @@ func (api *API) RunFindingSqlmapAction(c *gin.Context) {
 		return
 	}
 
-	body, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/scan/%s/action", agent.URL, finding.SqlmapTaskID), bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Api-Token", agent.APIKey)
-	resp, err := httpClient().Do(req)
+	respStatus, respBody, err := api.runFindingSqlmapAction(finding, payload)
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 300 {
-		finding.SqlmapStatus = "queued"
-		api.DB.Save(finding)
-	}
-	writeSqlmapUpstreamResponse(c, resp.StatusCode, respBody, "running task action")
+	writeSqlmapUpstreamResponse(c, respStatus, respBody, "running task action")
 }
 
 func (api *API) SearchFindingSqlmap(c *gin.Context) {
@@ -1724,6 +1740,91 @@ func (api *API) BatchRetryTaskSqlmapPush(c *gin.Context) {
 		"sqlmap_agent_id":         req.SqlmapAgentID,
 		"failed_tasks":            failedDetails,
 		"log_file":                "data/panel.log",
+	})
+}
+
+func (api *API) BatchProbeTaskOsshell(c *gin.Context) {
+	var req struct {
+		IDs []uint `json:"ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if len(req.IDs) == 0 {
+		c.JSON(400, gin.H{"error": "ids cannot be empty"})
+		return
+	}
+
+	succeededTasks := 0
+	failedTasks := 0
+	queuedFindings := 0
+	failedFindings := 0
+	failedDetails := make([]gin.H, 0)
+	payload := map[string]interface{}{"action": "probe_shell"}
+
+	for _, taskID := range req.IDs {
+		var findings []models.TaskFinding
+		if err := api.DB.Where("task_id = ? AND is_sqli = ?", taskID, true).Order("id desc").Find(&findings).Error; err != nil {
+			failedTasks++
+			failedDetails = append(failedDetails, gin.H{
+				"task_id": taskID,
+				"error":   err.Error(),
+			})
+			continue
+		}
+		if len(findings) == 0 {
+			failedTasks++
+			failedDetails = append(failedDetails, gin.H{
+				"task_id": taskID,
+				"error":   "task has no sqli findings",
+			})
+			continue
+		}
+
+		taskQueued := 0
+		taskFailed := 0
+		for i := range findings {
+			respStatus, respBody, err := api.runFindingSqlmapAction(&findings[i], payload)
+			if err != nil {
+				taskFailed++
+				failedDetails = append(failedDetails, gin.H{
+					"task_id":    taskID,
+					"finding_id": findings[i].ID,
+					"error":      err.Error(),
+				})
+				continue
+			}
+			if respStatus >= 300 {
+				taskFailed++
+				failedDetails = append(failedDetails, gin.H{
+					"task_id":    taskID,
+					"finding_id": findings[i].ID,
+					"status":     respStatus,
+					"detail":     string(respBody),
+				})
+				continue
+			}
+			taskQueued++
+		}
+
+		if taskQueued > 0 {
+			succeededTasks++
+		} else {
+			failedTasks++
+		}
+		queuedFindings += taskQueued
+		failedFindings += taskFailed
+	}
+
+	c.JSON(200, gin.H{
+		"message":               "batch osshell probe queued",
+		"task_count":            len(req.IDs),
+		"succeeded_task_count":  succeededTasks,
+		"failed_task_count":     failedTasks,
+		"queued_finding_count":  queuedFindings,
+		"failed_finding_count":  failedFindings,
+		"failed_tasks":          failedDetails,
 	})
 }
 

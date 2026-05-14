@@ -182,15 +182,6 @@ export default function CloudPage() {
   )
 
   useEffect(() => {
-    const formsTouched = awvsForm.isFieldsTouched() || sqlmapForm.isFieldsTouched()
-    if (settings && !dirty && !formsTouched) {
-      awvsForm.setFieldsValue(settings)
-      sqlmapForm.setFieldsValue(settings)
-      setDirty(false)
-    }
-  }, [settings, dirty, awvsForm, sqlmapForm])
-
-  useEffect(() => {
     if (!settings) return
     if (proxyAgentsLoading) return
     if (proxyAgentsError) return
@@ -224,15 +215,27 @@ export default function CloudPage() {
 
   const saveMut = useMutation({
     mutationFn: (data: Partial<CloudSettings>) => updateCloudSettings(data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['cloud-settings'] })
+    onSuccess: (savedSettings) => {
+      qc.setQueryData(['cloud-settings'], savedSettings)
+      awvsForm.setFieldsValue(savedSettings)
+      sqlmapForm.setFieldsValue(savedSettings)
       setDirty(false)
       awvsForm.setFields(Object.keys(awvsForm.getFieldsValue()).map(name => ({ name, touched: false })))
       sqlmapForm.setFields(Object.keys(sqlmapForm.getFieldsValue()).map(name => ({ name, touched: false })))
+      qc.invalidateQueries({ queryKey: ['cloud-settings'] })
       message.success('保存成功')
     },
     onError: (e) => message.error(extractError(e)),
   })
+
+  useEffect(() => {
+    const formsTouched = awvsForm.isFieldsTouched() || sqlmapForm.isFieldsTouched()
+    if (settings && !dirty && !formsTouched && !saveMut.isPending) {
+      awvsForm.setFieldsValue(settings)
+      sqlmapForm.setFieldsValue(settings)
+      setDirty(false)
+    }
+  }, [settings, dirty, awvsForm, sqlmapForm, saveMut.isPending])
 
   const startMut = useMutation({
     mutationFn: (workload: string) => startCloudScale(workload),
@@ -282,7 +285,7 @@ export default function CloudPage() {
 
   const handleSave = () => {
     Promise.all([awvsForm.validateFields(), sqlmapForm.validateFields()]).then(([awvsVals, sqlmapVals]) => {
-      saveMut.mutate({ ...(settings || {}), ...awvsVals, ...sqlmapVals })
+      saveMut.mutate({ ...awvsVals, ...sqlmapVals })
     })
   }
 
