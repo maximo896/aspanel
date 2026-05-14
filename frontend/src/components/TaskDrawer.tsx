@@ -134,15 +134,18 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
     setAgentId(finding.sqlmap_agent_id || 0)
   }, [finding.ID, finding.sqlmap_agent_id])
 
+  const liveSqlmapStatus = String((scan?.status || scan?.sqlmap_status || finding.sqlmap_status || '')).trim().toLowerCase()
+  const shouldPollScan = expanded && liveSqlmapStatus === 'running'
+
   useEffect(() => {
-    if (!expanded) return
+    if (!shouldPollScan) return
     const timer = window.setInterval(() => {
       if (!requestMut.isPending) {
         void loadScan(true)
       }
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [expanded, loadScan, requestMut.isPending])
+  }, [shouldPollScan, loadScan, requestMut.isPending])
 
   const severityColor: Record<string, string> = {
     critical: '#cf1322', high: '#d4380d', medium: '#d46b08',
@@ -151,7 +154,7 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
   const logText = (scan?.logs || [])
     .map(item => [item.time, item.level, item.message].filter(Boolean).join(' '))
     .join('\n')
-  const sqlmapBusy = ['running', 'queued'].includes((finding.sqlmap_status || '').toLowerCase())
+  const sqlmapBusy = ['running', 'queued'].includes(liveSqlmapStatus)
   const canEditRequest = Boolean(finding.sqlmap_task_id && finding.sqlmap_agent_id && !sqlmapBusy)
   const manualCommand = buildSqlmapManualCommand(scan)
 

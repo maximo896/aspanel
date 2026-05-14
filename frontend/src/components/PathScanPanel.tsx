@@ -5,8 +5,14 @@ import { getPathScanLogs } from '../api/client'
 
 const { Text } = Typography
 
-const SENSITIVE_KEYWORDS = ['admin', 'administrator', 'manager', 'user', 'username', 'password',
-  'passwd', 'pass', 'login', 'signin', 'dashboard', 'backend', 'panel', 'console']
+const SENSITIVE_KEYWORDS = [
+  'admin', 'administrator', 'manager', 'root', 'login', 'signin', 'auth', 'session',
+  'user', 'username', 'member', 'account', 'customer', 'employee',
+  'password', 'passwd', 'pass', 'pwd', 'secret', 'token', 'hash', 'salt',
+  'email', 'phone', 'mobile', 'credit', 'id_card',
+  'senha', 'sistema',
+  'dashboard', 'backend', 'panel', 'console', 'config', 'credential',
+]
 
 interface PathItem {
   url: string
