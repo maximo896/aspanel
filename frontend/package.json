@@ -1,7 +1,7 @@
 {
   "name": "awvs-sqlmap-panel",
   "private": true,
-  "version": "2.4.14",
+  "version": "2.4.15",
   "type": "module",
   "scripts": {
     "dev": "vite",

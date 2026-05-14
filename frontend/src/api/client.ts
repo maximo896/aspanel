@@ -53,6 +53,8 @@ export const updateSqlmapDefaults = (data: { sqlmap_agent_default_use_proxy: boo
 
 // Path Agents
 export const getPathAgents = () => api.get<PathAgent[]>('/api/path/agents').then(r => r.data)
+export const createPathAgentConfig = (data: { name: string; max_concurrency: number }) => api.post<{ docker_cmd: string }>('/api/path/agents/config', data).then(r => r.data)
+export const registerPathAgentFromLink = (data: { protocol_link: string }) => api.post('/api/path/agents/register', data).then(r => r.data)
 export const updatePathAgent = (id: number, data: Partial<PathAgent>) => api.put(`/api/path/agents/${id}`, data).then(r => r.data)
 export const deletePathAgent = (id: number) => api.delete(`/api/path/agents/${id}`).then(r => r.data)
 export const cleanupOfflinePath = () => api.post<{ message: string; deleted_count: number }>('/api/path/agents/cleanup-offline').then(r => r.data)
