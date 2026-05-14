@@ -1,11 +1,11 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import MainLayout from './components/MainLayout'
 import TasksPage from './pages/Tasks'
-import AWVSPage from './pages/AWVS'
-import SqlmapPage from './pages/SqlmapV2'
+import AWVSPage from './pages/AWVSV3'
+import SqlmapPage from './pages/SqlmapV3'
 import PathAgentPage from './pages/PathAgent'
 import CloudPage from './pages/Cloud'
-import ProxyPage from './pages/ProxyV2'
+import ProxyPage from './pages/ProxyV3'
 import LoginPage from './pages/Login'
 
 export default function App() {

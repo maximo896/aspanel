@@ -39,10 +39,15 @@ export const getAWVSManualUpdateCommand = (id: number) => api.get<{ command: str
 
 // Sqlmap Agents
 export const getSqlmapAgents = () => api.get<SqlmapAgent[]>('/api/sqlmap/agents').then(r => r.data)
+export const createSqlmapAgentConfig = (data: { name: string; max_concurrency: number; proxy_agent_id?: number }) => api.post<{ docker_cmd: string }>('/api/sqlmap/config', data).then(r => r.data)
+export const registerSqlmapAgentFromLink = (data: { protocol_link: string }) => api.post('/api/sqlmap/register', data).then(r => r.data)
 export const updateSqlmapAgent = (id: number, data: Partial<SqlmapAgent>) => api.put(`/api/sqlmap/agents/${id}`, data).then(r => r.data)
 export const deleteSqlmapAgent = (id: number) => api.delete(`/api/sqlmap/agents/${id}`).then(r => r.data)
 export const cleanupOfflineSqlmap = () => api.post<{ message: string; deleted_count: number }>('/api/sqlmap/agents/cleanup-offline').then(r => r.data)
 export const restartSqlmapDocker = (ids: number[]) => api.post('/api/sqlmap/agents/restart-docker', { ids }).then(r => r.data)
+export const refreshSqlmapAgent = (id: number) => api.post<SqlmapAgent>(`/api/sqlmap/agents/${id}/refresh`).then(r => r.data)
+export const updateSqlmapAgentVersion = (id: number) => api.post(`/api/sqlmap/agents/${id}/update`).then(r => r.data)
+export const getSqlmapManualUpdateCommand = (id: number) => api.get<{ command: string; command_powershell: string; name: string; type: string; warning?: string }>(`/api/sqlmap/agents/${id}/manual-update-command`).then(r => r.data)
 export const getSqlmapDefaults = () => api.get<{ sqlmap_agent_default_use_proxy: boolean }>('/api/sqlmap/defaults').then(r => r.data)
 export const updateSqlmapDefaults = (data: { sqlmap_agent_default_use_proxy: boolean }) => api.put('/api/sqlmap/defaults', data).then(r => r.data)
 
