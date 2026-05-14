@@ -39,8 +39,8 @@ export const getAWVSManualUpdateCommand = (id: number) => api.get<{ command: str
 
 // Sqlmap Agents
 export const getSqlmapAgents = () => api.get<SqlmapAgent[]>('/api/sqlmap/agents').then(r => r.data)
-export const createSqlmapAgentConfig = (data: { name: string; max_concurrency: number; proxy_agent_id?: number }) => api.post<{ docker_cmd: string }>('/api/sqlmap/config', data).then(r => r.data)
-export const registerSqlmapAgentFromLink = (data: { protocol_link: string }) => api.post('/api/sqlmap/register', data).then(r => r.data)
+export const createSqlmapAgentConfig = (data: { name: string; max_concurrency: number; proxy_agent_id?: number }) => api.post<{ docker_cmd: string }>('/api/sqlmap/agents/config', data).then(r => r.data)
+export const registerSqlmapAgentFromLink = (data: { protocol_link: string }) => api.post('/api/sqlmap/agents/register', data).then(r => r.data)
 export const updateSqlmapAgent = (id: number, data: Partial<SqlmapAgent>) => api.put(`/api/sqlmap/agents/${id}`, data).then(r => r.data)
 export const deleteSqlmapAgent = (id: number) => api.delete(`/api/sqlmap/agents/${id}`).then(r => r.data)
 export const cleanupOfflineSqlmap = () => api.post<{ message: string; deleted_count: number }>('/api/sqlmap/agents/cleanup-offline').then(r => r.data)
