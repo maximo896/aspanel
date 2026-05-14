@@ -48,6 +48,7 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
   })
 
   const handleGetDatabases = () => actionMut.mutate({ action: 'get_dbs' })
+  const handleGetCurrentDb = () => actionMut.mutate({ action: 'get_current_db' })
   const handleGetTables = (db: string) => actionMut.mutate({ action: 'get_tables', db })
   const handleGetColumns = (db: string, table: string) => actionMut.mutate({ action: 'get_columns', db, table })
   const handleDump = (db: string, table: string) => actionMut.mutate({ action: 'dump_table_data', db, table, limit_start: 1, limit_stop: 20 })
@@ -99,9 +100,14 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
     return (
       <Space direction="vertical" style={{ width: '100%' }}>
         <Text type="secondary">暂无 SQLmap 结果</Text>
-        <Button size="small" onClick={handleGetDatabases} loading={actionMut.isPending}>
-          获取数据库列表
-        </Button>
+        <Space wrap>
+          <Button size="small" onClick={handleGetDatabases} loading={actionMut.isPending}>
+            获取数据库列表
+          </Button>
+          <Button size="small" onClick={handleGetCurrentDb} loading={actionMut.isPending}>
+            获取当前数据库
+          </Button>
+        </Space>
       </Space>
     )
   }
@@ -184,6 +190,9 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
             <Space wrap>
               <Button size="small" icon={<DatabaseOutlined />} onClick={handleGetDatabases}>
                 获取数据库列表
+              </Button>
+              <Button size="small" onClick={handleGetCurrentDb}>
+                获取当前数据库
               </Button>
               {currentDb && (
                 <Button size="small" onClick={() => handleGetTables(currentDb)}>

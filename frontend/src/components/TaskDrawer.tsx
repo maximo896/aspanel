@@ -41,6 +41,8 @@ function buildSqlmapManualCommand(scan: SqlmapScan | null) {
   if (requestedOptions.retries) parts.push(`--retries=${requestedOptions.retries}`)
   if (requestedOptions.technique) parts.push(`--technique=${requestedOptions.technique}`)
   if (requestedOptions.tamper) parts.push(`--tamper=${requestedOptions.tamper}`)
+  if (requestedOptions.smart === true) parts.push('--smart')
+  if (requestedOptions.skipHeuristics === true) parts.push('--skip-heuristics')
   parts.push('--current-db')
   return parts.join(' ')
 }

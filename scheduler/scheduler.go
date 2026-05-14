@@ -715,6 +715,7 @@ func RetryFindingFromLocal(db *gorm.DB, findingID uint, sqlmapAgentID uint) erro
 		forceSSL,
 		&useProxy,
 		mergeSqlmapOptions(globalOptions, findingOptions),
+		true,
 		sqlmapAgentID,
 		db,
 	)
@@ -901,6 +902,7 @@ func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, 
 			forceSSL,
 			useProxyOverride,
 			mergeSqlmapOptions(globalOptions, findingOptions),
+			false,
 			preferredSqlmapAgentID,
 			db,
 		)
@@ -943,7 +945,7 @@ func isRecentVulnerability(task models.Task, vuln map[string]interface{}) bool {
 	return !lastSeen.Before(taskStarted)
 }
 
-func sendToSqlmapAgent(task models.Task, domain, vulnID, requestData string, forceSSL bool, useProxy *bool, options map[string]interface{}, preferredSqlmapAgentID uint, db *gorm.DB) (string, uint, string, string, bool, bool) {
+func sendToSqlmapAgent(task models.Task, domain, vulnID, requestData string, forceSSL bool, useProxy *bool, options map[string]interface{}, forceFresh bool, preferredSqlmapAgentID uint, db *gorm.DB) (string, uint, string, string, bool, bool) {
 	effectiveUseProxy := false
 	if useProxy != nil {
 		effectiveUseProxy = *useProxy
@@ -1007,13 +1009,13 @@ func sendToSqlmapAgent(task models.Task, domain, vulnID, requestData string, for
 		"vuln_id":         vulnID,
 		"request_data":    requestData,
 		"force_ssl":       forceSSL,
-		"share_by_domain": selectedAgent.ShareByDomain,
+		"share_by_domain": selectedAgent.ShareByDomain && !forceFresh,
 	}
 	if effectiveUseProxy && strings.TrimSpace(selectedAgent.ProxyURL) != "" {
 		payload["proxy"] = strings.TrimSpace(selectedAgent.ProxyURL)
 	}
 	if len(options) > 0 {
-		payload["options"] = options
+		payload["options"] = sanitizeSqlmapOptionsForAutomation(options)
 	}
 	body, _ := json.Marshal(payload)
 
@@ -1968,6 +1970,44 @@ func mergeSqlmapOptions(base, overlay map[string]interface{}) map[string]interfa
 		merged[k] = v
 	}
 	return merged
+}
+
+func sqlmapOptionEnabled(value interface{}) bool {
+	switch v := value.(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true") || strings.TrimSpace(v) == "1"
+	case float64:
+		return v != 0
+	case float32:
+		return v != 0
+	case int:
+		return v != 0
+	case int64:
+		return v != 0
+	case uint:
+		return v != 0
+	case uint64:
+		return v != 0
+	default:
+		return false
+	}
+}
+
+func sanitizeSqlmapOptionsForAutomation(options map[string]interface{}) map[string]interface{} {
+	if len(options) == 0 {
+		return options
+	}
+	sanitized := map[string]interface{}{}
+	for k, v := range options {
+		sanitized[k] = v
+	}
+	if sqlmapOptionEnabled(sanitized["smart"]) {
+		log.Printf("sqlmap automation disabled legacy smart=true option to avoid skipping injectable parameters")
+	}
+	sanitized["smart"] = false
+	return sanitized
 }
 
 func pickCloudProxyForLaunch(db *gorm.DB, settings models.CloudSettings, launchIndex int) (models.ProxyAgent, string) {

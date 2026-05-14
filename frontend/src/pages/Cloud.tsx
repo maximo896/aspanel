@@ -59,7 +59,7 @@ function pickComparableValues(
   return result
 }
 
-function CloudLogsPanel() {
+function CloudLogsPanel({ sinceTs }: { sinceTs: number }) {
   const [logs, setLogs] = useState<{ offset: number; message: string }[]>([])
   const [offset, setOffset] = useState(0)
   const offsetRef = useRef(0)
@@ -79,7 +79,7 @@ function CloudLogsPanel() {
           const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight
           shouldStickRef.current = distanceToBottom < 24
         }
-        const data = await getPanelLogs(offsetRef.current, '[cloud]')
+        const data = await getPanelLogs(offsetRef.current, '[cloud]', sinceTs)
         if (unmounted) return
         setOffset(data.next_offset)
         if (data.entries && data.entries.length > 0) {
@@ -98,7 +98,13 @@ function CloudLogsPanel() {
       unmounted = true
       clearInterval(timer)
     }
-  }, [])
+  }, [sinceTs])
+
+  useEffect(() => {
+    setLogs([])
+    setOffset(0)
+    offsetRef.current = 0
+  }, [sinceTs])
 
   useEffect(() => {
     if (shouldStickRef.current && containerRef.current) {
@@ -169,6 +175,11 @@ export default function CloudPage() {
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   })
+
+  const latestLaunchStartedAt = Math.max(
+    Number(settings?.awvs_launch_started_at || 0),
+    Number(settings?.sqlmap_launch_started_at || 0),
+  )
 
   useEffect(() => {
     const formsTouched = awvsForm.isFieldsTouched() || sqlmapForm.isFieldsTouched()
@@ -543,7 +554,7 @@ export default function CloudPage() {
         scroll={{ x: 800 }}
       />
 
-      <CloudLogsPanel />
+      <CloudLogsPanel sinceTs={latestLaunchStartedAt} />
     </Space>
   )
 }

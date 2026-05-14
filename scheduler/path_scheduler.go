@@ -92,6 +92,26 @@ func loadGlobalPathCustomPaths(db *gorm.DB) []string {
 	return decodeCustomPathsSetting(settings.PathDefaultCustomPaths)
 }
 
+func mergeCustomPaths(primary []string, secondary []string) []string {
+	merged := make([]string, 0, len(primary)+len(secondary))
+	seen := make(map[string]struct{})
+	appendUnique := func(values []string) {
+		for _, raw := range normalizeCustomPaths(values) {
+			if _, ok := seen[raw]; ok {
+				continue
+			}
+			seen[raw] = struct{}{}
+			merged = append(merged, raw)
+		}
+	}
+	appendUnique(primary)
+	appendUnique(secondary)
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
 func refreshPathAgentsStatus(db *gorm.DB) {
 	for {
 		time.Sleep(time.Duration(agentHeartbeatIntervalSec) * time.Second)
@@ -315,10 +335,7 @@ func sendToPathAgent(
 	customPaths []string,
 	db *gorm.DB,
 ) (string, uint, string, string, string, bool) {
-	effectiveCustomPaths := normalizeCustomPaths(customPaths)
-	if len(effectiveCustomPaths) == 0 {
-		effectiveCustomPaths = loadGlobalPathCustomPaths(db)
-	}
+	effectiveCustomPaths := mergeCustomPaths(customPaths, loadGlobalPathCustomPaths(db))
 	var agents []models.PathAgent
 	if err := db.Where("is_active = ?", true).Find(&agents).Error; err != nil || len(agents) == 0 {
 		return "", 0, "", "", "", false

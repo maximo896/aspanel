@@ -3186,6 +3186,7 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 func (api *API) GetPanelLogs(c *gin.Context) {
 	offset, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("offset", "0")))
 	limit, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "200")))
+	sinceTs, _ := strconv.ParseInt(strings.TrimSpace(c.DefaultQuery("since_ts", "0")), 10, 64)
 	if offset < 0 {
 		offset = 0
 	}
@@ -3223,6 +3224,12 @@ func (api *API) GetPanelLogs(c *gin.Context) {
 		if contains != "" && !strings.Contains(line, contains) {
 			continue
 		}
+		if sinceTs > 0 {
+			lineTs := extractPanelLogUnixTimestamp(line)
+			if lineTs > 0 && lineTs < sinceTs {
+				continue
+			}
+		}
 		if index >= offset && len(entries) < limit {
 			entries = append(entries, entry{Offset: index, Message: line})
 		}
@@ -3240,6 +3247,18 @@ func (api *API) GetPanelLogs(c *gin.Context) {
 		"total":       index,
 		"truncated":   truncated,
 	})
+}
+
+func extractPanelLogUnixTimestamp(line string) int64 {
+	if len(line) < len("2006/01/02 15:04:05") {
+		return 0
+	}
+	timestampText := strings.TrimSpace(line[:len("2006/01/02 15:04:05")])
+	parsed, err := time.ParseInLocation("2006/01/02 15:04:05", timestampText, time.Local)
+	if err != nil {
+		return 0
+	}
+	return parsed.Unix()
 }
 
 func (api *API) GetCloudInstances(c *gin.Context) {
