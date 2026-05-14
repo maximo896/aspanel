@@ -118,10 +118,14 @@ export interface ProxyAgent {
   ID: number
   name: string
   server_host?: string
+  listen_port: number
+  transport?: string
+  client_id?: string
+  tunnel_protocol?: string
   tunnel_host: string
   tunnel_port: number
-  listen_port: number
-  is_active: boolean
+  tunnel_username?: string
+  tunnel_password?: string
 }
 
 export interface CloudSettings {

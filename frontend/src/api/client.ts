@@ -32,6 +32,10 @@ export const deleteServer = (id: number) => api.delete(`/api/servers/${id}`).the
 export const refreshServer = (id: number) => api.post(`/api/servers/${id}/refresh`).then(r => r.data)
 export const cleanupOfflineAWVS = () => api.post<{ message: string; deleted_count: number }>('/api/servers/cleanup-offline').then(r => r.data)
 export const restartAWVSDocker = (ids: number[]) => api.post('/api/servers/restart-docker', { ids }).then(r => r.data)
+export const createAWVSConfig = (data: { name: string; max_concurrency: number }) => api.post<{ docker_cmd: string }>('/api/awvs/config', data).then(r => r.data)
+export const registerAWVSFromLink = (data: { protocol_link: string }) => api.post('/api/awvs/register', data).then(r => r.data)
+export const updateAWVSServerVersion = (id: number) => api.post(`/api/servers/${id}/update`).then(r => r.data)
+export const getAWVSManualUpdateCommand = (id: number) => api.get<{ command: string; command_powershell: string; name: string; type: string }>(`/api/servers/${id}/manual-update-command`).then(r => r.data)
 
 // Sqlmap Agents
 export const getSqlmapAgents = () => api.get<SqlmapAgent[]>('/api/sqlmap/agents').then(r => r.data)
@@ -87,9 +91,11 @@ export const getPanelLogs = (offset: number, contains?: string) => api.get<{ ent
 
 // Proxy Agents
 export const getProxyAgents = () => api.get<ProxyAgent[]>('/api/proxy/agents').then(r => r.data)
+export const createProxyAgentConfig = (data: Partial<ProxyAgent>) => api.post('/api/proxy/agents/config', data).then(r => r.data)
 export const createProxyAgent = (data: Partial<ProxyAgent>) => api.post('/api/proxy/agents', data).then(r => r.data)
 export const registerProxyAgentFromLink = (data: { link: string; name?: string }) => api.post('/api/proxy/agents/register', data).then(r => r.data)
 export const deleteProxyAgent = (id: number) => api.delete(`/api/proxy/agents/${id}`).then(r => r.data)
+export const setSqlmapAgentProxy = (id: number, proxy_agent_id: number) => api.post(`/api/sqlmap/agents/${id}/proxy`, { proxy_agent_id }).then(r => r.data)
 
 // SQLmap scan result type
 export interface SqlmapScan {
