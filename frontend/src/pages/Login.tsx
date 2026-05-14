@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Form, Input, Button, Card, Typography, message } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import axios from 'axios'
@@ -11,8 +11,13 @@ export default function LoginPage() {
   const { isAuthenticated, isLoading } = useAuth()
   const redirectTarget = new URLSearchParams(window.location.search).get('redirect') || '/tasks'
 
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) {
+      window.location.href = redirectTarget
+    }
+  }, [isAuthenticated, isLoading, redirectTarget])
+
   if (!isLoading && isAuthenticated) {
-    window.location.href = redirectTarget
     return null
   }
 

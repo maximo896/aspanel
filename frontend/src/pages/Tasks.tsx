@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Table, Input, Button, Space, Tag, Tooltip, Popconfirm,
@@ -102,33 +102,41 @@ export default function TasksPage() {
     onError: (e) => message.error(extractError(e)),
   })
 
-  const filtered = tasks
-    .filter(t => {
-      if (filter === 'has_data') return t.has_data
-      if (filter === 'has_shell') return t.has_shell
-      if (filter === 'has_injection') return t.has_injection
-      if (filter === 'has_finding') return t.has_finding
-      return true
-    })
-    .filter(t => {
-      const needle = search.trim().toLowerCase()
-      if (!needle) return true
-      const haystack = [
-        t.url,
-        String(t.ID),
-        t.status,
-        t.sqlmap_status,
-        t.path_scan_status,
-        t.sqlmap_task_id,
-        t.target_id,
-        t.scan_session_id,
-        t.requeue_reason,
-      ].join(' ').toLowerCase()
-      return haystack.includes(needle)
-    })
+  const filtered = useMemo(() => (
+    tasks
+      .filter(t => {
+        if (filter === 'has_data') return t.has_data
+        if (filter === 'has_shell') return t.has_shell
+        if (filter === 'has_injection') return t.has_injection
+        if (filter === 'has_finding') return t.has_finding
+        return true
+      })
+      .filter(t => {
+        const needle = search.trim().toLowerCase()
+        if (!needle) return true
+        const haystack = [
+          t.url,
+          String(t.ID),
+          t.status,
+          t.sqlmap_status,
+          t.path_scan_status,
+          t.sqlmap_task_id,
+          t.target_id,
+          t.scan_session_id,
+          t.requeue_reason,
+        ].join(' ').toLowerCase()
+        return haystack.includes(needle)
+      })
+  ), [tasks, filter, search])
 
   useEffect(() => {
-    setSelected(prev => prev.filter(id => filtered.some(task => task.ID === id)))
+    setSelected(prev => {
+      const next = prev.filter(id => filtered.some(task => task.ID === id))
+      if (next.length === prev.length && next.every((id, index) => id === prev[index])) {
+        return prev
+      }
+      return next
+    })
   }, [filtered])
 
   const columns: ColumnsType<Task> = [

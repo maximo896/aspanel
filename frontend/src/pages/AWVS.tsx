@@ -35,7 +35,13 @@ export default function AWVSPage() {
   const visible = showInactive ? servers : servers.filter(s => s.is_active)
 
   useEffect(() => {
-    setSelected(prev => prev.filter(id => visible.some(server => server.ID === id)))
+    setSelected(prev => {
+      const next = prev.filter(id => visible.some(server => server.ID === id))
+      if (next.length === prev.length && next.every((id, index) => id === prev[index])) {
+        return prev
+      }
+      return next
+    })
   }, [visible])
 
   const updateMut = useMutation({

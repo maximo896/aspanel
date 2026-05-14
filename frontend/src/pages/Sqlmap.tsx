@@ -37,7 +37,13 @@ export default function SqlmapPage() {
   })
 
   useEffect(() => {
-    setSelected(prev => prev.filter(id => agents.some(agent => agent.ID === id)))
+    setSelected(prev => {
+      const next = prev.filter(id => agents.some(agent => agent.ID === id))
+      if (next.length === prev.length && next.every((id, index) => id === prev[index])) {
+        return prev
+      }
+      return next
+    })
   }, [agents])
 
   const updateMut = useMutation({
