@@ -77,6 +77,8 @@ export default function SqlmapV3Page() {
   const [selected, setSelected] = useState<number[]>([])
   const [editingAgent, setEditingAgent] = useState<SqlmapAgent | null>(null)
   const [refreshingId, setRefreshingId] = useState<number | null>(null)
+  const [installOpen, setInstallOpen] = useState(false)
+  const [registerOpen, setRegisterOpen] = useState(false)
   const [commandModal, setCommandModal] = useState<CommandModalState | null>(null)
   const [form] = Form.useForm()
   const [installForm] = Form.useForm()
@@ -170,6 +172,7 @@ export default function SqlmapV3Page() {
     mutationFn: (payload: { name: string; max_concurrency: number; proxy_agent_id?: number }) => createSqlmapAgentConfig(payload),
     onSuccess: data => {
       installForm.resetFields()
+      setInstallOpen(false)
       setCommandModal({
         title: t('install_sqlmap_command'),
         command: String(data?.docker_cmd || ''),
@@ -184,6 +187,7 @@ export default function SqlmapV3Page() {
     onSuccess: (data: { error?: string }) => {
       qc.invalidateQueries({ queryKey: ['sqlmap-agents'] })
       registerForm.resetFields()
+      setRegisterOpen(false)
       if (data?.error) {
         message.warning(`${t('registered_but_refresh_failed')}: ${data.error}`)
         return
@@ -403,50 +407,16 @@ export default function SqlmapV3Page() {
         </Space>
       </Card>
 
-      <Space style={{ width: '100%' }} size={16} align="start">
-        <Card title={t('generate_sqlmap_cmd')} style={{ flex: 1 }}>
-          <Form
-            form={installForm}
-            layout="vertical"
-            initialValues={{ max_concurrency: 10, proxy_agent_id: 0 }}
-            onFinish={values => createConfigMut.mutate(values)}
-          >
-            <Form.Item name="name" label={t('agent_name')} rules={[{ required: true }]}>
-              <Input />
-            </Form.Item>
-            <Form.Item name="max_concurrency" label={t('max_concurrency')} rules={[{ required: true }]}>
-              <InputNumber min={1} style={{ width: '100%' }} />
-            </Form.Item>
-            <Form.Item name="proxy_agent_id" label={t('bound_proxy')}>
-              <Select
-                options={[
-                  { label: t('proxy_none'), value: 0 },
-                  ...proxyAgents.map((proxy: ProxyAgent) => ({ label: proxy.name, value: proxy.ID })),
-                ]}
-              />
-            </Form.Item>
-            <Button type="primary" icon={<CloudDownloadOutlined />} onClick={() => installForm.submit()} loading={createConfigMut.isPending}>
-              {t('generate')}
-            </Button>
-          </Form>
-        </Card>
-
-        <Card title={t('register_installed_agent')} style={{ flex: 1 }}>
-          <Form form={registerForm} layout="vertical" onFinish={values => registerMut.mutate(values)}>
-            <Form.Item name="protocol_link" label={t('protocol_link')} rules={[{ required: true }]}>
-              <Input.TextArea rows={4} placeholder="sqlmapagent://..." />
-            </Form.Item>
-            <Button type="primary" icon={<UploadOutlined />} onClick={() => registerForm.submit()} loading={registerMut.isPending}>
-              {t('register_agent')}
-            </Button>
-          </Form>
-        </Card>
-      </Space>
-
       <Card
         title={t('managed_agents')}
         extra={
           <Space wrap>
+            <Button size="small" icon={<CloudDownloadOutlined />} onClick={() => setInstallOpen(true)}>
+              {t('install_command')}
+            </Button>
+            <Button size="small" icon={<UploadOutlined />} onClick={() => setRegisterOpen(true)}>
+              {t('register_link')}
+            </Button>
             {selected.length > 0 && (
               <Popconfirm title={tr('confirm_batch_restart_sqlmap_docker', { count: selected.length })} onConfirm={() => restartMut.mutate(selected)}>
                 <Button size="small" loading={restartMut.isPending}>{`${t('batch_restart_docker')}(${selected.length})`}</Button>
@@ -508,6 +478,52 @@ export default function SqlmapV3Page() {
           </Form.Item>
           <Form.Item name="manager_url" label="Manager URL"><Input placeholder="http://ip:port" /></Form.Item>
           <Form.Item name="manager_token" label="Manager Token"><Input.Password placeholder="******" /></Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={t('generate_sqlmap_cmd')}
+        open={installOpen}
+        onCancel={() => setInstallOpen(false)}
+        onOk={() => installForm.submit()}
+        confirmLoading={createConfigMut.isPending}
+        destroyOnHidden
+      >
+        <Form
+          form={installForm}
+          layout="vertical"
+          initialValues={{ max_concurrency: 10, proxy_agent_id: 0 }}
+          onFinish={values => createConfigMut.mutate(values)}
+        >
+          <Form.Item name="name" label={t('agent_name')} rules={[{ required: true }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="max_concurrency" label={t('max_concurrency')} rules={[{ required: true }]}>
+            <InputNumber min={1} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="proxy_agent_id" label={t('bound_proxy')}>
+            <Select
+              options={[
+                { label: t('proxy_none'), value: 0 },
+                ...proxyAgents.map((proxy: ProxyAgent) => ({ label: proxy.name, value: proxy.ID })),
+              ]}
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={t('register_installed_agent')}
+        open={registerOpen}
+        onCancel={() => setRegisterOpen(false)}
+        onOk={() => registerForm.submit()}
+        confirmLoading={registerMut.isPending}
+        destroyOnHidden
+      >
+        <Form form={registerForm} layout="vertical" onFinish={values => registerMut.mutate(values)}>
+          <Form.Item name="protocol_link" label={t('protocol_link')} rules={[{ required: true }]}>
+            <Input.TextArea rows={4} placeholder="sqlmapagent://..." />
+          </Form.Item>
         </Form>
       </Modal>
 
