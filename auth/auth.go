@@ -3,14 +3,15 @@ package auth
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"errors"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"hash/fnv"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -103,19 +104,18 @@ func HandleCLI(db *gorm.DB, args []string) (bool, error) {
 func SessionAuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		// Allow the SPA entry point, static assets, and login endpoint without auth.
-		if path == "/" || strings.HasPrefix(path, "/static/") ||
-			strings.HasPrefix(path, "/assets/") ||
-			path == "/tasks" || path == "/awvs" || path == "/sqlmap" ||
-			path == "/path-agent" || path == "/cloud" || path == "/proxy" ||
-			path == "/login" ||
-			path == "/api/auth/login" {
+		if strings.HasPrefix(path, "/static/") || strings.HasPrefix(path, "/assets/") || path == "/api/auth/login" || path == "/login" {
 			c.Next()
 			return
 		}
 
 		rawToken, err := getSessionTokenFromRequest(c)
 		if err != nil || strings.TrimSpace(rawToken) == "" {
+			if isSPARoute(path) {
+				c.Redirect(http.StatusFound, "/login?redirect="+url.QueryEscape(path))
+				c.Abort()
+				return
+			}
 			abortUnauthorized(c)
 			return
 		}
@@ -124,6 +124,12 @@ func SessionAuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 		var sess models.AdminSession
 		if err := db.Where("token_hash = ?", tokenHash).First(&sess).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
+				if isSPARoute(path) {
+					clearSessionCookie(c)
+					c.Redirect(http.StatusFound, "/login?redirect="+url.QueryEscape(path))
+					c.Abort()
+					return
+				}
 				abortUnauthorized(c)
 				return
 			}
@@ -133,11 +139,25 @@ func SessionAuthMiddleware(db *gorm.DB) gin.HandlerFunc {
 		if sess.ExpiresAt > 0 && time.Now().Unix() >= sess.ExpiresAt {
 			db.Delete(&sess)
 			clearSessionCookie(c)
+			if isSPARoute(path) {
+				c.Redirect(http.StatusFound, "/login?redirect="+url.QueryEscape(path))
+				c.Abort()
+				return
+			}
 			abortUnauthorized(c)
 			return
 		}
 		extendSession(db, &sess)
 		c.Next()
+	}
+}
+
+func isSPARoute(path string) bool {
+	switch strings.TrimSpace(path) {
+	case "/", "/tasks", "/awvs", "/sqlmap", "/path-agent", "/cloud", "/proxy":
+		return true
+	default:
+		return false
 	}
 }
 

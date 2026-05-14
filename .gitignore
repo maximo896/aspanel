@@ -13,3 +13,4 @@ awvs-sqlmap-panel.exe
 data/panel.log
 data/*.db
 data/releases/
+data/tmp/
