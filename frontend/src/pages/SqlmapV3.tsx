@@ -55,7 +55,6 @@ type CommandModalState = {
   title: string
   command?: string
   bash?: string
-  powershell?: string
 }
 
 function formatTime(ts: number) {
@@ -228,13 +227,11 @@ export default function SqlmapV3Page() {
   const handleCopyUpdateCommand = async (agent: SqlmapAgent) => {
     try {
       const data = await getSqlmapManualUpdateCommand(agent.ID)
-      const powershell = String(data?.command_powershell || '').trim()
-      const command = powershell || String(data?.command || '').trim()
+      const command = String(data?.command || '').trim()
       await copyText(command, t('update_command_copied'))
       setCommandModal({
         title: `${agent.name || 'Sqlmap'} ${t('copy_update_command')}`,
-        command: String(data?.command || ''),
-        powershell,
+        command,
       })
     } catch (error) {
       message.error(extractError(error))
@@ -264,13 +261,11 @@ export default function SqlmapV3Page() {
         message.success(t('sqlmap_agent_updated'))
       }
 
-      const powershell = String(proxyResp?.gateway_cmd_powershell || '').trim()
       const bash = String(proxyResp?.gateway_cmd_bash || proxyResp?.gateway_cmd || '').trim()
-      if (proxyAgentId > 0 && (powershell || bash)) {
+      if (proxyAgentId > 0 && bash) {
         setCommandModal({
           title: t('proxy_gateway_command'),
           bash,
-          powershell,
         })
       }
     } catch {
@@ -534,15 +529,6 @@ export default function SqlmapV3Page() {
         footer={
           <Space>
             <Button onClick={() => setCommandModal(null)}>{t('close')}</Button>
-            {commandModal?.powershell && (
-              <Button
-                type="primary"
-                icon={<CopyOutlined />}
-                onClick={() => copyText(commandModal.powershell || '', t('powershell_command_copied'))}
-              >
-                {t('copy_powershell')}
-              </Button>
-            )}
             {commandModal?.bash && (
               <Button
                 icon={<CopyOutlined />}
@@ -564,12 +550,6 @@ export default function SqlmapV3Page() {
         destroyOnHidden
       >
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
-          {commandModal?.powershell && (
-            <div>
-              <div style={{ fontWeight: 500, marginBottom: 4 }}>PowerShell</div>
-              <Input.TextArea value={commandModal.powershell} rows={6} readOnly />
-            </div>
-          )}
           {commandModal?.bash && (
             <div>
               <div style={{ fontWeight: 500, marginBottom: 4 }}>Bash</div>
