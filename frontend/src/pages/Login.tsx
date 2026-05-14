@@ -43,11 +43,11 @@ export default function LoginPage() {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: '#0a0a0a',
+      background: '#f5f7fa',
     }}>
-      <Card style={{ width: 360, background: '#141414', border: '1px solid rgba(255,255,255,0.08)' }}>
+      <Card style={{ width: 360, background: '#fff', border: '1px solid #f0f0f0', boxShadow: '0 8px 24px rgba(0,0,0,0.06)' }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <Title level={3} style={{ color: '#fff', margin: 0 }}>AWVS + Sqlmap</Title>
+          <Title level={3} style={{ margin: 0 }}>AWVS + Sqlmap</Title>
           <Text type="secondary">管理面板</Text>
         </div>
         <Form onFinish={onFinish} layout="vertical" size="large">

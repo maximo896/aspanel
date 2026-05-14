@@ -32,13 +32,13 @@ export default function MainLayout() {
   const { error, isLoading, isAuthenticated, shouldLoginRedirect } = useAuth()
 
   if (isLoading || shouldLoginRedirect) {
-    return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0a' }}><Spin size="large" /></div>
+    return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f7fa' }}><Spin size="large" /></div>
   }
   if (!isAuthenticated) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0a' }}>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f7fa' }}>
         <Space direction="vertical" align="center">
-          <Text style={{ color: '#fff' }}>无法验证当前会话</Text>
+          <Text>无法验证当前会话</Text>
           <Text type="secondary">{error instanceof Error ? error.message : '请重试'}</Text>
           <Button onClick={() => window.location.reload()}>重试</Button>
         </Space>
@@ -52,18 +52,18 @@ export default function MainLayout() {
         collapsible
         collapsed={collapsed}
         trigger={null}
-        theme="dark"
-        style={{ position: 'sticky', top: 0, height: '100vh', overflow: 'auto' }}
+        theme="light"
+        style={{ position: 'sticky', top: 0, height: '100vh', overflow: 'auto', borderRight: '1px solid #f0f0f0', background: '#fff' }}
       >
-        <div style={{ padding: '16px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ padding: '16px 12px', borderBottom: '1px solid #f0f0f0' }}>
           {!collapsed && (
-            <Text strong style={{ color: '#fff', fontSize: 14 }}>
+            <Text strong style={{ fontSize: 14 }}>
               AWVS + Sqlmap
             </Text>
           )}
         </div>
         <Menu
-          theme="dark"
+          theme="light"
           mode="inline"
           selectedKeys={[location.pathname]}
           items={menuItems}
@@ -75,8 +75,8 @@ export default function MainLayout() {
         <Header
           style={{
             padding: '0 16px',
-            background: '#141414',
-            borderBottom: '1px solid rgba(255,255,255,0.08)',
+            background: '#fff',
+            borderBottom: '1px solid #f0f0f0',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -86,13 +86,12 @@ export default function MainLayout() {
             type="text"
             icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
             onClick={() => setCollapsed(!collapsed)}
-            style={{ color: '#fff' }}
           />
           <Space>
             <Button
               type="link"
               size="small"
-              style={{ color: 'rgba(255,255,255,0.45)' }}
+              style={{ color: 'rgba(0,0,0,0.45)' }}
               onClick={async () => {
                 await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
                 window.location.href = '/login'
@@ -102,7 +101,7 @@ export default function MainLayout() {
             </Button>
           </Space>
         </Header>
-        <Content style={{ padding: 16, overflow: 'auto' }}>
+        <Content style={{ padding: 16, overflow: 'auto', background: '#f5f7fa' }}>
           <Outlet />
         </Content>
       </Layout>

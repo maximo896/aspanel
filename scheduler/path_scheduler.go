@@ -74,6 +74,24 @@ func normalizeCustomPaths(values []string) []string {
 	return normalized
 }
 
+func decodeCustomPathsSetting(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ','
+	})
+	return normalizeCustomPaths(parts)
+}
+
+func loadGlobalPathCustomPaths(db *gorm.DB) []string {
+	var settings models.CloudSettings
+	if err := db.Order("id desc").Select("path_default_custom_paths").First(&settings).Error; err != nil {
+		return nil
+	}
+	return decodeCustomPathsSetting(settings.PathDefaultCustomPaths)
+}
+
 func refreshPathAgentsStatus(db *gorm.DB) {
 	for {
 		time.Sleep(time.Duration(agentHeartbeatIntervalSec) * time.Second)
@@ -297,6 +315,10 @@ func sendToPathAgent(
 	customPaths []string,
 	db *gorm.DB,
 ) (string, uint, string, string, string, bool) {
+	effectiveCustomPaths := normalizeCustomPaths(customPaths)
+	if len(effectiveCustomPaths) == 0 {
+		effectiveCustomPaths = loadGlobalPathCustomPaths(db)
+	}
 	var agents []models.PathAgent
 	if err := db.Where("is_active = ?", true).Find(&agents).Error; err != nil || len(agents) == 0 {
 		return "", 0, "", "", "", false
@@ -340,7 +362,7 @@ func sendToPathAgent(
 		"task_id":          task.ID,
 		"target_url":       targetURL,
 		"katana_seed_mode": normalizeKatanaSeedMode(katanaSeedMode),
-		"custom_paths":     normalizeCustomPaths(customPaths),
+		"custom_paths":     effectiveCustomPaths,
 	}
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/scan", selected.URL), bytes.NewBuffer(body))

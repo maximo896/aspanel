@@ -63,7 +63,8 @@ function CloudLogsPanel() {
   const [logs, setLogs] = useState<{ offset: number; message: string }[]>([])
   const [offset, setOffset] = useState(0)
   const offsetRef = useRef(0)
-  const logsEndRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const shouldStickRef = useRef(false)
 
   useEffect(() => {
     offsetRef.current = offset
@@ -73,7 +74,12 @@ function CloudLogsPanel() {
     let unmounted = false
     const fetchLogs = async () => {
       try {
-        const data = await getPanelLogs(offsetRef.current)
+        const container = containerRef.current
+        if (container) {
+          const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+          shouldStickRef.current = distanceToBottom < 24
+        }
+        const data = await getPanelLogs(offsetRef.current, '[cloud]')
         if (unmounted) return
         setOffset(data.next_offset)
         if (data.entries && data.entries.length > 0) {
@@ -95,29 +101,32 @@ function CloudLogsPanel() {
   }, [])
 
   useEffect(() => {
-    if (logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    if (shouldStickRef.current && containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight
     }
   }, [logs])
 
   return (
-    <Card title="系统与竞价日志" size="small" style={{ marginTop: 16 }}>
-      <div style={{
+    <Card title="云竞价日志" size="small" style={{ marginTop: 16 }}>
+      <div
+        ref={containerRef}
+        style={{
         height: 400,
         overflowY: 'auto',
-        backgroundColor: '#141414',
+        backgroundColor: '#ffffff',
         padding: 12,
-        borderRadius: 4,
+        borderRadius: 6,
+        border: '1px solid #d9d9d9',
         fontFamily: 'monospace',
         fontSize: 12,
-        color: '#d4d4d4',
+        color: '#262626',
         whiteSpace: 'pre-wrap',
-        wordBreak: 'break-all'
-      }}>
+        wordBreak: 'break-all',
+      }}
+      >
         {logs.map((log, i) => (
           <div key={`${log.offset}-${i}`}>{log.message}</div>
         ))}
-        <div ref={logsEndRef} />
       </div>
     </Card>
   )

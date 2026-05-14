@@ -83,7 +83,7 @@ export const getCloudInstances = () => api.get<CloudInstance[]>('/api/cloud/inst
 export const startCloudScale = (workload: string) => api.post<{ message: string; workload: string; results: Record<string, string> }>(`/api/cloud/scale/start?workload=${workload}`).then(r => r.data)
 export const stopCloudScale = (workload: string) => api.post(`/api/cloud/scale/stop?workload=${workload}`).then(r => r.data)
 export const cleanupCloudInstances = (workload: string) => api.post<{ message: string; terminated_count: number }>(`/api/cloud/instances/cleanup?workload=${workload}`).then(r => r.data)
-export const getPanelLogs = (offset: number) => api.get<{ entries: { offset: number; message: string }[]; next_offset: number; total: number; truncated: boolean }>('/api/panel/logs', { params: { offset } }).then(r => r.data)
+export const getPanelLogs = (offset: number, contains?: string) => api.get<{ entries: { offset: number; message: string }[]; next_offset: number; total: number; truncated: boolean }>('/api/panel/logs', { params: { offset, contains } }).then(r => r.data)
 
 // Proxy Agents
 export const getProxyAgents = () => api.get<ProxyAgent[]>('/api/proxy/agents').then(r => r.data)
@@ -106,7 +106,10 @@ export interface SqlmapScan {
   request_file?: string
   request_content?: string
   scan_root?: string
+  force_ssl?: boolean
   last_error?: string
+  requested_options?: Record<string, unknown>
+  requested_proxy?: string
   runtime_proxy?: string
   runtime_proxy_file?: string
   content?: {

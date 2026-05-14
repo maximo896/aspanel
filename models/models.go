@@ -6,26 +6,26 @@ import (
 
 type AWVSServer struct {
 	gorm.Model
-	Name                 string `json:"name"`
-	URL                  string `json:"url"`
-	APIKey               string `json:"api_key"`
-	ManagerURL           string `json:"manager_url"`
-	ManagerToken         string `json:"-"`
-	AWVSUsername         string `json:"awvs_username"`
-	AWVSPassword         string `json:"awvs_password"`
-	MaxConcurrency       int    `json:"max_concurrency"`
-	CurrentRunning       int    `json:"current_running"`
-	PanelRunning         int    `json:"panel_running" gorm:"-"`
-	AutoRestartOnAPI500  bool   `json:"auto_restart_on_api_500" gorm:"default:false"`
-	LastAutoRestartAt    int64  `json:"last_auto_restart_at"`
-	IsActive             bool   `json:"is_active" gorm:"default:true"`
-	LastCheckedAt        int64  `json:"last_checked_at"`
-	LastHeartbeatAt      int64  `json:"last_heartbeat_at"`
-	LastError            string `json:"last_error"`
-	Provider             string `json:"provider" gorm:"default:'manual'"`
-	InstanceID           string `json:"instance_id"`
-	Region               string `json:"region"`
-	Zone                 string `json:"zone"`
+	Name                string `json:"name"`
+	URL                 string `json:"url"`
+	APIKey              string `json:"api_key"`
+	ManagerURL          string `json:"manager_url"`
+	ManagerToken        string `json:"-"`
+	AWVSUsername        string `json:"awvs_username"`
+	AWVSPassword        string `json:"awvs_password"`
+	MaxConcurrency      int    `json:"max_concurrency"`
+	CurrentRunning      int    `json:"current_running"`
+	PanelRunning        int    `json:"panel_running" gorm:"-"`
+	AutoRestartOnAPI500 bool   `json:"auto_restart_on_api_500" gorm:"default:false"`
+	LastAutoRestartAt   int64  `json:"last_auto_restart_at"`
+	IsActive            bool   `json:"is_active" gorm:"default:true"`
+	LastCheckedAt       int64  `json:"last_checked_at"`
+	LastHeartbeatAt     int64  `json:"last_heartbeat_at"`
+	LastError           string `json:"last_error"`
+	Provider            string `json:"provider" gorm:"default:'manual'"`
+	InstanceID          string `json:"instance_id"`
+	Region              string `json:"region"`
+	Zone                string `json:"zone"`
 }
 
 type SqlmapAgent struct {
@@ -76,25 +76,25 @@ type PathAgent struct {
 
 type Task struct {
 	gorm.Model
-	URL            string `json:"url"`
-	Status         string `json:"status" gorm:"default:'pending'"`
-	AWVSServerID   uint   `json:"awvs_server_id"`
-	SqlmapAgentID  uint   `json:"sqlmap_agent_id"`
-	TargetID       string `json:"target_id"`
-	ScanSessionID  string `json:"scan_session_id"`
-	SqlmapTaskID   string `json:"sqlmap_task_id"`
-	SqlmapStatus   string `json:"sqlmap_status" gorm:"default:'none'"`
-	SqlmapAgentURL string `json:"sqlmap_agent_url"`
+	URL              string `json:"url"`
+	Status           string `json:"status" gorm:"default:'pending'"`
+	AWVSServerID     uint   `json:"awvs_server_id"`
+	SqlmapAgentID    uint   `json:"sqlmap_agent_id"`
+	TargetID         string `json:"target_id"`
+	ScanSessionID    string `json:"scan_session_id"`
+	SqlmapTaskID     string `json:"sqlmap_task_id"`
+	SqlmapStatus     string `json:"sqlmap_status" gorm:"default:'none'"`
+	SqlmapAgentURL   string `json:"sqlmap_agent_url"`
 	SqlmapResultJSON string `json:"sqlmap_result_json" gorm:"type:text"`
-	SqlmapCachedAt int64 `json:"sqlmap_cached_at"`
-	HasData        bool   `json:"has_data"`
-	HasShell       bool   `json:"has_shell"`
-	HasFinding     bool   `json:"has_finding"`
-	HasInjection   bool   `json:"has_injection"`
-	HasPathScan    bool   `json:"has_path_scan" gorm:"-"`
-	PathScanStatus string `json:"path_scan_status" gorm:"-"`
-	LastRequeuedAt int64  `json:"last_requeued_at"`
-	RequeueReason  string `json:"requeue_reason"`
+	SqlmapCachedAt   int64  `json:"sqlmap_cached_at"`
+	HasData          bool   `json:"has_data"`
+	HasShell         bool   `json:"has_shell"`
+	HasFinding       bool   `json:"has_finding"`
+	HasInjection     bool   `json:"has_injection"`
+	HasPathScan      bool   `json:"has_path_scan" gorm:"-"`
+	PathScanStatus   string `json:"path_scan_status" gorm:"-"`
+	LastRequeuedAt   int64  `json:"last_requeued_at"`
+	RequeueReason    string `json:"requeue_reason"`
 }
 
 type TaskPathScan struct {
@@ -184,6 +184,7 @@ type CloudSettings struct {
 	SubnetID                   string  `json:"subnet_id"`
 	InteractCmd                string  `json:"interact_cmd" gorm:"default:'interact.sh client'"`
 	SqlmapDefaultOptions       string  `json:"sqlmap_default_options" gorm:"type:text"`
+	PathDefaultCustomPaths     string  `json:"path_default_custom_paths" gorm:"type:text"`
 	LaunchStartedAt            int64   `json:"launch_started_at"`
 	PortMin                    int     `json:"port_min" gorm:"default:30000"`
 	PortMax                    int     `json:"port_max" gorm:"default:40000"`

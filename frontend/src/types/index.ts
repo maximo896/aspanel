@@ -156,6 +156,7 @@ export interface CloudSettings {
   subnet_id: string
   interact_cmd: string
   sqlmap_default_options: string
+  path_default_custom_paths: string
   sqlmap_agent_default_use_proxy: boolean
   awvs_launch_started_at: number
   sqlmap_launch_started_at: number

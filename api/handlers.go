@@ -131,6 +131,29 @@ func normalizeSqlmapOptionsJSON(raw string) (string, error) {
 	return string(buf), nil
 }
 
+func normalizePathDefaultCustomPaths(raw string) string {
+	parts := strings.FieldsFunc(strings.TrimSpace(raw), func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ','
+	})
+	seen := make(map[string]struct{})
+	result := make([]string, 0, len(parts))
+	for _, item := range parts {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "/") {
+			trimmed = "/" + trimmed
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return strings.Join(result, "\n")
+}
+
 func testAWVSConnection(baseURL, apiKey string) (map[string]interface{}, error) {
 	client := awvs.NewClient(normalizeBaseURL(baseURL), strings.TrimSpace(apiKey))
 	return client.TestConnection()
@@ -2830,6 +2853,7 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 		"subnet_id":                      masked.SubnetID,
 		"interact_cmd":                   masked.InteractCmd,
 		"sqlmap_default_options":         masked.SqlmapDefaultOptions,
+		"path_default_custom_paths":      masked.PathDefaultCustomPaths,
 		"launch_started_at":              masked.LaunchStartedAt,
 		"port_min":                       masked.PortMin,
 		"port_max":                       masked.PortMax,
@@ -3097,6 +3121,9 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 		return
 	}
 	settings.SqlmapDefaultOptions = normalizedOptions
+	if _, ok := present["path_default_custom_paths"]; ok {
+		settings.PathDefaultCustomPaths = normalizePathDefaultCustomPaths(req.PathDefaultCustomPaths)
+	}
 	if strings.TrimSpace(settings.InstanceType) == "" {
 		settings.InstanceType = "S5.SMALL1"
 	}

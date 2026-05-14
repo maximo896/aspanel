@@ -9,7 +9,7 @@ import type { ColumnsType } from 'antd/es/table'
 import type { PathAgent } from '../types'
 import {
   getPathAgents, updatePathAgent, deletePathAgent,
-  cleanupOfflinePath, restartPathDocker, extractError,
+  cleanupOfflinePath, restartPathDocker, extractError, getCloudSettings, updateCloudSettings,
 } from '../api/client'
 
 const { Text } = Typography
@@ -23,12 +23,26 @@ export default function PathAgentPage() {
   const qc = useQueryClient()
   const [selected, setSelected] = useState<number[]>([])
   const [editingAgent, setEditingAgent] = useState<PathAgent | null>(null)
+  const [defaultCustomPaths, setDefaultCustomPaths] = useState('')
+  const [defaultCustomPathsDirty, setDefaultCustomPathsDirty] = useState(false)
   const [form] = Form.useForm()
 
   const { data: agents = [], error: agentsError, isLoading, refetch } = useQuery({
     queryKey: ['path-agents'],
     queryFn: getPathAgents,
   })
+  const { data: cloudSettings, error: cloudSettingsError } = useQuery({
+    queryKey: ['cloud-settings'],
+    queryFn: getCloudSettings,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  })
+
+  useEffect(() => {
+    if (!defaultCustomPathsDirty) {
+      setDefaultCustomPaths(cloudSettings?.path_default_custom_paths || '')
+    }
+  }, [cloudSettings, defaultCustomPathsDirty])
 
   useEffect(() => {
     setSelected(prev => {
@@ -69,6 +83,15 @@ export default function PathAgentPage() {
   const restartMut = useMutation({
     mutationFn: (ids: number[]) => restartPathDocker(ids),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['path-agents'] }); setSelected([]); message.success('重启指令已发送') },
+    onError: (e) => message.error(extractError(e)),
+  })
+  const syncDefaultPathsMut = useMutation({
+    mutationFn: () => updateCloudSettings({ path_default_custom_paths: defaultCustomPaths }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cloud-settings'] })
+      setDefaultCustomPathsDirty(false)
+      message.success('路径扫描字典已同步到所有路径代理任务')
+    },
     onError: (e) => message.error(extractError(e)),
   })
 
@@ -154,6 +177,41 @@ export default function PathAgentPage() {
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={16}>
+      <Card
+        title="路径扫描字典"
+        extra={(
+          <Popconfirm
+            title="确认把当前路径字典同步到所有路径代理任务？"
+            onConfirm={() => syncDefaultPathsMut.mutate()}
+          >
+            <Button type="primary" size="small" loading={syncDefaultPathsMut.isPending} disabled={!defaultCustomPathsDirty}>
+              确认同步所有代理
+            </Button>
+          </Popconfirm>
+        )}
+      >
+        {cloudSettingsError && (
+          <Alert
+            type="error"
+            showIcon
+            message={extractError(cloudSettingsError)}
+            style={{ marginBottom: 12 }}
+          />
+        )}
+        <Space direction="vertical" style={{ width: '100%' }} size={8}>
+          <Text type="secondary">每行一个路径，新的路径扫描任务会自动把这份字典下发到所有路径代理。</Text>
+          <Input.TextArea
+            rows={8}
+            value={defaultCustomPaths}
+            placeholder="/admin&#10;/login.php&#10;/phpinfo.php"
+            onChange={(e) => {
+              setDefaultCustomPaths(e.target.value)
+              setDefaultCustomPathsDirty(true)
+            }}
+          />
+        </Space>
+      </Card>
+
       <Card
         title="路径扫描代理"
         extra={

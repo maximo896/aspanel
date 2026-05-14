@@ -9,7 +9,7 @@ import type { ColumnsType } from 'antd/es/table'
 import type { AWVSServer } from '../types'
 import {
   getServers, updateServer, deleteServer, refreshServer,
-  cleanupOfflineAWVS, restartAWVSDocker, extractError,
+  cleanupOfflineAWVS, restartAWVSDocker, extractError, getCloudSettings, updateCloudSettings,
 } from '../api/client'
 
 const { Text } = Typography
@@ -30,6 +30,12 @@ export default function AWVSPage() {
   const { data: servers = [], error: serversError, isLoading, refetch } = useQuery({
     queryKey: ['servers'],
     queryFn: getServers,
+  })
+  const { data: cloudSettings } = useQuery({
+    queryKey: ['cloud-settings'],
+    queryFn: getCloudSettings,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const visible = showInactive ? servers : servers.filter(s => s.is_active)
@@ -90,6 +96,14 @@ export default function AWVSPage() {
   const restartMut = useMutation({
     mutationFn: (ids: number[]) => restartAWVSDocker(ids),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['servers'] }); setSelected([]); message.success('重启指令已发送') },
+    onError: (e) => message.error(extractError(e)),
+  })
+  const awvsAutoRestartMut = useMutation({
+    mutationFn: (checked: boolean) => updateCloudSettings({ awvs_auto_restart_on_api_500: checked }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cloud-settings'] })
+      message.success('AWVS API 500 自动重启设置已更新')
+    },
     onError: (e) => message.error(extractError(e)),
   })
 
@@ -199,6 +213,12 @@ export default function AWVSPage() {
               checked={showInactive}
               onChange={setShowInactive}
             />
+            <Checkbox
+              checked={Boolean(cloudSettings?.awvs_auto_restart_on_api_500)}
+              onChange={(e) => awvsAutoRestartMut.mutate(e.target.checked)}
+            >
+              API 500 自动重启
+            </Checkbox>
             {selected.length > 0 && (
               <Popconfirm title={`重启 ${selected.length} 个节点的Docker？`} onConfirm={() => restartMut.mutate(selected)}>
                 <Button size="small" loading={restartMut.isPending}>批量重启Docker({selected.length})</Button>
@@ -246,6 +266,9 @@ export default function AWVSPage() {
           <Form.Item name="awvs_username" label="AWVS用户名"><Input /></Form.Item>
           <Form.Item name="awvs_password" label="AWVS密码"><Input.Password /></Form.Item>
           <Form.Item name="max_concurrency" label="最大并发数"><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="auto_restart_on_api_500" valuePropName="checked">
+            <Checkbox>当前节点启用 API 500 自动重启</Checkbox>
+          </Form.Item>
           <Form.Item name="manager_url" label="Manager URL"><Input placeholder="http://ip:port" /></Form.Item>
           <Form.Item name="manager_token" label="Manager Token"><Input.Password placeholder="留空则保持不变" /></Form.Item>
         </Form>

@@ -22,10 +22,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <ConfigProvider
         locale={zhCN}
         theme={{
-          algorithm: theme.darkAlgorithm,
+          algorithm: theme.defaultAlgorithm,
           token: {
             colorPrimary: '#1677ff',
             borderRadius: 6,
+            colorBgBase: '#f5f7fa',
+            colorTextBase: '#262626',
           },
         }}
       >

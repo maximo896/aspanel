@@ -4,7 +4,7 @@ import {
   Drawer, Tabs, Tag, Button, Space, Typography, Switch, Spin,
   message, Popconfirm, Select, Input, Card, Descriptions,
 } from 'antd'
-import { ReloadOutlined, SendOutlined, ScanOutlined } from '@ant-design/icons'
+import { ReloadOutlined, SendOutlined, ScanOutlined, CopyOutlined } from '@ant-design/icons'
 import type { Task, TaskFinding } from '../types'
 import type { SqlmapScan } from '../api/client'
 import {
@@ -18,14 +18,31 @@ import PathScanPanel from './PathScanPanel'
 const { Text } = Typography
 const { TextArea } = Input
 
-function parseCustomPaths(value: string): string[] {
-  return Array.from(new Set(
-    value
-      .split(/\r?\n|,/)
-      .map(item => item.trim().replace(/\\/g, '/').replace(/^\/+/, ''))
-      .map(item => item.split(/[?#]/, 1)[0]?.trim() || '')
-      .filter(Boolean),
-  ))
+function quoteShellArg(value: string) {
+  return `"${String(value || '').replace(/(["\\$`])/g, '\\$1')}"`
+}
+
+function buildSqlmapManualCommand(scan: SqlmapScan | null) {
+  const requestFile = String(scan?.request_file || '').trim()
+  if (!requestFile) return ''
+  const requestedOptions = scan?.requested_options || {}
+  const parts = ['sqlmap', '-r', quoteShellArg(requestFile), '--batch']
+  if (scan?.force_ssl) parts.push('--force-ssl')
+  if (requestedOptions.randomAgent !== false) parts.push('--random-agent')
+  if (requestedOptions.parseErrors !== false) parts.push('--parse-errors')
+  if (requestedOptions.keepAlive !== false) parts.push('--keep-alive')
+  if (requestedOptions.skipWaf !== false) parts.push('--skip-waf')
+  const proxyValue = String(scan?.runtime_proxy || scan?.requested_proxy || requestedOptions.proxy || '').trim()
+  if (proxyValue) parts.push(`--proxy=${quoteShellArg(proxyValue)}`)
+  if (requestedOptions.level) parts.push(`--level=${requestedOptions.level}`)
+  if (requestedOptions.risk) parts.push(`--risk=${requestedOptions.risk}`)
+  if (requestedOptions.threads) parts.push(`--threads=${requestedOptions.threads}`)
+  if (requestedOptions.timeout) parts.push(`--timeout=${requestedOptions.timeout}`)
+  if (requestedOptions.retries) parts.push(`--retries=${requestedOptions.retries}`)
+  if (requestedOptions.technique) parts.push(`--technique=${requestedOptions.technique}`)
+  if (requestedOptions.tamper) parts.push(`--tamper=${requestedOptions.tamper}`)
+  parts.push('--current-db')
+  return parts.join(' ')
 }
 
 interface Props {
@@ -134,9 +151,10 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
     .join('\n')
   const sqlmapBusy = ['running', 'queued'].includes((finding.sqlmap_status || '').toLowerCase())
   const canEditRequest = Boolean(finding.sqlmap_task_id && finding.sqlmap_agent_id && !sqlmapBusy)
+  const manualCommand = buildSqlmapManualCommand(scan)
 
   return (
-    <div style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '8px 0' }}>
+    <div style={{ borderBottom: '1px solid #f0f0f0', padding: '8px 0' }}>
       <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
         <Space>
           <Tag color={severityColor[finding.severity?.toLowerCase() || ''] || 'default'}>
@@ -202,11 +220,36 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
                 { key: 'proxycfg', label: '代理配置', children: scan?.runtime_proxy_file || '-' },
               ]}
             />
+            {scan ? (
+              <SqlmapTree
+                finding={finding}
+                scan={scan}
+                onRefresh={loadScan}
+                loading={scanLoading}
+              />
+            ) : (
+              <Text type="secondary">{scanError ? `SQLMap 详情加载失败: ${scanError}` : '暂无 SQLMap 详情'}</Text>
+            )}
             <Card
               size="small"
               title="请求内容"
               extra={
                 <Space size={4}>
+                  <Button
+                    size="small"
+                    icon={<CopyOutlined />}
+                    disabled={!manualCommand}
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(manualCommand)
+                        message.success('SQLMap 手动命令已复制')
+                      } catch (err) {
+                        message.error(extractError(err))
+                      }
+                    }}
+                  >
+                    复制手动命令
+                  </Button>
                   <Button
                     size="small"
                     onClick={() => {
@@ -249,16 +292,6 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
                 {logText || scan?.last_error || scanError || '暂无日志'}
               </pre>
             </Card>
-            {scan ? (
-              <SqlmapTree
-                finding={finding}
-                scan={scan}
-                onRefresh={loadScan}
-                loading={scanLoading}
-              />
-            ) : (
-              <Text type="secondary">{scanError ? `SQLMap 详情加载失败: ${scanError}` : '暂无 SQLMap 详情'}</Text>
-            )}
           </Space>
         </div>
       )}
@@ -270,7 +303,6 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
   const qc = useQueryClient()
   const [retryPathAgentId, setRetryPathAgentId] = useState(0)
   const [pathSeedMode, setPathSeedMode] = useState('auto')
-  const [customPathInput, setCustomPathInput] = useState('')
 
   const { data: findingsData, isLoading: findingsLoading, refetch: refetchFindings } = useQuery({
     queryKey: ['task-findings', task?.ID],
@@ -289,7 +321,6 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
   useEffect(() => {
     setRetryPathAgentId(0)
     setPathSeedMode('auto')
-    setCustomPathInput('')
   }, [task?.ID])
 
   const retryPathMut = useMutation({
@@ -297,7 +328,7 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
       task!.ID,
       retryPathAgentId || undefined,
       pathSeedMode,
-      parseCustomPaths(customPathInput),
+      [],
     ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tasks'] })
@@ -331,11 +362,11 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
             ))}
             {findings.filter(f => !f.is_sqli).length > 0 && (
               <details>
-                <summary style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12, cursor: 'pointer' }}>
+                <summary style={{ color: 'rgba(0,0,0,0.45)', fontSize: 12, cursor: 'pointer' }}>
                   其他发现 ({findings.filter(f => !f.is_sqli).length})
                 </summary>
                 {findings.filter(f => !f.is_sqli).map(f => (
-                  <div key={f.ID} style={{ padding: '4px 0', fontSize: 12, color: 'rgba(255,255,255,0.65)' }}>
+                  <div key={f.ID} style={{ padding: '4px 0', fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>
                     <Tag color="default">{f.severity}</Tag> {f.vuln_name || f.affects_url}
                   </div>
                 ))}
@@ -385,17 +416,9 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
               </Button>
               <Button size="small" icon={<ReloadOutlined />} onClick={() => refetchPath()}>刷新</Button>
             </Space>
-            <Space direction="vertical" size={4} style={{ width: '100%' }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                自定义 dirsearch 路径 ({parseCustomPaths(customPathInput).length})
-              </Text>
-              <TextArea
-                value={customPathInput}
-                onChange={(event) => setCustomPathInput(event.target.value)}
-                placeholder={'admin\nlogin\napi/v1\nbackup.zip'}
-                autoSize={{ minRows: 4, maxRows: 8 }}
-              />
-            </Space>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              路径扫描字典已移到“路径代理”页面统一配置，重新扫描时会自动同步到所有路径代理任务。
+            </Text>
             <PathScanPanel scans={(pathScans as { scans?: unknown[] })?.scans || []} taskId={task?.ID || 0} />
           </Space>
         </Spin>
@@ -407,7 +430,7 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
     <Drawer
       title={
         <Space direction="vertical" size={0} style={{ lineHeight: 1.4 }}>
-          <Text style={{ fontSize: 13, color: '#fff' }}>任务详情 #{task?.ID}</Text>
+          <Text style={{ fontSize: 13 }}>任务详情 #{task?.ID}</Text>
           <Text style={{ fontSize: 12 }} type="secondary" ellipsis={{ tooltip: task?.url }}>
             {task?.url}
           </Text>

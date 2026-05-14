@@ -88,8 +88,8 @@ function PathItemRow({ item, highlighted }: { item: PathItem; highlighted: boole
     <div
       style={{
         padding: '4px 8px',
-        borderBottom: '1px solid rgba(255,255,255,0.04)',
-        background: highlighted ? 'rgba(255,165,0,0.05)' : undefined,
+        borderBottom: '1px solid #f0f0f0',
+        background: highlighted ? '#fff7e6' : undefined,
       }}
     >
       <Space style={{ width: '100%', justifyContent: 'space-between' }}>
