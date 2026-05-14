@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Table, Input, Button, Space, Tag, Tooltip, Popconfirm,
-  message, Card, Select, Typography, Checkbox, Badge,
+  message, Card, Select, Typography, Checkbox, Badge, Alert,
 } from 'antd'
 import {
   SearchOutlined, ReloadOutlined, DeleteOutlined, SendOutlined,
@@ -28,8 +28,14 @@ const filterOptions = [
 
 const statusColor: Record<string, 'default' | 'processing' | 'success' | 'error' | 'warning'> = {
   pending: 'default',
+  queued: 'warning',
+  running: 'processing',
   scanning: 'processing',
+  completed: 'success',
   done: 'success',
+  failed: 'error',
+  aborted: 'warning',
+  exit: 'warning',
   error: 'error',
 }
 
@@ -42,7 +48,7 @@ export default function TasksPage() {
   const [addUrlsText, setAddUrlsText] = useState('')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
 
-  const { data: tasks = [], isLoading, refetch } = useQuery({
+  const { data: tasks = [], isLoading, error: tasksError, refetch } = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
   })
@@ -71,7 +77,10 @@ export default function TasksPage() {
 
   const retryPathMut = useMutation({
     mutationFn: (ids: number[]) => batchRetryPathScan(ids),
-    onSuccess: () => { message.success('批量路径扫描已触发') },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      message.success('批量路径扫描已触发')
+    },
     onError: (e) => message.error(extractError(e)),
   })
 
@@ -109,10 +118,18 @@ export default function TasksPage() {
         String(t.ID),
         t.status,
         t.sqlmap_status,
+        t.path_scan_status,
         t.sqlmap_task_id,
+        t.target_id,
+        t.scan_session_id,
+        t.requeue_reason,
       ].join(' ').toLowerCase()
       return haystack.includes(needle)
     })
+
+  useEffect(() => {
+    setSelected(prev => prev.filter(id => filtered.some(task => task.ID === id)))
+  }, [filtered])
 
   const columns: ColumnsType<Task> = [
     {
@@ -257,6 +274,14 @@ export default function TasksPage() {
           </Space>
         }
       >
+        {tasksError && (
+          <Alert
+            type="error"
+            showIcon
+            message={extractError(tasksError)}
+            style={{ marginBottom: 12 }}
+          />
+        )}
         <Table
           dataSource={filtered}
           columns={columns}
@@ -269,7 +294,6 @@ export default function TasksPage() {
             onClick: () => setSelectedTask(record),
             style: { cursor: 'pointer' },
           })}
-          rowClassName={record => record.ID === selectedTask?.ID ? 'ant-table-row-selected' : ''}
         />
       </Card>
 

@@ -3,22 +3,25 @@ import { useQuery } from '@tanstack/react-query'
 import axios from 'axios'
 
 export function useAuth() {
-  const { data, isLoading, isError } = useQuery({
+  const { data, error, isLoading, isError } = useQuery({
     queryKey: ['auth-me'],
     queryFn: () => axios.get('/api/auth/me', { withCredentials: true }).then(r => r.data),
     retry: false,
     staleTime: 60_000,
     refetchInterval: false,
   })
+  const authStatus = axios.isAxiosError(error) ? error.response?.status : undefined
+  const shouldLoginRedirect = authStatus === 401 || authStatus === 403
 
   useEffect(() => {
-    if (isError && !isLoading) {
-      const path = window.location.pathname
-      if (path !== '/login') {
-        window.location.href = '/login'
+    if (shouldLoginRedirect && !isLoading) {
+      const pathname = window.location.pathname
+      const fullPath = `${pathname}${window.location.search}${window.location.hash}`
+      if (pathname !== '/login') {
+        window.location.href = `/login?redirect=${encodeURIComponent(fullPath)}`
       }
     }
-  }, [isError, isLoading])
+  }, [shouldLoginRedirect, isLoading])
 
-  return { user: data, isLoading, isAuthenticated: !!data && !isError }
+  return { user: data, error, isLoading, isAuthenticated: !!data && !isError, shouldLoginRedirect }
 }

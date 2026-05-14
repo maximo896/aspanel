@@ -35,7 +35,7 @@ type API struct {
 }
 
 const (
-	defaultLatestSQLMapAgentVersion = "2.1.2"
+	defaultLatestSQLMapAgentVersion = "2.4.4"
 	sqlmapAgentReleaseAPI           = "https://api.github.com/repos/maximo896/as/releases/latest"
 	sqlmapAgentTagsAPI              = "https://api.github.com/repos/maximo896/as/tags?per_page=1"
 	sqlmapAgentVersionCacheTTL      = 10 * time.Minute
@@ -67,6 +67,9 @@ func (api *API) getFindingAgent(finding *models.TaskFinding) (*models.SqlmapAgen
 
 func (api *API) ensureSqlmapAgentProxyURL(agent *models.SqlmapAgent) {
 	if agent == nil {
+		return
+	}
+	if agent.ProxyAgentID == 0 {
 		return
 	}
 	if strings.TrimSpace(agent.ProxyURL) != "" {
@@ -149,8 +152,15 @@ func loadGlobalAWVSAutoRestartOnAPI500(db *gorm.DB) bool {
 	return settings.AWVSAutoRestartOnAPI500
 }
 
+func maskAWVSServerSecrets(server models.AWVSServer) models.AWVSServer {
+	server.APIKey = ""
+	server.ManagerToken = ""
+	server.AWVSPassword = ""
+	return server
+}
+
 func shouldAutoRestartAWVSOnAPI500(db *gorm.DB, server *models.AWVSServer, err error) bool {
-	if server == nil || !loadGlobalAWVSAutoRestartOnAPI500(db) {
+	if server == nil || !server.AutoRestartOnAPI500 || !loadGlobalAWVSAutoRestartOnAPI500(db) {
 		return false
 	}
 	if awvs.StatusCode(err) != http.StatusInternalServerError {
@@ -214,6 +224,8 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 		server.CurrentRunning = 0
 		server.LastError = fmt.Sprintf("count active scans failed: %v", countErr)
 		api.triggerAWVSAutoRestartOnAPI500(server, countErr, "count_active_scans")
+		api.DB.Save(server)
+		return info, countErr
 	} else {
 		server.CurrentRunning = activeScans
 		server.LastError = ""
@@ -229,6 +241,7 @@ func (api *API) GetServers(c *gin.Context) {
 		// Keep list responses fast by reading cached sqlite state only.
 		// Manual refresh is handled by RefreshAWVSServerStatus.
 		servers[i].PanelRunning = api.countAWVSBoundRunningTasks(servers[i].ID)
+		servers[i] = maskAWVSServerSecrets(servers[i])
 	}
 	c.JSON(200, servers)
 }
@@ -294,20 +307,47 @@ func (api *API) RegisterAWVSFromProtocol(c *gin.Context) {
 		return
 	}
 
-	server := models.AWVSServer{
-		Name:           cfg.Name,
-		URL:            normalizeBaseURL(cfg.URL),
-		APIKey:         strings.TrimSpace(cfg.APIKey),
-		ManagerURL:     normalizeBaseURL(cfg.ManagerURL),
-		ManagerToken:   strings.TrimSpace(cfg.ManagerToken),
-		AWVSUsername:   strings.TrimSpace(cfg.AWVSUsername),
-		AWVSPassword:   strings.TrimSpace(cfg.AWVSPassword),
-		MaxConcurrency: cfg.MaxConcurrency,
-		IsActive:       true,
-		LastCheckedAt:  time.Now().Unix(),
+	normalizedURL := normalizeBaseURL(cfg.URL)
+	var server models.AWVSServer
+	if err := api.DB.Where("url = ?", normalizedURL).First(&server).Error; err == nil {
+		server.Name = cfg.Name
+		server.URL = normalizedURL
+		server.APIKey = strings.TrimSpace(cfg.APIKey)
+		server.ManagerURL = normalizeBaseURL(cfg.ManagerURL)
+		server.ManagerToken = strings.TrimSpace(cfg.ManagerToken)
+		server.AWVSUsername = strings.TrimSpace(cfg.AWVSUsername)
+		server.AWVSPassword = strings.TrimSpace(cfg.AWVSPassword)
+		if cfg.MaxConcurrency > 0 {
+			server.MaxConcurrency = cfg.MaxConcurrency
+		}
+		server.LastCheckedAt = time.Now().Unix()
+		api.DB.Save(&server)
+	} else {
+		server = models.AWVSServer{
+			Name:           cfg.Name,
+			URL:            normalizedURL,
+			APIKey:         strings.TrimSpace(cfg.APIKey),
+			ManagerURL:     normalizeBaseURL(cfg.ManagerURL),
+			ManagerToken:   strings.TrimSpace(cfg.ManagerToken),
+			AWVSUsername:   strings.TrimSpace(cfg.AWVSUsername),
+			AWVSPassword:   strings.TrimSpace(cfg.AWVSPassword),
+			MaxConcurrency: cfg.MaxConcurrency,
+			IsActive:       true,
+			LastCheckedAt:  time.Now().Unix(),
+		}
+		api.DB.Create(&server)
 	}
-	api.DB.Create(&server)
-	c.JSON(200, gin.H{"message": "AWVS registered", "server": server, "info": info})
+	latestInfo, refreshErr := api.refreshAWVSServerRecord(&server)
+	if refreshErr != nil {
+		c.JSON(200, gin.H{
+			"message": "AWVS registered but status refresh failed",
+			"server":  server,
+			"info":    info,
+			"error":   refreshErr.Error(),
+		})
+		return
+	}
+	c.JSON(200, gin.H{"message": "AWVS registered", "server": server, "info": latestInfo})
 }
 
 func (api *API) UpdateServer(c *gin.Context) {
@@ -318,14 +358,14 @@ func (api *API) UpdateServer(c *gin.Context) {
 	}
 
 	var req struct {
-		Name                string  `json:"name"`
-		URL                 string  `json:"url"`
-		APIKey              string  `json:"api_key"`
+		Name                *string `json:"name"`
+		URL                 *string `json:"url"`
+		APIKey              *string `json:"api_key"`
 		ManagerURL          *string `json:"manager_url"`
 		ManagerToken        *string `json:"manager_token"`
-		AWVSUsername        string  `json:"awvs_username"`
-		AWVSPassword        string  `json:"awvs_password"`
-		MaxConcurrency      int     `json:"max_concurrency"`
+		AWVSUsername        *string `json:"awvs_username"`
+		AWVSPassword        *string `json:"awvs_password"`
+		MaxConcurrency      *int    `json:"max_concurrency"`
 		AutoRestartOnAPI500 *bool   `json:"auto_restart_on_api_500"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -333,19 +373,29 @@ func (api *API) UpdateServer(c *gin.Context) {
 		return
 	}
 
-	server.Name = strings.TrimSpace(req.Name)
-	server.URL = normalizeBaseURL(req.URL)
-	server.APIKey = strings.TrimSpace(req.APIKey)
+	if req.Name != nil {
+		server.Name = strings.TrimSpace(*req.Name)
+	}
+	if req.URL != nil {
+		server.URL = normalizeBaseURL(*req.URL)
+	}
+	if req.APIKey != nil && strings.TrimSpace(*req.APIKey) != "" {
+		server.APIKey = strings.TrimSpace(*req.APIKey)
+	}
 	if req.ManagerURL != nil {
 		server.ManagerURL = normalizeBaseURL(*req.ManagerURL)
 	}
-	if req.ManagerToken != nil {
+	if req.ManagerToken != nil && strings.TrimSpace(*req.ManagerToken) != "" {
 		server.ManagerToken = strings.TrimSpace(*req.ManagerToken)
 	}
-	server.AWVSUsername = strings.TrimSpace(req.AWVSUsername)
-	server.AWVSPassword = strings.TrimSpace(req.AWVSPassword)
-	if req.MaxConcurrency > 0 {
-		server.MaxConcurrency = req.MaxConcurrency
+	if req.AWVSUsername != nil {
+		server.AWVSUsername = strings.TrimSpace(*req.AWVSUsername)
+	}
+	if req.AWVSPassword != nil && strings.TrimSpace(*req.AWVSPassword) != "" {
+		server.AWVSPassword = strings.TrimSpace(*req.AWVSPassword)
+	}
+	if req.MaxConcurrency != nil && *req.MaxConcurrency > 0 {
+		server.MaxConcurrency = *req.MaxConcurrency
 	}
 	if req.AutoRestartOnAPI500 != nil {
 		server.AutoRestartOnAPI500 = *req.AutoRestartOnAPI500
@@ -359,16 +409,15 @@ func (api *API) UpdateServer(c *gin.Context) {
 	if err != nil {
 		c.JSON(200, gin.H{
 			"message": "AWVS updated but connectivity check failed",
-			"server":  server,
+			"server":  maskAWVSServerSecrets(server),
 			"error":   err.Error(),
 		})
 		return
 	}
 
 	c.JSON(200, gin.H{
-		"message": "AWVS updated",
-		"server":  server,
-		"info":    info,
+		"server": maskAWVSServerSecrets(server),
+		"info":   info,
 	})
 }
 
@@ -381,10 +430,10 @@ func (api *API) RefreshAWVSServerStatus(c *gin.Context) {
 
 	info, err := api.refreshAWVSServerRecord(&server)
 	if err != nil {
-		c.JSON(200, gin.H{"server": server, "error": err.Error()})
+		c.JSON(200, gin.H{"server": maskAWVSServerSecrets(server), "error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"server": server, "info": info})
+	c.JSON(200, gin.H{"server": maskAWVSServerSecrets(server), "info": info})
 }
 
 func (api *API) TestAWVSServer(c *gin.Context) {
@@ -416,10 +465,16 @@ func (api *API) GetAWVSManualUpdateCommand(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+	commandPS, err := buildAWVSManualUpdatePowerShellCommand(server)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(200, gin.H{
-		"command": command,
-		"name":    server.Name,
-		"type":    "awvs",
+		"command":            command,
+		"command_powershell": commandPS,
+		"name":               server.Name,
+		"type":               "awvs",
 	})
 }
 
@@ -449,7 +504,7 @@ func (api *API) UpdateAWVSServerVersion(c *gin.Context) {
 func (api *API) DeleteServer(c *gin.Context) {
 	id := c.Param("id")
 	// Reset associated tasks to pending so they can be picked up by another node
-	api.DB.Model(&models.Task{}).Where("awvs_server_id = ?", id).Updates(map[string]interface{}{
+	api.DB.Model(&models.Task{}).Where("awvs_server_id = ? AND status IN ?", id, []string{"running", "scanning"}).Updates(map[string]interface{}{
 		"status":          "pending",
 		"awvs_server_id":  0,
 		"target_id":       "",
@@ -474,7 +529,7 @@ func (api *API) CleanupOfflineAWVSServers(c *gin.Context) {
 	for _, server := range servers {
 		ids = append(ids, server.ID)
 	}
-	api.DB.Model(&models.Task{}).Where("awvs_server_id IN ?", ids).Updates(map[string]interface{}{
+	api.DB.Model(&models.Task{}).Where("awvs_server_id IN ? AND status IN ?", ids, []string{"running", "scanning"}).Updates(map[string]interface{}{
 		"status":          "pending",
 		"awvs_server_id":  0,
 		"target_id":       "",
@@ -612,6 +667,15 @@ func (api *API) RegisterAgentFromProtocol(c *gin.Context) {
 	if statusResp.MaxConcurrent > 0 {
 		agent.MaxConcurrency = statusResp.MaxConcurrent
 	}
+	var existing models.SqlmapAgent
+	if err := api.DB.Where("url = ?", baseURL).First(&existing).Error; err == nil {
+		agent.DefaultUseProxy = existing.DefaultUseProxy
+		agent.ShareByDomain = existing.ShareByDomain
+		agent.ID = existing.ID
+		api.DB.Model(&existing).Updates(agent)
+		c.JSON(200, gin.H{"message": "Agent updated", "agent": agent})
+		return
+	}
 	api.DB.Create(&agent)
 	// Force-write bool value to avoid DB default overriding false on create.
 	api.DB.Model(&models.SqlmapAgent{}).Where("id = ?", agent.ID).Update("default_use_proxy", agent.DefaultUseProxy)
@@ -627,12 +691,12 @@ func (api *API) UpdateSqlmapAgent(c *gin.Context) {
 	}
 
 	var req struct {
-		Name            string  `json:"name"`
-		URL             string  `json:"url"`
-		APIKey          string  `json:"api_key"`
+		Name            *string `json:"name"`
+		URL             *string `json:"url"`
+		APIKey          *string `json:"api_key"`
 		ManagerURL      *string `json:"manager_url"`
 		ManagerToken    *string `json:"manager_token"`
-		MaxConcurrency  int     `json:"max_concurrency"`
+		MaxConcurrency  *int    `json:"max_concurrency"`
 		DefaultUseProxy *bool   `json:"default_use_proxy"`
 		ShareByDomain   *bool   `json:"share_by_domain"`
 	}
@@ -641,17 +705,23 @@ func (api *API) UpdateSqlmapAgent(c *gin.Context) {
 		return
 	}
 
-	agent.Name = strings.TrimSpace(req.Name)
-	agent.URL = normalizeBaseURL(req.URL)
-	agent.APIKey = strings.TrimSpace(req.APIKey)
+	if req.Name != nil {
+		agent.Name = strings.TrimSpace(*req.Name)
+	}
+	if req.URL != nil {
+		agent.URL = normalizeBaseURL(*req.URL)
+	}
+	if req.APIKey != nil && strings.TrimSpace(*req.APIKey) != "" {
+		agent.APIKey = strings.TrimSpace(*req.APIKey)
+	}
 	if req.ManagerURL != nil {
 		agent.ManagerURL = normalizeBaseURL(*req.ManagerURL)
 	}
-	if req.ManagerToken != nil {
+	if req.ManagerToken != nil && strings.TrimSpace(*req.ManagerToken) != "" {
 		agent.ManagerToken = strings.TrimSpace(*req.ManagerToken)
 	}
-	if req.MaxConcurrency > 0 {
-		agent.MaxConcurrency = req.MaxConcurrency
+	if req.MaxConcurrency != nil && *req.MaxConcurrency > 0 {
+		agent.MaxConcurrency = *req.MaxConcurrency
 	}
 	if req.DefaultUseProxy != nil {
 		agent.DefaultUseProxy = *req.DefaultUseProxy
@@ -661,6 +731,10 @@ func (api *API) UpdateSqlmapAgent(c *gin.Context) {
 	}
 	if agent.MaxConcurrency <= 0 {
 		agent.MaxConcurrency = 10
+	}
+	if strings.TrimSpace(agent.Name) == "" || strings.TrimSpace(agent.URL) == "" || strings.TrimSpace(agent.APIKey) == "" {
+		c.JSON(400, gin.H{"error": "name, url and api_key are required"})
+		return
 	}
 
 	reqPing, _ := http.NewRequest("GET", agent.URL+"/status", nil)
@@ -705,20 +779,25 @@ func (api *API) UpdateSqlmapAgent(c *gin.Context) {
 func (api *API) DeleteSqlmapAgent(c *gin.Context) {
 	id := c.Param("id")
 	// Reset associated task findings
-	api.DB.Model(&models.TaskFinding{}).Where("sqlmap_agent_id = ?", id).Updates(map[string]interface{}{
-		"sent_to_sqlmap":   false,
-		"sqlmap_agent_id":  0,
-		"sqlmap_task_id":   "",
-		"sqlmap_status":    "none",
-		"sqlmap_agent_url": "",
-		"has_injection":    false,
+	api.DB.Model(&models.TaskFinding{}).Where("sqlmap_agent_id = ? AND sqlmap_status IN ?", id, []string{"running", "queued"}).Updates(map[string]interface{}{
+		"sent_to_sqlmap":    false,
+		"sqlmap_agent_id":   0,
+		"sqlmap_task_id":    "",
+		"sqlmap_status":     "none",
+		"sqlmap_agent_url":  "",
+		"sqlmap_techniques": "",
+		"has_data":          false,
+		"has_shell":         false,
+		"has_injection":     false,
 	})
 	// Reset tasks
-	api.DB.Model(&models.Task{}).Where("sqlmap_agent_id = ?", id).Updates(map[string]interface{}{
+	api.DB.Model(&models.Task{}).Where("sqlmap_agent_id = ? AND sqlmap_status IN ?", id, []string{"running", "queued"}).Updates(map[string]interface{}{
 		"sqlmap_agent_id":  0,
 		"sqlmap_task_id":   "",
 		"sqlmap_status":    "none",
 		"sqlmap_agent_url": "",
+		"has_data":         false,
+		"has_shell":        false,
 		"has_injection":    false,
 	})
 	api.DB.Delete(&models.SqlmapAgent{}, id)
@@ -740,19 +819,24 @@ func (api *API) CleanupOfflineSqlmapAgents(c *gin.Context) {
 	for _, agent := range agents {
 		ids = append(ids, agent.ID)
 	}
-	api.DB.Model(&models.TaskFinding{}).Where("sqlmap_agent_id IN ?", ids).Updates(map[string]interface{}{
-		"sent_to_sqlmap":   false,
-		"sqlmap_agent_id":  0,
-		"sqlmap_task_id":   "",
-		"sqlmap_status":    "none",
-		"sqlmap_agent_url": "",
-		"has_injection":    false,
+	api.DB.Model(&models.TaskFinding{}).Where("sqlmap_agent_id IN ? AND sqlmap_status IN ?", ids, []string{"running", "queued"}).Updates(map[string]interface{}{
+		"sent_to_sqlmap":    false,
+		"sqlmap_agent_id":   0,
+		"sqlmap_task_id":    "",
+		"sqlmap_status":     "none",
+		"sqlmap_agent_url":  "",
+		"sqlmap_techniques": "",
+		"has_data":          false,
+		"has_shell":         false,
+		"has_injection":     false,
 	})
-	api.DB.Model(&models.Task{}).Where("sqlmap_agent_id IN ?", ids).Updates(map[string]interface{}{
+	api.DB.Model(&models.Task{}).Where("sqlmap_agent_id IN ? AND sqlmap_status IN ?", ids, []string{"running", "queued"}).Updates(map[string]interface{}{
 		"sqlmap_agent_id":  0,
 		"sqlmap_task_id":   "",
 		"sqlmap_status":    "none",
 		"sqlmap_agent_url": "",
+		"has_data":         false,
+		"has_shell":        false,
 		"has_injection":    false,
 	})
 	api.DB.Where("id IN ?", ids).Delete(&models.SqlmapAgent{})
@@ -813,7 +897,9 @@ func (api *API) RefreshSqlmapAgentStatus(c *gin.Context) {
 	_ = json.NewDecoder(resp.Body).Decode(&statusResp)
 	agent.CurrentRunning = statusResp.RunningCount
 	agent.CurrentQueued = statusResp.QueuedCount
-	agent.MaxConcurrency = statusResp.MaxConcurrent
+	if statusResp.MaxConcurrent > 0 {
+		agent.MaxConcurrency = statusResp.MaxConcurrent
+	}
 	agent.AgentVersion = strings.TrimSpace(statusResp.Version)
 	agent.IsActive = true
 	agent.Updating = false
@@ -868,10 +954,16 @@ func (api *API) GetSqlmapManualUpdateCommand(c *gin.Context) {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+	commandPS, err := api.buildSqlmapManualUpdatePowerShellCommand(agent, cfg)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	response := gin.H{
-		"command": command,
-		"name":    agent.Name,
-		"type":    "sqlmap",
+		"command":            command,
+		"command_powershell": commandPS,
+		"name":               agent.Name,
+		"type":               "sqlmap",
 	}
 	if err != nil || cfg == nil {
 		response["warning"] = "manager health unavailable, using default data dir fallback"
@@ -1022,13 +1114,14 @@ func (api *API) GetTasks(c *gin.Context) {
 		findingMap[taskID] = struct{}{}
 	}
 
-	var pathTaskIDs []uint
-	api.DB.Model(&models.TaskPathScan{}).
-		Distinct("task_id").
-		Pluck("task_id", &pathTaskIDs)
-	pathScanMap := make(map[uint]struct{}, len(pathTaskIDs))
-	for _, taskID := range pathTaskIDs {
-		pathScanMap[taskID] = struct{}{}
+	var pathScans []models.TaskPathScan
+	api.DB.Select("task_id", "path_status").Order("id desc").Find(&pathScans)
+	pathStatusMap := make(map[uint]string, len(pathScans))
+	for _, scan := range pathScans {
+		if _, exists := pathStatusMap[scan.TaskID]; exists {
+			continue
+		}
+		pathStatusMap[scan.TaskID] = strings.TrimSpace(scan.PathStatus)
 	}
 	for i := range tasks {
 		_, hasFinding := findingMap[tasks[i].ID]
@@ -1040,10 +1133,14 @@ func (api *API) GetTasks(c *gin.Context) {
 			api.DB.Model(&models.Task{}).Where("id = ?", tasks[i].ID).Update("has_data", true)
 		}
 		_, tasks[i].HasShell = shellMap[tasks[i].ID]
-		_, tasks[i].HasPathScan = pathScanMap[tasks[i].ID]
-		if tasks[i].HasPathScan {
-			tasks[i].PathScanStatus = "scanned"
+		if status, ok := pathStatusMap[tasks[i].ID]; ok {
+			tasks[i].HasPathScan = true
+			if status == "" {
+				status = "scanned"
+			}
+			tasks[i].PathScanStatus = status
 		} else {
+			tasks[i].HasPathScan = false
 			tasks[i].PathScanStatus = "not_scanned"
 		}
 	}
@@ -1094,6 +1191,7 @@ func (api *API) BatchDeleteTasks(c *gin.Context) {
 			}
 		}
 		api.DB.Where("task_id = ?", task.ID).Delete(&models.TaskFinding{})
+		api.DB.Where("task_id = ?", task.ID).Delete(&models.TaskPathScan{})
 		api.DB.Delete(&task)
 		deletedCount++
 	}
@@ -1103,11 +1201,22 @@ func (api *API) BatchDeleteTasks(c *gin.Context) {
 
 func (api *API) CleanupTasks(c *gin.Context) {
 	var tasks []models.Task
-	// Find tasks that have no data, no shell, AND sqlmap is not running
-	api.DB.Where("has_data = ? AND has_shell = ? AND has_injection = ? AND sqlmap_status != ?", false, false, false, "running").Find(&tasks)
+	api.DB.Where("has_data = ? AND has_shell = ? AND has_injection = ?", false, false, false).Find(&tasks)
 
 	deletedCount := 0
 	for _, task := range tasks {
+		if task.Status == "running" || task.Status == "scanning" {
+			continue
+		}
+		if task.SqlmapStatus == "running" || task.SqlmapStatus == "queued" {
+			continue
+		}
+		var latestPathScan models.TaskPathScan
+		if err := api.DB.Where("task_id = ?", task.ID).Order("id desc").First(&latestPathScan).Error; err == nil {
+			if latestPathScan.PathStatus == "running" || latestPathScan.PathStatus == "queued" {
+				continue
+			}
+		}
 		// Clean up AWVS target if possible
 		if task.AWVSServerID != 0 && task.TargetID != "" {
 			var server models.AWVSServer
@@ -1119,6 +1228,7 @@ func (api *API) CleanupTasks(c *gin.Context) {
 
 		// Delete task and its findings from DB
 		api.DB.Where("task_id = ?", task.ID).Delete(&models.TaskFinding{})
+		api.DB.Where("task_id = ?", task.ID).Delete(&models.TaskPathScan{})
 		api.DB.Delete(&task)
 		deletedCount++
 	}
@@ -1130,7 +1240,7 @@ func (api *API) CleanupAWVSNoVulnTasks(c *gin.Context) {
 	var tasks []models.Task
 	// Find tasks where AWVS scan finished but 0 vulnerabilities were found
 	// If a task has findings in TaskFinding, it means vulnerabilities were found
-	api.DB.Where("status IN ? AND id NOT IN (SELECT task_id FROM task_findings)", []string{"completed", "failed", "aborted"}).Find(&tasks)
+	api.DB.Where("status IN ? AND id NOT IN (SELECT task_id FROM task_findings)", []string{"completed", "done"}).Find(&tasks)
 
 	deletedCount := 0
 	for _, task := range tasks {
@@ -1141,6 +1251,7 @@ func (api *API) CleanupAWVSNoVulnTasks(c *gin.Context) {
 				_ = client.DeleteTarget(task.TargetID)
 			}
 		}
+		api.DB.Where("task_id = ?", task.ID).Delete(&models.TaskPathScan{})
 		api.DB.Delete(&task)
 		deletedCount++
 	}
@@ -1206,6 +1317,11 @@ func (api *API) RunTaskSqlmapAction(c *gin.Context) {
 }
 
 func (api *API) SearchTaskSqlmap(c *gin.Context) {
+	var task models.Task
+	if err := api.DB.First(&task, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "task not found"})
+		return
+	}
 	var findings []models.TaskFinding
 	if err := api.DB.Where("task_id = ? AND sqlmap_task_id <> '' AND sqlmap_agent_id <> 0", c.Param("id")).Find(&findings).Error; err != nil {
 		c.JSON(404, gin.H{"error": "task not found"})
@@ -1237,6 +1353,9 @@ func (api *API) GetTaskFindings(c *gin.Context) {
 			api.DB.Model(&models.TaskFinding{}).Where("id = ?", findings[i].ID).Update("has_data", true)
 			task.HasData = true
 		}
+	}
+	if task.HasData {
+		api.DB.Model(&models.Task{}).Where("id = ? AND has_data = ?", task.ID, false).Update("has_data", true)
 	}
 	c.JSON(200, gin.H{"task": task, "findings": findings})
 }
@@ -1480,6 +1599,27 @@ func (api *API) UpdateFindingSqlmapRequest(c *gin.Context) {
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var upstream map[string]interface{}
+		rawError := ""
+		hasErrorField := false
+		if err := json.Unmarshal(respBody, &upstream); err == nil {
+			if value, ok := upstream["error"]; ok {
+				hasErrorField = true
+				rawError = strings.TrimSpace(fmt.Sprint(value))
+			}
+		}
+		if len(upstream) == 0 || !hasErrorField || rawError == "" || rawError == "<nil>" {
+			api.DB.Model(&models.TaskFinding{}).Where("id = ?", finding.ID).Updates(map[string]interface{}{
+				"sqlmap_result_json": "",
+				"sqlmap_status":      "pending",
+				"sqlmap_techniques":  "",
+				"has_data":           false,
+				"has_shell":          false,
+				"has_injection":      false,
+			})
+		}
+	}
 	writeSqlmapUpstreamResponse(c, resp.StatusCode, respBody, "updating request content")
 }
 
@@ -1740,8 +1880,8 @@ func (api *API) CreateProxyAgent(c *gin.Context) {
 	req.TunnelHost = strings.TrimSpace(req.TunnelHost)
 	req.Transport = "vless"
 
-	if req.Name == "" || req.TunnelProtocol == "" || req.TunnelHost == "" || req.TunnelPort <= 0 {
-		c.JSON(400, gin.H{"error": "missing required fields"})
+	if req.Name == "" || req.ServerHost == "" || req.TunnelProtocol == "" || req.TunnelHost == "" || req.TunnelPort <= 0 {
+		c.JSON(400, gin.H{"error": "name, server_host, tunnel_protocol, tunnel_host and tunnel_port are required"})
 		return
 	}
 	if req.ListenPort <= 0 {
@@ -1820,6 +1960,10 @@ func (api *API) DeleteProxyAgent(c *gin.Context) {
 		"proxy_agent_id": 0,
 		"proxy_url":      "",
 	})
+	api.DB.Model(&models.CloudSettings{}).Where("cloud_proxy_agent_id = ?", agent.ID).Updates(map[string]interface{}{
+		"cloud_proxy_agent_id": 0,
+		"cloud_proxy_mode":     "none",
+	})
 	api.DB.Delete(&agent)
 	c.JSON(200, gin.H{"message": "proxy agent deleted"})
 }
@@ -1850,7 +1994,7 @@ func (api *API) SetSqlmapAgentProxy(c *gin.Context) {
 		return
 	}
 	agent.ProxyAgentID = pa.ID
-	agent.ProxyURL = fmt.Sprintf("http://proxy-gateway-%s:18080", sanitizeContainerName(agent.Name))
+	agent.ProxyURL = fmt.Sprintf("http://proxy-gateway-%s:18080", sanitizeProxyContainerName(agent.Name))
 	api.DB.Save(&agent)
 	c.JSON(200, gin.H{
 		"message":                "proxy bound",
@@ -1917,8 +2061,8 @@ func buildProxyGatewayPowerShell(sqlAgent models.SqlmapAgent, proxyAgent models.
 	config := buildProxyGatewayXrayConfig(sqlAgent, proxyAgent)
 	networkName := sanitizePSName(fmt.Sprintf("scan-net-%d", sqlAgent.ID))
 	sqlContainerName := sanitizePSName(fmt.Sprintf("sqlmap-agent-%s", sqlAgent.Name))
-	gatewayContainer := sanitizePSName(fmt.Sprintf("proxy-gateway-%d", sqlAgent.ID))
-	dirName := sanitizePSName(fmt.Sprintf("proxy-gateway-%d", sqlAgent.ID))
+	gatewayContainer := sanitizePSName(fmt.Sprintf("proxy-gateway-%s", sanitizeProxyContainerName(sqlAgent.Name)))
+	dirName := gatewayContainer
 	return fmt.Sprintf(`$ErrorActionPreference = "Stop"
 $dir = Join-Path $PWD "%s"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -2146,6 +2290,13 @@ func shellQuote(v string) string {
 		return "''"
 	}
 	return "'" + strings.ReplaceAll(v, "'", `'"'"'`) + "'"
+}
+
+func psQuote(v string) string {
+	if v == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(v, "'", "''") + "'"
 }
 
 func randomHex(n int) string {
@@ -2444,6 +2595,21 @@ func buildAWVSManualUpdateCommand(server models.AWVSServer) (string, error) {
 	), nil
 }
 
+func buildAWVSManualUpdatePowerShellCommand(server models.AWVSServer) (string, error) {
+	port, err := parseNodePort(server.URL)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(
+		`$env:MANAGER_ALLOW_REUSE_PORT = "1"
+(Invoke-WebRequest -UseBasicParsing %s).Content | bash -s -- -n %s -p %d -c %d`,
+		psQuote("https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/awvs-agent-entrypoint.sh"),
+		psQuote(strings.TrimSpace(server.Name)),
+		port,
+		maxIntValue(1, server.MaxConcurrency),
+	), nil
+}
+
 func (api *API) buildSqlmapManualUpdateCommand(agent models.SqlmapAgent, cfg *managerConfigPayload) (string, error) {
 	port, err := parseNodePort(agent.URL)
 	if err != nil {
@@ -2467,6 +2633,37 @@ func (api *API) buildSqlmapManualUpdateCommand(agent models.SqlmapAgent, cfg *ma
 		if err := api.DB.First(&proxyAgent, agent.ProxyAgentID).Error; err == nil {
 			if proxyLink := strings.TrimSpace(buildProxyAgentLink(proxyAgent)); proxyLink != "" {
 				cmd += fmt.Sprintf(` -l %s`, shellQuote(proxyLink))
+			}
+		}
+	}
+	return cmd, nil
+}
+
+func (api *API) buildSqlmapManualUpdatePowerShellCommand(agent models.SqlmapAgent, cfg *managerConfigPayload) (string, error) {
+	port, err := parseNodePort(agent.URL)
+	if err != nil {
+		return "", err
+	}
+	dataRootBase := "/opt/aspanel/sqlmap-agent"
+	if cfg != nil {
+		if derived := deriveDataRootBase(cfg.UpdateScript); derived != "" {
+			dataRootBase = derived
+		}
+	}
+	cmd := fmt.Sprintf(
+		`$env:MANAGER_ALLOW_REUSE_PORT = "1"
+(Invoke-WebRequest -UseBasicParsing %s).Content | bash -s -- -n %s -p %d -c %d -d %s`,
+		psQuote("https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/sqlmap-agent-entrypoint.sh"),
+		psQuote(strings.TrimSpace(agent.Name)),
+		port,
+		maxIntValue(1, agent.MaxConcurrency),
+		psQuote(dataRootBase),
+	)
+	if agent.ProxyAgentID != 0 {
+		var proxyAgent models.ProxyAgent
+		if err := api.DB.First(&proxyAgent, agent.ProxyAgentID).Error; err == nil {
+			if proxyLink := strings.TrimSpace(buildProxyAgentLink(proxyAgent)); proxyLink != "" {
+				cmd += fmt.Sprintf(` -l %s`, psQuote(proxyLink))
 			}
 		}
 	}
@@ -2746,8 +2943,18 @@ func (api *API) UpdateCloudCredentials(c *gin.Context) {
 }
 
 func (api *API) UpdateCloudSettings(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
 	var req models.CloudSettings
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	present := map[string]json.RawMessage{}
+	if err := json.Unmarshal(body, &present); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
@@ -2773,8 +2980,24 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	if req.PortMax > 0 {
 		settings.PortMax = req.PortMax
 	}
-	settings.AWVSAutoRestartOnAPI500 = req.AWVSAutoRestartOnAPI500
-	settings.Enabled = req.Enabled
+	if settings.PortMin > 0 && (settings.PortMin < 30000 || settings.PortMin > 40000) {
+		c.JSON(400, gin.H{"error": "port_min must be within 30000-40000"})
+		return
+	}
+	if settings.PortMax > 0 && (settings.PortMax < 30000 || settings.PortMax > 40000) {
+		c.JSON(400, gin.H{"error": "port_max must be within 30000-40000"})
+		return
+	}
+	if settings.PortMin > 0 && settings.PortMax > 0 && settings.PortMin > settings.PortMax {
+		c.JSON(400, gin.H{"error": "port_min must be less than or equal to port_max"})
+		return
+	}
+	if _, ok := present["awvs_auto_restart_on_api_500"]; ok {
+		settings.AWVSAutoRestartOnAPI500 = req.AWVSAutoRestartOnAPI500
+	}
+	if _, ok := present["enabled"]; ok {
+		settings.Enabled = req.Enabled
+	}
 	if strings.TrimSpace(req.InstanceType) != "" {
 		settings.InstanceType = strings.TrimSpace(req.InstanceType)
 	}
@@ -2784,8 +3007,12 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	if req.SQLMapMaxConcurrency > 0 {
 		settings.SQLMapMaxConcurrency = req.SQLMapMaxConcurrency
 	}
-	settings.AWVSAutoEnabled = req.AWVSAutoEnabled
-	settings.SQLMapAutoEnabled = req.SQLMapAutoEnabled
+	if _, ok := present["awvs_auto_enabled"]; ok {
+		settings.AWVSAutoEnabled = req.AWVSAutoEnabled
+	}
+	if _, ok := present["sqlmap_auto_enabled"]; ok {
+		settings.SQLMapAutoEnabled = req.SQLMapAutoEnabled
+	}
 	if req.AWVSMaxPriceUSDPerHour > 0 {
 		settings.AWVSMaxPriceUSDPerHour = req.AWVSMaxPriceUSDPerHour
 	}
@@ -2804,10 +3031,10 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	if req.SQLMapBudgetHours >= 0 {
 		settings.SQLMapBudgetHours = req.SQLMapBudgetHours
 	}
-	if strings.TrimSpace(req.AWVSInstanceType) != "" {
+	if _, ok := present["awvs_instance_type"]; ok {
 		settings.AWVSInstanceType = strings.TrimSpace(req.AWVSInstanceType)
 	}
-	if strings.TrimSpace(req.SQLMapInstanceType) != "" {
+	if _, ok := present["sqlmap_instance_type"]; ok {
 		settings.SQLMapInstanceType = strings.TrimSpace(req.SQLMapInstanceType)
 	}
 	if req.AWVSMinCPU > 0 {
@@ -2832,7 +3059,20 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 			return
 		}
 	}
-	settings.CloudProxyAgentID = req.CloudProxyAgentID
+	if _, ok := present["cloud_proxy_agent_id"]; ok {
+		settings.CloudProxyAgentID = req.CloudProxyAgentID
+	}
+	if settings.CloudProxyMode == "specified" {
+		if settings.CloudProxyAgentID == 0 {
+			c.JSON(400, gin.H{"error": "cloud_proxy_agent_id is required when cloud_proxy_mode=specified"})
+			return
+		}
+		var proxyAgent models.ProxyAgent
+		if err := api.DB.First(&proxyAgent, settings.CloudProxyAgentID).Error; err != nil {
+			c.JSON(400, gin.H{"error": "specified cloud proxy agent not found"})
+			return
+		}
+	}
 	if strings.TrimSpace(req.ImageID) != "" {
 		settings.ImageID = strings.TrimSpace(req.ImageID)
 	}
@@ -2961,7 +3201,7 @@ func (api *API) GetPanelLogs(c *gin.Context) {
 		}
 		index++
 	}
-	nextOffset := 0
+	nextOffset := index
 	truncated := false
 	if index > offset+len(entries) {
 		nextOffset = offset + len(entries)

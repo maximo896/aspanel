@@ -10,33 +10,77 @@ import type { CloudSettings, CloudInstance } from '../types'
 import {
   getCloudSettings, updateCloudSettings, getCloudInstances,
   startCloudScale, stopCloudScale, cleanupCloudInstances,
-  getProxyAgents, extractError, getPanelLogs,
+  getProxyAgents, getCloudCredentials, updateCloudCredentials, extractError, getPanelLogs,
 } from '../api/client'
 
 const { Text } = Typography
+
+const AWVS_FORM_FIELDS: Array<keyof CloudSettings> = [
+  'awvs_max_price_usd_per_hour',
+  'awvs_hourly_budget_usd',
+  'awvs_budget_hours',
+  'awvs_max_concurrency',
+  'awvs_min_cpu',
+  'awvs_min_memory_gb',
+  'awvs_instance_type',
+]
+
+const SQLMAP_FORM_FIELDS: Array<keyof CloudSettings> = [
+  'sqlmap_max_price_usd_per_hour',
+  'sqlmap_hourly_budget_usd',
+  'sqlmap_budget_hours',
+  'sqlmap_max_concurrency',
+  'sqlmap_min_cpu',
+  'sqlmap_min_memory_gb',
+  'sqlmap_instance_type',
+  'cloud_proxy_mode',
+  'cloud_proxy_agent_id',
+]
 
 function formatTime(ts: number) {
   if (!ts) return '-'
   return new Date(ts * 1000).toLocaleString()
 }
 
+function normalizeComparableValue(value: unknown) {
+  if (value === undefined) return null
+  if (value === '') return ''
+  return value ?? null
+}
+
+function pickComparableValues(
+  values: Partial<CloudSettings> | undefined,
+  fields: Array<keyof CloudSettings>,
+) {
+  const result: Record<string, unknown> = {}
+  for (const field of fields) {
+    result[field] = normalizeComparableValue(values?.[field])
+  }
+  return result
+}
+
 function CloudLogsPanel() {
   const [logs, setLogs] = useState<{ offset: number; message: string }[]>([])
   const [offset, setOffset] = useState(0)
+  const offsetRef = useRef(0)
   const logsEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    offsetRef.current = offset
+  }, [offset])
 
   useEffect(() => {
     let unmounted = false
     const fetchLogs = async () => {
       try {
-        const data = await getPanelLogs(offset)
+        const data = await getPanelLogs(offsetRef.current)
         if (unmounted) return
+        setOffset(data.next_offset)
         if (data.entries && data.entries.length > 0) {
           setLogs(prev => {
             const next = [...prev, ...data.entries]
             return next.slice(-1000)
           })
-          setOffset(data.next_offset)
         }
       } catch (e) {
         // ignore
@@ -48,7 +92,7 @@ function CloudLogsPanel() {
       unmounted = true
       clearInterval(timer)
     }
-  }, [offset])
+  }, [])
 
   useEffect(() => {
     if (logsEndRef.current) {
@@ -83,10 +127,12 @@ export default function CloudPage() {
   const qc = useQueryClient()
   const [awvsForm] = Form.useForm()
   const [sqlmapForm] = Form.useForm()
+  const [credentialsForm] = Form.useForm()
   const [dirty, setDirty] = useState(false)
   const [autoscaleResult, setAutoscaleResult] = useState<string | null>(null)
+  const [startingWorkload, setStartingWorkload] = useState<string | null>(null)
 
-  const { data: settings, isLoading: settingsLoading } = useQuery({
+  const { data: settings, error: settingsError, isLoading: settingsLoading } = useQuery({
     queryKey: ['cloud-settings'],
     queryFn: getCloudSettings,
     refetchOnWindowFocus: false,
@@ -94,16 +140,23 @@ export default function CloudPage() {
     staleTime: 60_000,
   })
 
-  const { data: instances = [] } = useQuery({
+  const { data: instances = [], error: instancesError } = useQuery({
     queryKey: ['cloud-instances'],
     queryFn: getCloudInstances,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   })
 
-  const { data: proxyAgents = [] } = useQuery({
+  const { data: proxyAgents = [], error: proxyAgentsError, isLoading: proxyAgentsLoading } = useQuery({
     queryKey: ['proxy-agents'],
     queryFn: getProxyAgents,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  })
+
+  const { data: credentialsStatus, error: credentialsError } = useQuery({
+    queryKey: ['cloud-credentials'],
+    queryFn: getCloudCredentials,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   })
@@ -113,14 +166,49 @@ export default function CloudPage() {
     if (settings && !dirty && !formsTouched) {
       awvsForm.setFieldsValue(settings)
       sqlmapForm.setFieldsValue(settings)
+      setDirty(false)
     }
   }, [settings, dirty, awvsForm, sqlmapForm])
+
+  useEffect(() => {
+    if (!settings) return
+    if (proxyAgentsLoading) return
+    if (proxyAgentsError) return
+    const mode = sqlmapForm.getFieldValue('cloud_proxy_mode')
+    const selectedId = Number(sqlmapForm.getFieldValue('cloud_proxy_agent_id') || 0)
+    if (mode !== 'specified' || selectedId <= 0) return
+    if (proxyAgents.some(agent => agent.ID === selectedId)) return
+    sqlmapForm.setFieldsValue({
+      cloud_proxy_mode: 'none',
+      cloud_proxy_agent_id: 0,
+    })
+    updateDirtyState()
+    message.warning('指定代理节点已不存在，已切换为不使用代理')
+  }, [settings, proxyAgents, proxyAgentsLoading, proxyAgentsError, sqlmapForm])
+
+  const updateDirtyState = () => {
+    if (!settings) {
+      setDirty(awvsForm.isFieldsTouched() || sqlmapForm.isFieldsTouched())
+      return
+    }
+    const baseline = {
+      ...pickComparableValues(settings, AWVS_FORM_FIELDS),
+      ...pickComparableValues(settings, SQLMAP_FORM_FIELDS),
+    }
+    const current = {
+      ...pickComparableValues(awvsForm.getFieldsValue(AWVS_FORM_FIELDS), AWVS_FORM_FIELDS),
+      ...pickComparableValues(sqlmapForm.getFieldsValue(SQLMAP_FORM_FIELDS), SQLMAP_FORM_FIELDS),
+    }
+    setDirty(JSON.stringify(current) !== JSON.stringify(baseline))
+  }
 
   const saveMut = useMutation({
     mutationFn: (data: Partial<CloudSettings>) => updateCloudSettings(data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cloud-settings'] })
       setDirty(false)
+      awvsForm.setFields(Object.keys(awvsForm.getFieldsValue()).map(name => ({ name, touched: false })))
+      sqlmapForm.setFields(Object.keys(sqlmapForm.getFieldsValue()).map(name => ({ name, touched: false })))
       message.success('保存成功')
     },
     onError: (e) => message.error(extractError(e)),
@@ -128,31 +216,62 @@ export default function CloudPage() {
 
   const startMut = useMutation({
     mutationFn: (workload: string) => startCloudScale(workload),
+    onMutate: (workload) => {
+      setStartingWorkload(workload)
+    },
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['cloud-settings', 'cloud-instances'] })
+      qc.invalidateQueries({ queryKey: ['cloud-settings'] })
+      qc.invalidateQueries({ queryKey: ['cloud-instances'] })
       const msgs = Object.entries(data.results || {}).map(([k, v]) => `[${k}] ${v}`).join('\n')
       setAutoscaleResult(msgs || data.message)
       message.success(data.message || '启动成功')
     },
     onError: (e) => message.error(extractError(e)),
+    onSettled: () => setStartingWorkload(null),
   })
 
   const stopMut = useMutation({
     mutationFn: (workload: string) => stopCloudScale(workload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cloud-settings'] }); message.success('已停止') },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cloud-settings'] })
+      qc.invalidateQueries({ queryKey: ['cloud-instances'] })
+      message.success('已停止')
+    },
     onError: (e) => message.error(extractError(e)),
   })
 
   const cleanupMut = useMutation({
     mutationFn: (workload: string) => cleanupCloudInstances(workload),
-    onSuccess: (d) => { qc.invalidateQueries({ queryKey: ['cloud-instances'] }); message.success(`${d.message} (${d.terminated_count})`) },
+    onSuccess: (d) => {
+      qc.invalidateQueries({ queryKey: ['cloud-instances'] })
+      qc.invalidateQueries({ queryKey: ['cloud-settings'] })
+      message.success(`${d.message} (${d.terminated_count})`)
+    },
+    onError: (e) => message.error(extractError(e)),
+  })
+
+  const credentialsMut = useMutation({
+    mutationFn: (data: { secret_id: string; secret_key: string }) => updateCloudCredentials(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cloud-credentials'] })
+      credentialsForm.resetFields()
+      message.success('云凭证已保存')
+    },
     onError: (e) => message.error(extractError(e)),
   })
 
   const handleSave = () => {
     Promise.all([awvsForm.validateFields(), sqlmapForm.validateFields()]).then(([awvsVals, sqlmapVals]) => {
-      saveMut.mutate({ ...awvsVals, ...sqlmapVals })
+      saveMut.mutate({ ...(settings || {}), ...awvsVals, ...sqlmapVals })
     })
+  }
+
+  const guardedStart = (workload: string) => {
+    if (dirty) {
+      message.warning('请先保存当前云配置后再启动')
+      return
+    }
+    startMut.mutate(workload)
   }
 
   const awvsInstances = instances.filter(i => i.workload === 'awvs')
@@ -200,6 +319,44 @@ export default function CloudPage() {
           onClose={() => setAutoscaleResult(null)}
         />
       )}
+      {(settingsError || instancesError || proxyAgentsError || credentialsError) && (
+        <Alert
+          type="error"
+          showIcon
+          message={extractError(settingsError || instancesError || proxyAgentsError || credentialsError)}
+        />
+      )}
+
+      <Card title="云访问凭证" size="small">
+        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          <Space wrap>
+            <Tag color={credentialsStatus?.secret_id_set ? 'success' : 'default'}>
+              Secret ID: {credentialsStatus?.secret_id_set ? (credentialsStatus.secret_id_masked || '已配置') : '未配置'}
+            </Tag>
+            <Tag color={credentialsStatus?.secret_key_set ? 'success' : 'default'}>
+              Secret Key: {credentialsStatus?.secret_key_set ? '已配置' : '未配置'}
+            </Tag>
+          </Space>
+          {credentialsStatus && (!credentialsStatus.secret_id_set || !credentialsStatus.secret_key_set) && (
+            <Alert type="warning" showIcon message="云自动扩容依赖有效的云凭证，未配置时启动不会成功购买实例" />
+          )}
+          <Form form={credentialsForm} layout="vertical" size="small" onFinish={(values) => credentialsMut.mutate(values)}>
+            <Row gutter={8}>
+              <Col xs={24} md={12}>
+                <Form.Item name="secret_id" label="Secret ID" rules={[{ required: true, message: '请输入 Secret ID' }]}>
+                  <Input placeholder="Tencent Cloud Secret ID" autoComplete="off" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Item name="secret_key" label="Secret Key" rules={[{ required: true, message: '请输入 Secret Key' }]}>
+                  <Input.Password placeholder="Tencent Cloud Secret Key" autoComplete="new-password" />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Button type="primary" onClick={() => credentialsForm.submit()} loading={credentialsMut.isPending}>保存云凭证</Button>
+          </Form>
+        </Space>
+      </Card>
 
       {dirty && (
         <Alert
@@ -220,8 +377,8 @@ export default function CloudPage() {
                   size="small"
                   type="primary"
                   icon={<PlayCircleOutlined />}
-                  onClick={() => startMut.mutate('awvs')}
-                  loading={startMut.isPending}
+                  onClick={() => guardedStart('awvs')}
+                  loading={startMut.isPending && startingWorkload === 'awvs'}
                 >
                   启动
                 </Button>
@@ -252,7 +409,7 @@ export default function CloudPage() {
               form={awvsForm}
               layout="vertical"
               size="small"
-              onValuesChange={() => setDirty(true)}
+              onValuesChange={updateDirtyState}
             >
               <Row gutter={8}>
                 <Col span={12}><Form.Item name="awvs_max_price_usd_per_hour" label="最高价格(USD/h)"><InputNumber step={0.001} style={{ width: '100%' }} /></Form.Item></Col>
@@ -278,8 +435,8 @@ export default function CloudPage() {
                   size="small"
                   type="primary"
                   icon={<PlayCircleOutlined />}
-                  onClick={() => startMut.mutate('sqlmap')}
-                  loading={startMut.isPending}
+                  onClick={() => guardedStart('sqlmap')}
+                  loading={startMut.isPending && startingWorkload === 'sqlmap'}
                 >
                   启动
                 </Button>
@@ -310,7 +467,12 @@ export default function CloudPage() {
               form={sqlmapForm}
               layout="vertical"
               size="small"
-              onValuesChange={() => setDirty(true)}
+              onValuesChange={(changedValues) => {
+                if (Object.prototype.hasOwnProperty.call(changedValues, 'cloud_proxy_mode') && changedValues.cloud_proxy_mode !== 'specified') {
+                  sqlmapForm.setFieldValue('cloud_proxy_agent_id', 0)
+                }
+                updateDirtyState()
+              }}
             >
               <Row gutter={8}>
                 <Col span={12}><Form.Item name="sqlmap_max_price_usd_per_hour" label="最高价格(USD/h)"><InputNumber step={0.001} style={{ width: '100%' }} /></Form.Item></Col>
@@ -333,10 +495,10 @@ export default function CloudPage() {
                   <Form.Item noStyle shouldUpdate={(prev, curr) => prev.cloud_proxy_mode !== curr.cloud_proxy_mode}>
                     {({ getFieldValue }) =>
                       getFieldValue('cloud_proxy_mode') === 'specified' ? (
-                        <Form.Item name="cloud_proxy_agent_id" label="指定代理节点">
+                        <Form.Item name="cloud_proxy_agent_id" label="指定代理节点" preserve={false}>
                           <Select
+                            placeholder={proxyAgents.length > 0 ? '选择代理节点' : '暂无可用代理节点'}
                             options={[
-                              { label: '无', value: 0 },
                               ...proxyAgents.map(p => ({ label: p.name, value: p.ID })),
                             ]}
                           />

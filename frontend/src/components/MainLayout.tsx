@@ -29,12 +29,22 @@ export default function MainLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
-  const { isLoading, isAuthenticated } = useAuth()
+  const { error, isLoading, isAuthenticated, shouldLoginRedirect } = useAuth()
 
-  if (isLoading) {
+  if (isLoading || shouldLoginRedirect) {
     return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0a' }}><Spin size="large" /></div>
   }
-  if (!isAuthenticated) return null
+  if (!isAuthenticated) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0a' }}>
+        <Space direction="vertical" align="center">
+          <Text style={{ color: '#fff' }}>无法验证当前会话</Text>
+          <Text type="secondary">{error instanceof Error ? error.message : '请重试'}</Text>
+          <Button onClick={() => window.location.reload()}>重试</Button>
+        </Space>
+      </div>
+    )
+  }
 
   return (
     <Layout style={{ minHeight: '100vh' }}>

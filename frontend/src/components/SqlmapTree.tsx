@@ -90,12 +90,12 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
       <Space direction="vertical" style={{ width: '100%' }} size={12}>
         <Space wrap>
           {(scan.session?.dbms || scan.dbms) && <Tag color="blue">DBMS: {scan.session?.dbms || scan.dbms}</Tag>}
-          {scan.current_user && <Tag color="purple">User: {scan.current_user}</Tag>}
-          {currentDb && <Tag color="cyan">Current DB: {currentDb}</Tag>}
-          {scan.hostname && <Tag>Host: {scan.hostname}</Tag>}
+          {scan.current_user && <Tag color="purple">用户: {scan.current_user}</Tag>}
+          {currentDb && <Tag color="cyan">当前库: {currentDb}</Tag>}
+          {scan.hostname && <Tag>主机: {scan.hostname}</Tag>}
           {scan.session?.session_file && (
             <Tooltip title={scan.session.session_file}>
-              <Tag color="geekblue">Session Ready</Tag>
+              <Tag color="geekblue">会话就绪</Tag>
             </Tooltip>
           )}
           {scan.shell_probe?.ok && <Tag color="red">Shell ✓</Tag>}
@@ -180,7 +180,7 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
                               <Text>{tbl.name}</Text>
                               <Tag>{(tbl.columns || []).length} 列</Tag>
                               {typeof tbl.row_count === 'number' && <Tag color="purple">{tbl.row_count} 行</Tag>}
-                              {tbl.priority && <Tag color="gold">Priority</Tag>}
+                              {tbl.priority && <Tag color="gold">优先</Tag>}
                             </Space>
                           ),
                           extra: (
@@ -195,7 +195,7 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
                                 type="primary"
                                 onClick={e => { e.stopPropagation(); handleDump(db.name, tbl.name) }}
                               >
-                                Dump
+                                导出
                               </Button>
                             </Space>
                           ),
@@ -279,6 +279,9 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
                 { title: '错误', dataIndex: 'error', ellipsis: true },
               ]}
             />
+          )}
+          {searchResult && searchResult.length === 0 && (
+            <Text type="secondary" style={{ display: 'block', marginTop: 8 }}>未找到匹配结果</Text>
           )}
         </Card>
 

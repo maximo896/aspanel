@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Drawer, Tabs, Tag, Button, Space, Typography, Switch, Spin,
@@ -38,50 +38,92 @@ interface Props {
 function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAgents: Props['sqlmapAgents'] }) {
   const qc = useQueryClient()
   const [expanded, setExpanded] = useState(false)
-  const [agentId, setAgentId] = useState(0)
+  const [agentId, setAgentId] = useState(finding.sqlmap_agent_id || 0)
   const [scan, setScan] = useState<SqlmapScan | null>(null)
   const [scanLoading, setScanLoading] = useState(false)
+  const [scanError, setScanError] = useState('')
   const [requestDraft, setRequestDraft] = useState('')
+  const requestDirtyRef = useRef(false)
 
   const retryMut = useMutation({
     mutationFn: () => retryFindingSqlmap(finding.ID, agentId || undefined),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['task-findings', finding.task_id] }); message.success('重投成功') },
+    onSuccess: () => {
+      setScan(null)
+      setRequestDraft('')
+      requestDirtyRef.current = false
+      qc.invalidateQueries({ queryKey: ['task-findings', finding.task_id] })
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      message.success('重投成功')
+    },
     onError: (e) => message.error(extractError(e)),
   })
 
   const proxyMut = useMutation({
     mutationFn: (val: boolean) => updateFinding(finding.ID, { use_proxy: val }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['task-findings', finding.task_id] }),
-    onError: (e) => message.error(extractError(e)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['task-findings', finding.task_id] })
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+    },
+    onError: (e) => {
+      qc.invalidateQueries({ queryKey: ['task-findings', finding.task_id] })
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      message.error(extractError(e))
+    },
   })
 
   const requestMut = useMutation({
     mutationFn: (content: string) => updateFindingRequest(finding.ID, content),
     onSuccess: () => {
-      message.success('Request 已更新')
-      loadScan()
+      requestDirtyRef.current = false
+      message.success('请求内容已更新')
+      qc.invalidateQueries({ queryKey: ['task-findings', finding.task_id] })
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      loadScan(false)
     },
     onError: (e) => message.error(extractError(e)),
   })
 
-  const loadScan = async () => {
+  const loadScan = useCallback(async (preserveDraft = true) => {
     setScanLoading(true)
     try {
       const data = await getFindingSqlmapDetail(finding.ID)
       setScan(data.scan)
-      setRequestDraft(data.scan?.request_content || '')
-    } catch {
+      setScanError('')
+      if (!preserveDraft || !requestDirtyRef.current) {
+        setRequestDraft(data.scan?.request_content || '')
+        requestDirtyRef.current = false
+      }
+    } catch (err) {
       setScan(null)
+      setScanError(extractError(err))
     } finally {
       setScanLoading(false)
     }
-  }
+  }, [finding.ID])
 
   const handleExpand = () => {
     const next = !expanded
     setExpanded(next)
-    if (next && !scan) loadScan()
   }
+
+  useEffect(() => {
+    if (!expanded) return
+    void loadScan(false)
+  }, [expanded, finding.ID, loadScan])
+
+  useEffect(() => {
+    setAgentId(finding.sqlmap_agent_id || 0)
+  }, [finding.ID, finding.sqlmap_agent_id])
+
+  useEffect(() => {
+    if (!expanded) return
+    const timer = window.setInterval(() => {
+      if (!requestMut.isPending) {
+        void loadScan(true)
+      }
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [expanded, loadScan, requestMut.isPending])
 
   const severityColor: Record<string, string> = {
     critical: '#cf1322', high: '#d4380d', medium: '#d46b08',
@@ -90,6 +132,8 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
   const logText = (scan?.logs || [])
     .map(item => [item.time, item.level, item.message].filter(Boolean).join(' '))
     .join('\n')
+  const sqlmapBusy = ['running', 'queued'].includes((finding.sqlmap_status || '').toLowerCase())
+  const canEditRequest = Boolean(finding.sqlmap_task_id && finding.sqlmap_agent_id && !sqlmapBusy)
 
   return (
     <div style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '8px 0' }}>
@@ -150,25 +194,34 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
               column={2}
               bordered
               items={[
-                { key: 'task', label: 'Task ID', children: scan?.current_sqlmap_task_id || finding.sqlmap_task_id || '-' },
+                { key: 'task', label: '任务ID', children: scan?.current_sqlmap_task_id || finding.sqlmap_task_id || '-' },
                 { key: 'status', label: '状态', children: scan?.status || finding.sqlmap_status || '-' },
                 { key: 'phase', label: '阶段', children: scan?.phase || '-' },
-                { key: 'currentdb', label: 'Current DB', children: scan?.content?.current_db || scan?.current_db || '-' },
-                { key: 'request', label: 'Request File', children: scan?.request_file || '-' },
-                { key: 'proxycfg', label: 'Proxy Config', children: scan?.runtime_proxy_file || '-' },
+                { key: 'currentdb', label: '当前数据库', children: scan?.content?.current_db || scan?.current_db || '-' },
+                { key: 'request', label: '请求文件', children: scan?.request_file || '-' },
+                { key: 'proxycfg', label: '代理配置', children: scan?.runtime_proxy_file || '-' },
               ]}
             />
             <Card
               size="small"
-              title="Request"
+              title="请求内容"
               extra={
                 <Space size={4}>
-                  <Button size="small" onClick={() => setRequestDraft(scan?.request_content || '')}>重置</Button>
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setRequestDraft(scan?.request_content || '')
+                      requestDirtyRef.current = false
+                    }}
+                  >
+                    重置
+                  </Button>
                   <Button
                     size="small"
                     type="primary"
                     onClick={() => requestMut.mutate(requestDraft)}
                     loading={requestMut.isPending}
+                    disabled={!canEditRequest}
                   >
                     保存
                   </Button>
@@ -177,14 +230,23 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
             >
               <TextArea
                 value={requestDraft}
-                onChange={event => setRequestDraft(event.target.value)}
+                onChange={event => {
+                  setRequestDraft(event.target.value)
+                  requestDirtyRef.current = true
+                }}
                 autoSize={{ minRows: 8, maxRows: 16 }}
                 spellCheck={false}
+                disabled={!canEditRequest}
               />
+              {!canEditRequest && (
+                <Text type="secondary">
+                  {sqlmapBusy ? '运行中或排队中的 SQLMap 任务不可修改请求内容' : '仅已绑定 SQLMap 代理的任务可保存请求内容'}
+                </Text>
+              )}
             </Card>
-            <Card size="small" title="Recent Logs">
+            <Card size="small" title="最近日志">
               <pre style={{ margin: 0, maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                {logText || scan?.last_error || 'No logs'}
+                {logText || scan?.last_error || scanError || '暂无日志'}
               </pre>
             </Card>
             {scan ? (
@@ -195,7 +257,7 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
                 loading={scanLoading}
               />
             ) : (
-              <Text type="secondary">暂无 SQLmap 详情</Text>
+              <Text type="secondary">{scanError ? `SQLMap 详情加载失败: ${scanError}` : '暂无 SQLMap 详情'}</Text>
             )}
           </Space>
         </div>
@@ -205,6 +267,7 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
 }
 
 export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: Props) {
+  const qc = useQueryClient()
   const [retryPathAgentId, setRetryPathAgentId] = useState(0)
   const [pathSeedMode, setPathSeedMode] = useState('auto')
   const [customPathInput, setCustomPathInput] = useState('')
@@ -223,6 +286,12 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
     refetchInterval: 15_000,
   })
 
+  useEffect(() => {
+    setRetryPathAgentId(0)
+    setPathSeedMode('auto')
+    setCustomPathInput('')
+  }, [task?.ID])
+
   const retryPathMut = useMutation({
     mutationFn: () => retryTaskPathScan(
       task!.ID,
@@ -230,12 +299,18 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
       pathSeedMode,
       parseCustomPaths(customPathInput),
     ),
-    onSuccess: () => { refetchPath(); message.success('路径扫描已重新触发') },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      refetchPath()
+      message.success('路径扫描已重新触发')
+    },
     onError: (e) => message.error(extractError(e)),
   })
 
   const findings = findingsData?.findings || []
   const sqliFindings = findings.filter(f => f.is_sqli)
+  const latestPathScan = (((pathScans as { scans?: Array<{ scan?: { path_status?: string }, result?: { status?: string } }> })?.scans) || [])[0]
+  const latestPathStatus = latestPathScan?.scan?.path_status || latestPathScan?.result?.status
 
   const tabs = [
     {
@@ -272,7 +347,7 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
     },
     {
       key: 'pathscan',
-      label: `路径扫描${task?.has_path_scan ? ` (${task.path_scan_status || '有结果'})` : ''}`,
+      label: `路径扫描${latestPathStatus ? ` (${latestPathStatus})` : ''}`,
       children: (
         <Spin spinning={pathLoading}>
           <Space direction="vertical" style={{ width: '100%' }}>
@@ -282,11 +357,11 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
                 value={pathSeedMode}
                 onChange={setPathSeedMode}
                 options={[
-                  { label: 'Auto', value: 'auto' },
+                  { label: '自动', value: 'auto' },
                   { label: 'Top 20', value: '20' },
                   { label: 'Top 50', value: '50' },
                   { label: 'Top 100', value: '100' },
-                  { label: 'Unlimited', value: 'unlimited' },
+                  { label: '不限', value: 'unlimited' },
                 ]}
                 style={{ width: 110 }}
               />
@@ -312,7 +387,7 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
             </Space>
             <Space direction="vertical" size={4} style={{ width: '100%' }}>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                Custom dirsearch paths ({parseCustomPaths(customPathInput).length})
+                自定义 dirsearch 路径 ({parseCustomPaths(customPathInput).length})
               </Text>
               <TextArea
                 value={customPathInput}

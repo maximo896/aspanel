@@ -105,6 +105,13 @@ func (api *API) RegisterPathAgentFromProtocol(c *gin.Context) {
 	if agent.MaxConcurrency <= 0 {
 		agent.MaxConcurrency = 5
 	}
+	var existing models.PathAgent
+	if err := api.DB.Where("url = ?", baseURL).First(&existing).Error; err == nil {
+		agent.ID = existing.ID
+		api.DB.Model(&existing).Updates(agent)
+		c.JSON(200, gin.H{"message": "Path agent updated", "agent": agent})
+		return
+	}
 	api.DB.Create(&agent)
 	c.JSON(200, gin.H{"message": "Path agent registered", "agent": agent})
 }
@@ -117,32 +124,42 @@ func (api *API) UpdatePathAgent(c *gin.Context) {
 	}
 
 	var req struct {
-		Name           string  `json:"name"`
-		URL            string  `json:"url"`
-		APIKey         string  `json:"api_key"`
+		Name           *string `json:"name"`
+		URL            *string `json:"url"`
+		APIKey         *string `json:"api_key"`
 		ManagerURL     *string `json:"manager_url"`
 		ManagerToken   *string `json:"manager_token"`
-		MaxConcurrency int     `json:"max_concurrency"`
+		MaxConcurrency *int    `json:"max_concurrency"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	agent.Name = strings.TrimSpace(req.Name)
-	agent.URL = normalizeBaseURL(req.URL)
-	agent.APIKey = strings.TrimSpace(req.APIKey)
+	if req.Name != nil {
+		agent.Name = strings.TrimSpace(*req.Name)
+	}
+	if req.URL != nil {
+		agent.URL = normalizeBaseURL(*req.URL)
+	}
+	if req.APIKey != nil && strings.TrimSpace(*req.APIKey) != "" {
+		agent.APIKey = strings.TrimSpace(*req.APIKey)
+	}
 	if req.ManagerURL != nil {
 		agent.ManagerURL = normalizeBaseURL(*req.ManagerURL)
 	}
-	if req.ManagerToken != nil {
+	if req.ManagerToken != nil && strings.TrimSpace(*req.ManagerToken) != "" {
 		agent.ManagerToken = strings.TrimSpace(*req.ManagerToken)
 	}
-	if req.MaxConcurrency > 0 {
-		agent.MaxConcurrency = req.MaxConcurrency
+	if req.MaxConcurrency != nil && *req.MaxConcurrency > 0 {
+		agent.MaxConcurrency = *req.MaxConcurrency
 	}
 	if agent.MaxConcurrency <= 0 {
 		agent.MaxConcurrency = 5
+	}
+	if strings.TrimSpace(agent.Name) == "" || strings.TrimSpace(agent.URL) == "" || strings.TrimSpace(agent.APIKey) == "" {
+		c.JSON(400, gin.H{"error": "name, url and api_key are required"})
+		return
 	}
 
 	httpReq, _ := http.NewRequest("GET", agent.URL+"/status", nil)
@@ -186,9 +203,11 @@ func (api *API) UpdatePathAgent(c *gin.Context) {
 
 func (api *API) DeletePathAgent(c *gin.Context) {
 	id := c.Param("id")
-	api.DB.Model(&models.TaskPathScan{}).Where("path_agent_id = ?", id).Updates(map[string]interface{}{
+	api.DB.Model(&models.TaskPathScan{}).Where("path_agent_id = ? AND path_status IN ?", id, []string{"running", "queued"}).Updates(map[string]interface{}{
 		"path_agent_id":  0,
 		"path_agent_url": "",
+		"path_task_id":   "",
+		"path_status":    "none",
 	})
 	api.DB.Delete(&models.PathAgent{}, id)
 	c.JSON(200, gin.H{"message": "path agent deleted"})
@@ -208,9 +227,11 @@ func (api *API) CleanupOfflinePathAgents(c *gin.Context) {
 	for _, agent := range agents {
 		ids = append(ids, agent.ID)
 	}
-	api.DB.Model(&models.TaskPathScan{}).Where("path_agent_id IN ?", ids).Updates(map[string]interface{}{
+	api.DB.Model(&models.TaskPathScan{}).Where("path_agent_id IN ? AND path_status IN ?", ids, []string{"running", "queued"}).Updates(map[string]interface{}{
 		"path_agent_id":  0,
 		"path_agent_url": "",
+		"path_task_id":   "",
+		"path_status":    "none",
 	})
 	api.DB.Where("id IN ?", ids).Delete(&models.PathAgent{})
 	c.JSON(200, gin.H{"message": "offline path agents cleaned", "deleted_count": len(ids)})
@@ -226,12 +247,20 @@ func (api *API) GetPathAgentStatus(c *gin.Context) {
 	req.Header.Set("X-Api-Token", agent.APIKey)
 	resp, err := httpClient().Do(req)
 	if err != nil {
-		c.JSON(200, gin.H{"running_count": -1, "error": err.Error()})
+		c.JSON(502, gin.H{"error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	c.Data(200, "application/json", body)
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	if resp.StatusCode >= 300 {
+		c.Data(resp.StatusCode, contentType, body)
+		return
+	}
+	c.Data(resp.StatusCode, contentType, body)
 }
 
 func (api *API) RefreshPathAgentStatus(c *gin.Context) {
@@ -372,6 +401,62 @@ func decodeTaskPathScanResult(raw string) interface{} {
 	return decoded
 }
 
+func decodeTaskPathScanLogs(raw string) []gin.H {
+	decoded, ok := decodeTaskPathScanResult(raw).(map[string]interface{})
+	if !ok {
+		return []gin.H{}
+	}
+	rawLogs, ok := decoded["logs"].([]interface{})
+	if !ok || len(rawLogs) == 0 {
+		return []gin.H{}
+	}
+	entries := make([]gin.H, 0, len(rawLogs))
+	for index, item := range rawLogs {
+		message := strings.TrimSpace(fmt.Sprintf("%v", item))
+		if message == "" {
+			continue
+		}
+		entries = append(entries, gin.H{
+			"offset":  index,
+			"message": message,
+		})
+	}
+	return entries
+}
+
+func buildCachedTaskPathScanLogResponse(scan models.TaskPathScan, offset, limit int, warning string) gin.H {
+	entries := decodeTaskPathScanLogs(scan.ResultJSON)
+	total := len(entries)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	if offset >= total {
+		return gin.H{
+			"entries":     []gin.H{},
+			"next_offset": total,
+			"total":       total,
+			"truncated":   false,
+			"cached":      true,
+			"warning":     warning,
+		}
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return gin.H{
+		"entries":     entries[offset:end],
+		"next_offset": end,
+		"total":       total,
+		"truncated":   false,
+		"cached":      true,
+		"warning":     warning,
+	}
+}
+
 func (api *API) GetTaskPathScans(c *gin.Context) {
 	var task models.Task
 	if err := api.DB.First(&task, c.Param("id")).Error; err != nil {
@@ -413,6 +498,37 @@ func (api *API) RetryTaskPathScan(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "path scan retry requested", "task_id": idValue})
 }
 
+func (api *API) BatchRetryTaskPathScan(c *gin.Context) {
+	var req struct {
+		IDs            []uint   `json:"ids" binding:"required"`
+		PathAgentID    uint     `json:"path_agent_id"`
+		KatanaSeedMode string   `json:"katana_seed_mode"`
+		CustomPaths    []string `json:"custom_paths"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	succeeded := 0
+	failures := make([]gin.H, 0)
+	for _, id := range req.IDs {
+		if err := scheduler.RetryTaskPathScanToAgent(api.DB, id, req.PathAgentID, req.KatanaSeedMode, req.CustomPaths); err != nil {
+			failures = append(failures, gin.H{
+				"task_id": id,
+				"error":   err.Error(),
+			})
+			continue
+		}
+		succeeded++
+	}
+	c.JSON(200, gin.H{
+		"message":         "batch path scan retry requested",
+		"succeeded_count": succeeded,
+		"failed_count":    len(failures),
+		"failures":        failures,
+	})
+}
+
 func (api *API) GetTaskPathScanLogs(c *gin.Context) {
 	taskID, err := parseUint(c.Param("id"))
 	if err != nil {
@@ -429,20 +545,6 @@ func (api *API) GetTaskPathScanLogs(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "path scan not found"})
 		return
 	}
-	if scan.PathAgentID == 0 || strings.TrimSpace(scan.PathTaskID) == "" {
-		c.JSON(200, gin.H{
-			"entries":     []interface{}{},
-			"next_offset": 0,
-			"total":       0,
-			"truncated":   false,
-		})
-		return
-	}
-	var agent models.PathAgent
-	if err := api.DB.First(&agent, scan.PathAgentID).Error; err != nil {
-		c.JSON(404, gin.H{"error": "path agent not found"})
-		return
-	}
 	offset, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("offset", "0")))
 	limit, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("limit", "200")))
 	if offset < 0 {
@@ -451,11 +553,20 @@ func (api *API) GetTaskPathScanLogs(c *gin.Context) {
 	if limit <= 0 {
 		limit = 200
 	}
+	if scan.PathAgentID == 0 || strings.TrimSpace(scan.PathTaskID) == "" {
+		c.JSON(200, buildCachedTaskPathScanLogResponse(scan, offset, limit, "path scan is not bound to a live agent task"))
+		return
+	}
+	var agent models.PathAgent
+	if err := api.DB.First(&agent, scan.PathAgentID).Error; err != nil {
+		c.JSON(200, buildCachedTaskPathScanLogResponse(scan, offset, limit, "path agent not found, showing cached logs"))
+		return
+	}
 	req, _ := http.NewRequest("GET", fmt.Sprintf("%s/scan/%s/log?offset=%d&limit=%d", normalizeBaseURL(agent.URL), scan.PathTaskID, offset, limit), nil)
 	req.Header.Set("X-Api-Token", agent.APIKey)
 	resp, err := httpClient().Do(req)
 	if err != nil {
-		c.JSON(502, gin.H{"error": err.Error()})
+		c.JSON(200, buildCachedTaskPathScanLogResponse(scan, offset, limit, err.Error()))
 		return
 	}
 	defer resp.Body.Close()
@@ -465,7 +576,7 @@ func (api *API) GetTaskPathScanLogs(c *gin.Context) {
 		if message == "" {
 			message = fmt.Sprintf("path agent returned %d", resp.StatusCode)
 		}
-		c.JSON(resp.StatusCode, gin.H{"error": message})
+		c.JSON(200, buildCachedTaskPathScanLogResponse(scan, offset, limit, message))
 		return
 	}
 	c.Data(200, "application/json", body)
@@ -476,12 +587,7 @@ func parseUint(raw string) (uint64, error) {
 	if trimmed == "" {
 		return 0, fmt.Errorf("empty id")
 	}
-	var value uint64
-	_, err := fmt.Sscanf(trimmed, "%d", &value)
-	if err != nil {
-		return 0, err
-	}
-	return value, nil
+	return strconv.ParseUint(trimmed, 10, 64)
 }
 
 func forwardPathAgentAction(agent models.PathAgent, path string, payload interface{}) ([]byte, int, error) {

@@ -2,17 +2,25 @@ import { useState } from 'react'
 import { Form, Input, Button, Card, Typography, message } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import axios from 'axios'
+import { useAuth } from '../hooks/useAuth'
 
 const { Title, Text } = Typography
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false)
+  const { isAuthenticated, isLoading } = useAuth()
+  const redirectTarget = new URLSearchParams(window.location.search).get('redirect') || '/tasks'
+
+  if (!isLoading && isAuthenticated) {
+    window.location.href = redirectTarget
+    return null
+  }
 
   const onFinish = async (values: { username: string; password: string }) => {
     setLoading(true)
     try {
       await axios.post('/api/auth/login', values, { withCredentials: true })
-      window.location.href = '/tasks'
+      window.location.href = redirectTarget
     } catch (err) {
       if (axios.isAxiosError(err)) {
         message.error(err.response?.data?.error || '登录失败')

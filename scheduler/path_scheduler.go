@@ -116,8 +116,17 @@ func syncTaskPathScanStatus(db *gorm.DB) {
 			continue
 		}
 		for _, scan := range scans {
+			saveFailed := func(message string) {
+				scan.PathStatus = "failed"
+				scan.LastError = strings.TrimSpace(message)
+				if scan.LastError == "" {
+					scan.LastError = "path scan sync failed"
+				}
+				db.Save(&scan)
+			}
 			var agent models.PathAgent
 			if err := db.First(&agent, scan.PathAgentID).Error; err != nil {
+				saveFailed("path agent not found")
 				continue
 			}
 			req, _ := http.NewRequest("GET", fmt.Sprintf("%s/scan/%s", agent.URL, scan.PathTaskID), nil)
@@ -126,16 +135,45 @@ func syncTaskPathScanStatus(db *gorm.DB) {
 			resp, err := client.Do(req)
 			if err != nil {
 				log.Printf("[path-scan] sync failed path_task_id=%s err=%v", scan.PathTaskID, err)
+				saveFailed(fmt.Sprintf("sync failed: %v", err))
 				continue
 			}
 			body, err := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			if err != nil || resp.StatusCode != 200 {
+			if err != nil {
+				saveFailed(fmt.Sprintf("read response failed: %v", err))
+				continue
+			}
+			if resp.StatusCode != 200 {
+				message := strings.TrimSpace(string(body))
+				if message == "" {
+					message = fmt.Sprintf("path agent returned %d", resp.StatusCode)
+				}
+				saveFailed(message)
 				continue
 			}
 			var detail pathScanStatusResponse
 			if err := json.Unmarshal(body, &detail); err != nil {
+				saveFailed(fmt.Sprintf("decode response failed: %v", err))
 				continue
+			}
+			rawResult := map[string]interface{}{}
+			if err := json.Unmarshal(body, &rawResult); err != nil {
+				rawResult = map[string]interface{}{}
+			}
+			logReq, _ := http.NewRequest("GET", fmt.Sprintf("%s/scan/%s/log?offset=0&limit=400", agent.URL, scan.PathTaskID), nil)
+			logReq.Header.Set("X-Api-Token", agent.APIKey)
+			if logResp, logErr := client.Do(logReq); logErr == nil {
+				logBody, readErr := io.ReadAll(logResp.Body)
+				logResp.Body.Close()
+				if readErr == nil && logResp.StatusCode == 200 {
+					var logPayload map[string]interface{}
+					if json.Unmarshal(logBody, &logPayload) == nil {
+						if entries, ok := logPayload["entries"]; ok {
+							rawResult["logs"] = entries
+						}
+					}
+				}
 			}
 			scan.PathStatus = strings.TrimSpace(detail.Status)
 			if scan.PathStatus == "" {
@@ -152,7 +190,11 @@ func syncTaskPathScanStatus(db *gorm.DB) {
 			scan.FormsCount = detail.FormsCount
 			scan.LastError = strings.TrimSpace(detail.LastError)
 			scan.AgentVersion = strings.TrimSpace(agent.AgentVersion)
-			scan.ResultJSON = strings.TrimSpace(string(body))
+			if encoded, err := json.Marshal(rawResult); err == nil {
+				scan.ResultJSON = strings.TrimSpace(string(encoded))
+			} else {
+				scan.ResultJSON = strings.TrimSpace(string(body))
+			}
 			db.Save(&scan)
 		}
 	}
@@ -320,8 +362,13 @@ func sendToPathAgent(
 	if resp.StatusCode == http.StatusAccepted {
 		status = "queued"
 	}
-	selected.CurrentQueued++
-	db.Model(&models.PathAgent{}).Where("id = ?", selected.ID).Update("current_queued", selected.CurrentQueued)
+	if status == "queued" {
+		selected.CurrentQueued++
+		db.Model(&models.PathAgent{}).Where("id = ?", selected.ID).Update("current_queued", selected.CurrentQueued)
+	} else {
+		selected.CurrentRunning++
+		db.Model(&models.PathAgent{}).Where("id = ?", selected.ID).Update("current_running", selected.CurrentRunning)
+	}
 	return taskID, selected.ID, selected.URL, status, selected.AgentVersion, true
 }
 

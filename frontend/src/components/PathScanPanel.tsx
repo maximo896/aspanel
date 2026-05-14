@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
-import { Space, Tag, Typography, Switch, Input, Collapse, Tooltip, Empty, Button } from 'antd'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Space, Tag, Typography, Switch, Input, Collapse, Tooltip, Empty, Button, Card } from 'antd'
 import { FormOutlined, KeyOutlined, LinkOutlined } from '@ant-design/icons'
+import { getPathScanLogs } from '../api/client'
 
 const { Text } = Typography
 
@@ -20,15 +21,28 @@ interface PathItem {
   }>
 }
 
-interface PathScan {
+interface PathScanRecord {
   ID: number
+  path_status?: string
+  path_task_id?: string
+  last_error?: string
+}
+
+interface PathScanEntry {
+  scan: PathScanRecord
   result?: {
+    paths?: PathItem[]
     result?: {
       paths?: PathItem[]
     }
     logs?: string[]
     status?: string
   }
+}
+
+interface PathLogEntry {
+  offset?: number
+  message: string
 }
 
 interface Props {
@@ -123,17 +137,108 @@ function PathItemRow({ item, highlighted }: { item: PathItem; highlighted: boole
   )
 }
 
-export default function PathScanPanel({ scans }: Props) {
-  const [onlyForms, setOnlyForms] = useState(true)
-  const [keywordFilter, setKeywordFilter] = useState(true)
+function normalizeLogEntries(raw: unknown[]): PathLogEntry[] {
+  return raw.map((entry, index) => {
+    if (typeof entry === 'string') {
+      return { offset: index, message: entry }
+    }
+    if (entry && typeof entry === 'object') {
+      const record = entry as { offset?: number; message?: string }
+      return { offset: record.offset, message: record.message || '' }
+    }
+    return { offset: index, message: String(entry || '') }
+  }).filter(entry => entry.message.trim())
+}
+
+function PathScanLogs({
+  taskId,
+  scanId,
+  pathTaskId,
+  status,
+  initialLogs,
+  lastError,
+}: {
+  taskId: number
+  scanId: number
+  pathTaskId?: string
+  status?: string
+  initialLogs?: string[]
+  lastError?: string
+}) {
+  const initialLogSignature = (initialLogs || []).join('\n')
+  const [entries, setEntries] = useState<PathLogEntry[]>(normalizeLogEntries(initialLogs || []))
+  const [error, setError] = useState('')
+  const nextOffsetRef = useRef(0)
+  const active = ['queued', 'running'].includes((status || '').toLowerCase())
+
+  useEffect(() => {
+    setEntries(normalizeLogEntries(initialLogs || []))
+    setError('')
+    nextOffsetRef.current = 0
+  }, [scanId, pathTaskId, initialLogSignature])
+
+  useEffect(() => {
+    if (!taskId || !scanId || !pathTaskId) return
+    let cancelled = false
+
+    const fetchLogs = async (reset = false) => {
+      try {
+        const data = await getPathScanLogs(taskId, scanId, reset ? 0 : nextOffsetRef.current)
+        if (cancelled) return
+        const incoming = normalizeLogEntries(Array.isArray(data?.entries) ? data.entries : [])
+        nextOffsetRef.current = Number.isFinite(data?.next_offset) ? data.next_offset : nextOffsetRef.current
+        setEntries(prev => {
+          const merged = reset || data?.truncated ? incoming : [...prev, ...incoming]
+          return merged.slice(-400)
+        })
+        setError('')
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err))
+        }
+      }
+    }
+
+    void fetchLogs(true)
+    if (!active) {
+      return () => { cancelled = true }
+    }
+    const timer = window.setInterval(() => {
+      void fetchLogs(false)
+    }, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [taskId, scanId, pathTaskId, active])
+
+  const text = entries.map(entry => entry.message).join('\n')
+
+  return (
+    <Card
+      size="small"
+      title="扫描日志"
+      extra={active ? <Tag color="processing">实时刷新中</Tag> : null}
+      style={{ marginTop: 8 }}
+    >
+      <pre style={{ margin: 0, maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+        {text || error || lastError || '暂无日志'}
+      </pre>
+    </Card>
+  )
+}
+
+export default function PathScanPanel({ scans, taskId }: Props) {
+  const [onlyForms, setOnlyForms] = useState(false)
+  const [keywordFilter, setKeywordFilter] = useState(false)
   const [customQuery, setCustomQuery] = useState('')
 
   const filtered = useMemo(() => {
-    return (scans as PathScan[]).map(scan => {
-      const paths = scan.result?.result?.paths || []
+    return (scans as PathScanEntry[]).map(entry => {
+      const paths = entry.result?.paths || entry.result?.result?.paths || []
       const customTerms = customQuery.trim() ? customQuery.trim().toLowerCase().split(/\s+/) : []
 
-      const kept = paths.filter(item => {
+      const kept = paths.filter((item: PathItem) => {
         const hasForms = (item.forms || []).length > 0
         const matchesSensitive = matchesKeyword(item, SENSITIVE_KEYWORDS)
         const matchesCustom = customTerms.length === 0 || matchesKeyword(item, customTerms)
@@ -142,7 +247,7 @@ export default function PathScanPanel({ scans }: Props) {
         if (!matchesCustom) return false
         return true
       })
-      return { scan, kept, total: paths.length }
+      return { entry, kept, total: paths.length }
     })
   }, [scans, onlyForms, keywordFilter, customQuery])
 
@@ -176,35 +281,47 @@ export default function PathScanPanel({ scans }: Props) {
         />
       </Space>
 
-      {filtered.map(({ scan, kept, total }) => (
+      {filtered.map(({ entry, kept, total }) => (
         <Collapse
-          key={scan.ID}
+          key={entry.scan.ID}
           size="small"
-          defaultActiveKey={[scan.ID]}
+          defaultActiveKey={[entry.scan.ID]}
           items={[{
-            key: scan.ID,
+            key: entry.scan.ID,
             label: (
               <Space>
                 <LinkOutlined />
-                <Text style={{ fontSize: 12 }}>扫描 #{scan.ID}</Text>
+                <Text style={{ fontSize: 12 }}>扫描 #{entry.scan.ID}</Text>
                 <Tag>{kept.length} / {total}</Tag>
-                <Tag color={getStatusColor(scan.result?.status)}>
-                  {scan.result?.status || 'unknown'}
+                <Tag color={getStatusColor(entry.scan.path_status || entry.result?.status)}>
+                  {entry.scan.path_status || entry.result?.status || '未知'}
                 </Tag>
               </Space>
             ),
-            children: kept.length === 0 ? (
-              <Empty description={total === 0 ? '暂无结果' : `所有 ${total} 条被过滤`} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-            ) : (
-              <div>
-                {kept.map((item, i) => (
-                  <PathItemRow
-                    key={i}
-                    item={item}
-                    highlighted={SENSITIVE_KEYWORDS.some(k => item.url.toLowerCase().includes(k))}
-                  />
-                ))}
-              </div>
+            children: (
+              <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                {kept.length === 0 ? (
+                  <Empty description={total === 0 ? '暂无结果' : `所有 ${total} 条被过滤`} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                ) : (
+                  <div>
+                    {kept.map((item: PathItem, i: number) => (
+                      <PathItemRow
+                        key={`${item.url}-${item.status_code || 'na'}-${item.title || i}`}
+                        item={item}
+                        highlighted={SENSITIVE_KEYWORDS.some(k => item.url.toLowerCase().includes(k))}
+                      />
+                    ))}
+                  </div>
+                )}
+                <PathScanLogs
+                  taskId={taskId}
+                  scanId={entry.scan.ID}
+                  pathTaskId={entry.scan.path_task_id}
+                  status={entry.scan.path_status || entry.result?.status}
+                  initialLogs={entry.result?.logs || []}
+                  lastError={entry.scan.last_error}
+                />
+              </Space>
             ),
           }]}
         />

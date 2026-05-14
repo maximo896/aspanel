@@ -90,6 +90,7 @@ func main() {
 
 	r.GET("/", serveIndex)
 	// React Router SPA fallback — all non-API routes serve index.html.
+	r.GET("/login", serveIndex)
 	r.GET("/tasks", serveIndex)
 	r.GET("/awvs", serveIndex)
 	r.GET("/sqlmap", serveIndex)
@@ -178,6 +179,7 @@ func main() {
 	r.POST("/api/tasks", h.AddTasks)
 	r.POST("/api/tasks/batch-delete", h.BatchDeleteTasks)
 	r.POST("/api/tasks/batch-retry-push", h.BatchRetryTaskSqlmapPush)
+	r.POST("/api/tasks/batch-retry-path-scan", h.BatchRetryTaskPathScan)
 	r.POST("/api/tasks/cleanup", h.CleanupTasks)
 	r.POST("/api/tasks/cleanup-no-vuln", h.CleanupAWVSNoVulnTasks)
 	r.GET("/api/tasks/:id/sqlmap", h.GetTaskSqlmapDetail)

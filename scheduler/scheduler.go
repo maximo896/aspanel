@@ -296,7 +296,9 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 			resp.Body.Close()
 			agent.CurrentRunning = statusResp.RunningCount
 			agent.CurrentQueued = statusResp.QueuedCount
-			agent.MaxConcurrency = statusResp.MaxConcurrent
+			if statusResp.MaxConcurrent > 0 {
+				agent.MaxConcurrency = statusResp.MaxConcurrent
+			}
 			agent.AgentVersion = strings.TrimSpace(statusResp.Version)
 			agent.LastHeartbeatAt = time.Now().Unix()
 			agent.IsActive = true
@@ -942,10 +944,14 @@ func isRecentVulnerability(task models.Task, vuln map[string]interface{}) bool {
 }
 
 func sendToSqlmapAgent(task models.Task, domain, vulnID, requestData string, forceSSL bool, useProxy *bool, options map[string]interface{}, preferredSqlmapAgentID uint, db *gorm.DB) (string, uint, string, string, bool, bool) {
+	effectiveUseProxy := false
+	if useProxy != nil {
+		effectiveUseProxy = *useProxy
+	}
 	var agents []models.SqlmapAgent
 	if err := db.Where("is_active = ?", true).Find(&agents).Error; err != nil || len(agents) == 0 {
 		log.Printf("No active sqlmap agents available")
-		return "", 0, "", "", false, false
+		return "", 0, "", "", false, effectiveUseProxy
 	}
 
 	var selectedAgent models.SqlmapAgent
@@ -989,19 +995,18 @@ func sendToSqlmapAgent(task models.Task, domain, vulnID, requestData string, for
 
 	if selectedAgent.ID == 0 {
 		log.Printf("All sqlmap agents are at capacity")
-		return "", 0, "", "", false, false
+		return "", 0, "", "", false, effectiveUseProxy
 	}
 	ensureSqlmapAgentProxyURL(db, &selectedAgent)
 
-	effectiveUseProxy := selectedAgent.DefaultUseProxy
-	if useProxy != nil {
-		effectiveUseProxy = *useProxy
+	if useProxy == nil {
+		effectiveUseProxy = selectedAgent.DefaultUseProxy
 	}
 	payload := map[string]interface{}{
-		"domain":       domain,
-		"vuln_id":      vulnID,
-		"request_data": requestData,
-		"force_ssl":    forceSSL,
+		"domain":          domain,
+		"vuln_id":         vulnID,
+		"request_data":    requestData,
+		"force_ssl":       forceSSL,
 		"share_by_domain": selectedAgent.ShareByDomain,
 	}
 	if effectiveUseProxy && strings.TrimSpace(selectedAgent.ProxyURL) != "" {
@@ -1059,6 +1064,10 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 
 				var agent models.SqlmapAgent
 				if err := db.First(&agent, task.SqlmapAgentID).Error; err != nil {
+					if task.SqlmapStatus == "running" || task.SqlmapStatus == "queued" {
+						task.SqlmapStatus = "failed"
+						db.Save(&task)
+					}
 					continue
 				}
 
@@ -1076,6 +1085,13 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 				body, err := io.ReadAll(resp.Body)
 				resp.Body.Close()
 				if err != nil {
+					continue
+				}
+				if resp.StatusCode != http.StatusOK {
+					if task.SqlmapStatus == "running" || task.SqlmapStatus == "queued" {
+						task.SqlmapStatus = "failed"
+						db.Save(&task)
+					}
 					continue
 				}
 				var detail struct {
@@ -1147,6 +1163,10 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 
 			var agent models.SqlmapAgent
 			if err := db.First(&agent, finding.SqlmapAgentID).Error; err != nil {
+				if finding.SqlmapStatus == "running" || finding.SqlmapStatus == "queued" {
+					finding.SqlmapStatus = "failed"
+					db.Save(&finding)
+				}
 				continue
 			}
 
@@ -1164,6 +1184,13 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 			body, err := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if err != nil {
+				continue
+			}
+			if resp.StatusCode != http.StatusOK {
+				if finding.SqlmapStatus == "running" || finding.SqlmapStatus == "queued" {
+					finding.SqlmapStatus = "failed"
+					db.Save(&finding)
+				}
 				continue
 			}
 			var detail struct {
@@ -2336,7 +2363,7 @@ func cleanupAWVSNoVulnTasksPeriodically(db *gorm.DB) {
 	for {
 		time.Sleep(5 * time.Minute)
 		var tasks []models.Task
-		if err := db.Where("status IN ? AND id NOT IN (SELECT task_id FROM task_findings)", []string{"completed", "failed", "aborted"}).Find(&tasks).Error; err != nil || len(tasks) == 0 {
+		if err := db.Where("status IN ? AND id NOT IN (SELECT task_id FROM task_findings)", []string{"completed", "done"}).Find(&tasks).Error; err != nil || len(tasks) == 0 {
 			continue
 		}
 
@@ -2349,6 +2376,7 @@ func cleanupAWVSNoVulnTasksPeriodically(db *gorm.DB) {
 					_ = client.DeleteTarget(task.TargetID)
 				}
 			}
+			db.Where("task_id = ?", task.ID).Delete(&models.TaskPathScan{})
 			db.Delete(&task)
 			deletedCount++
 		}

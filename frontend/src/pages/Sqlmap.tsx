@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Table, Button, Space, Tag, Popconfirm, message, Card, Modal, Form, Input,
-  InputNumber, Switch, Typography, Checkbox,
+  InputNumber, Switch, Typography, Checkbox, Alert,
 } from 'antd'
 import { ReloadOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -26,7 +26,7 @@ export default function SqlmapPage() {
   const [editingAgent, setEditingAgent] = useState<SqlmapAgent | null>(null)
   const [form] = Form.useForm()
 
-  const { data: agents = [], isLoading, refetch } = useQuery({
+  const { data: agents = [], error: agentsError, isLoading, refetch } = useQuery({
     queryKey: ['sqlmap-agents'],
     queryFn: getSqlmapAgents,
   })
@@ -36,9 +36,21 @@ export default function SqlmapPage() {
     queryFn: getSqlmapDefaults,
   })
 
+  useEffect(() => {
+    setSelected(prev => prev.filter(id => agents.some(agent => agent.ID === id)))
+  }, [agents])
+
   const updateMut = useMutation({
     mutationFn: ({ id, data }: { id: number; data: Partial<SqlmapAgent> }) => updateSqlmapAgent(id, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['sqlmap-agents'] }); setEditingAgent(null); message.success('更新成功') },
+    onSuccess: (data: { error?: string }) => {
+      qc.invalidateQueries({ queryKey: ['sqlmap-agents'] })
+      setEditingAgent(null)
+      if (data?.error) {
+        message.warning(`更新已保存，但连通性检查失败: ${data.error}`)
+        return
+      }
+      message.success('更新成功')
+    },
     onError: (e) => message.error(extractError(e)),
   })
 
@@ -68,13 +80,20 @@ export default function SqlmapPage() {
 
   const openEdit = (agent: SqlmapAgent) => {
     setEditingAgent(agent)
-    form.setFieldsValue(agent)
+    form.setFieldsValue({
+      ...agent,
+      api_key: '',
+      manager_token: '',
+    })
   }
 
   const handleSave = () => {
     form.validateFields().then(values => {
       if (!editingAgent) return
-      updateMut.mutate({ id: editingAgent.ID, data: values })
+      const payload = { ...values }
+      if (!payload.api_key) delete payload.api_key
+      if (!payload.manager_token) delete payload.manager_token
+      updateMut.mutate({ id: editingAgent.ID, data: payload })
     })
   }
 
@@ -174,6 +193,14 @@ export default function SqlmapPage() {
           </Space>
         }
       >
+        {agentsError && (
+          <Alert
+            type="error"
+            showIcon
+            message={extractError(agentsError)}
+            style={{ marginBottom: 12 }}
+          />
+        )}
         <Table
           dataSource={agents}
           columns={columns}

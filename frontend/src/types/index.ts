@@ -117,6 +117,7 @@ export interface TaskFinding {
 export interface ProxyAgent {
   ID: number
   name: string
+  server_host?: string
   tunnel_host: string
   tunnel_port: number
   listen_port: number
@@ -162,6 +163,12 @@ export interface CloudSettings {
   sqlmap_autoscale_status?: string
   awvs_autoscale_remaining_sec?: number
   sqlmap_autoscale_remaining_sec?: number
+}
+
+export interface CloudCredentialsStatus {
+  secret_id_set: boolean
+  secret_key_set: boolean
+  secret_id_masked: string
 }
 
 export interface CloudInstance {

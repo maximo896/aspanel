@@ -22,6 +22,7 @@ export default function App() {
           <Route path="cloud" element={<CloudPage />} />
           <Route path="proxy" element={<ProxyPage />} />
         </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   )

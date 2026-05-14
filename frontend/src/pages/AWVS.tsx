@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Table, Button, Space, Tag, Switch, Popconfirm, message, Card, Modal, Form, Input,
-  InputNumber, Tooltip, Typography, Checkbox,
+  InputNumber, Tooltip, Typography, Checkbox, Alert,
 } from 'antd'
 import { ReloadOutlined, DeleteOutlined, EditOutlined, SyncOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -27,16 +27,28 @@ export default function AWVSPage() {
   const [refreshingId, setRefreshingId] = useState<number | null>(null)
   const [form] = Form.useForm()
 
-  const { data: servers = [], isLoading, refetch } = useQuery({
+  const { data: servers = [], error: serversError, isLoading, refetch } = useQuery({
     queryKey: ['servers'],
     queryFn: getServers,
   })
 
   const visible = showInactive ? servers : servers.filter(s => s.is_active)
 
+  useEffect(() => {
+    setSelected(prev => prev.filter(id => visible.some(server => server.ID === id)))
+  }, [visible])
+
   const updateMut = useMutation({
     mutationFn: ({ id, data }: { id: number; data: Partial<AWVSServer> }) => updateServer(id, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['servers'] }); setEditingServer(null); message.success('更新成功') },
+    onSuccess: (data: { error?: string }) => {
+      qc.invalidateQueries({ queryKey: ['servers'] })
+      setEditingServer(null)
+      if (data?.error) {
+        message.warning(`更新已保存，但连通性检查失败: ${data.error}`)
+        return
+      }
+      message.success('更新成功')
+    },
     onError: (e) => message.error(extractError(e)),
   })
 
@@ -51,8 +63,12 @@ export default function AWVSPage() {
       setRefreshingId(id)
       return refreshServer(id)
     },
-    onSuccess: () => {
+    onSuccess: (data: { error?: string }) => {
       qc.invalidateQueries({ queryKey: ['servers'] })
+      if (data?.error) {
+        message.warning(`节点刷新失败: ${data.error}`)
+        return
+      }
       message.success('节点实时刷新成功')
     },
     onError: (e) => message.error(extractError(e)),
@@ -73,13 +89,22 @@ export default function AWVSPage() {
 
   const openEdit = (server: AWVSServer) => {
     setEditingServer(server)
-    form.setFieldsValue(server)
+    form.setFieldsValue({
+      ...server,
+      api_key: '',
+      manager_token: '',
+      awvs_password: '',
+    })
   }
 
   const handleSave = () => {
     form.validateFields().then(values => {
       if (!editingServer) return
-      updateMut.mutate({ id: editingServer.ID, data: values })
+      const payload = { ...values }
+      if (!payload.api_key) delete payload.api_key
+      if (!payload.manager_token) delete payload.manager_token
+      if (!payload.awvs_password) delete payload.awvs_password
+      updateMut.mutate({ id: editingServer.ID, data: payload })
     })
   }
 
@@ -115,7 +140,7 @@ export default function AWVSPage() {
           <Text type="secondary">/ {r.max_concurrency}</Text>
           {r.current_running !== r.panel_running && (
             <Tooltip title={`最近同步的 AWVS 活跃扫描数: ${r.current_running}`}>
-              <Tag color="orange" style={{ fontSize: 11 }}>Synced:{r.current_running}</Tag>
+              <Tag color="orange" style={{ fontSize: 11 }}>同步:{r.current_running}</Tag>
             </Tooltip>
           )}
         </Space>
@@ -180,6 +205,14 @@ export default function AWVSPage() {
           </Space>
         }
       >
+        {serversError && (
+          <Alert
+            type="error"
+            showIcon
+            message={extractError(serversError)}
+            style={{ marginBottom: 12 }}
+          />
+        )}
         <Table
           dataSource={visible}
           columns={columns}

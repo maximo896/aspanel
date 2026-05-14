@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { AWVSServer, SqlmapAgent, PathAgent, Task, TaskFinding, ProxyAgent, CloudSettings, CloudInstance } from '../types'
+import type { AWVSServer, SqlmapAgent, PathAgent, Task, TaskFinding, ProxyAgent, CloudSettings, CloudCredentialsStatus, CloudInstance } from '../types'
 
 const api = axios.create({ baseURL: '/', withCredentials: true })
 
@@ -8,7 +8,8 @@ api.interceptors.response.use(
   err => {
     if (err.response?.status === 401) {
       if (window.location.pathname !== '/login') {
-        window.location.href = '/login'
+        const redirect = `${window.location.pathname}${window.location.search}${window.location.hash}`
+        window.location.href = `/login?redirect=${encodeURIComponent(redirect)}`
       }
     }
     return Promise.reject(err)
@@ -76,6 +77,8 @@ export const getPathScanLogs = (taskId: number, scanId: number, offset = 0) => a
 // Cloud
 export const getCloudSettings = () => api.get<CloudSettings>('/api/cloud/settings').then(r => r.data)
 export const updateCloudSettings = (data: Partial<CloudSettings>) => api.put<CloudSettings>('/api/cloud/settings', data).then(r => r.data)
+export const getCloudCredentials = () => api.get<CloudCredentialsStatus>('/api/cloud/credentials').then(r => r.data)
+export const updateCloudCredentials = (data: { secret_id: string; secret_key: string }) => api.put('/api/cloud/credentials', data).then(r => r.data)
 export const getCloudInstances = () => api.get<CloudInstance[]>('/api/cloud/instances').then(r => r.data)
 export const startCloudScale = (workload: string) => api.post<{ message: string; workload: string; results: Record<string, string> }>(`/api/cloud/scale/start?workload=${workload}`).then(r => r.data)
 export const stopCloudScale = (workload: string) => api.post(`/api/cloud/scale/stop?workload=${workload}`).then(r => r.data)
@@ -84,6 +87,8 @@ export const getPanelLogs = (offset: number) => api.get<{ entries: { offset: num
 
 // Proxy Agents
 export const getProxyAgents = () => api.get<ProxyAgent[]>('/api/proxy/agents').then(r => r.data)
+export const createProxyAgent = (data: Partial<ProxyAgent>) => api.post('/api/proxy/agents', data).then(r => r.data)
+export const registerProxyAgentFromLink = (data: { link: string; name?: string }) => api.post('/api/proxy/agents/register', data).then(r => r.data)
 export const deleteProxyAgent = (id: number) => api.delete(`/api/proxy/agents/${id}`).then(r => r.data)
 
 // SQLmap scan result type
