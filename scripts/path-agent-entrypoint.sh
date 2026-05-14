@@ -1,19 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
-while getopts "n:p:c:d:" opt; do
+while getopts "n:p:c:d:m:" opt; do
   case "$opt" in
     n) AGENT_NAME="$OPTARG" ;;
     p) AGENT_PORT="$OPTARG" ;;
     c) MAX_CONCURRENT="$OPTARG" ;;
     d) DATA_ROOT_BASE="$OPTARG" ;;
+    m) MANAGER_HOST_OVERRIDE="$OPTARG" ;;
   esac
 done
 
 AGENT_NAME="${AGENT_NAME:-path-agent}"
-AGENT_PORT="${AGENT_PORT:-5000}"
+AGENT_PORT="${AGENT_PORT:-$((30000 + RANDOM % 10001))}"
 MAX_CONCURRENT="${MAX_CONCURRENT:-5}"
 DATA_ROOT_BASE="${DATA_ROOT_BASE:-/opt/aspanel/path-agent}"
+MANAGER_HOST_OVERRIDE="${MANAGER_HOST_OVERRIDE:-}"
 
 sanitize_name() {
   local n
@@ -26,7 +28,7 @@ sanitize_name() {
 
 check_port_free() {
   local port="$1"
-  if docker ps --format '{{.Ports}}' | grep -q ":${port}->"; then
+  if $SUDO docker ps --format '{{.Ports}}' | grep -q ":${port}->"; then
     return 1
   fi
   if command -v nc >/dev/null 2>&1; then
@@ -39,6 +41,74 @@ check_port_free() {
     fi
   fi
   return 0
+}
+
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=""
+else
+  SUDO="sudo"
+fi
+
+has_systemd() {
+  command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
+}
+
+detect_public_host() {
+  local host=""
+  host="$(curl -4fsSL https://api.ipify.org 2>/dev/null || true)"
+  if [ -z "$host" ] && command -v ip >/dev/null 2>&1; then
+    host="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src"){print $(i+1); exit}}')"
+  fi
+  if [ -z "$host" ]; then
+    host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  if [ -z "$host" ]; then
+    echo "failed to determine public host automatically; pass -m <host>"
+    exit 1
+  fi
+  printf '%s\n' "$host"
+}
+
+resolve_manager_host() {
+  if [ -n "$MANAGER_HOST_OVERRIDE" ]; then
+    printf '%s\n' "$MANAGER_HOST_OVERRIDE"
+    return 0
+  fi
+  printf '%s\n' "$PUBLIC_HOST"
+}
+
+ensure_packages() {
+  if ! command -v curl >/dev/null 2>&1; then
+    $SUDO apt-get update
+    $SUDO apt-get install -y curl
+  fi
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    $SUDO apt-get update
+    $SUDO apt-get install -y coreutils
+  fi
+}
+
+install_docker() {
+  if command -v apt-get >/dev/null 2>&1; then
+    $SUDO apt-get update
+    $SUDO apt-get install -y ca-certificates curl
+    curl -fsSL https://get.docker.com | $SUDO sh
+    return 0
+  fi
+  curl -fsSL https://get.docker.com | $SUDO sh
+}
+
+ensure_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    install_docker
+  fi
+  if ! $SUDO docker info >/dev/null 2>&1; then
+    $SUDO systemctl start docker 2>/dev/null || $SUDO service docker start 2>/dev/null || true
+  fi
+  if ! $SUDO docker info >/dev/null 2>&1; then
+    echo "docker not ready"
+    exit 1
+  fi
 }
 
 detect_manager_arch() {
@@ -66,32 +136,20 @@ install_manager_binary() {
   fi
   url="https://github.com/maximo896/aspanel/releases/latest/download/docker-manager-linux-${arch}"
   tmp_file="${MANAGER_BIN_FILE}.new"
-  curl -fsSL "$url" -o "$tmp_file"
-  chmod +x "$tmp_file"
-  mv "$tmp_file" "$MANAGER_BIN_FILE"
+  $SUDO curl -fsSL "$url" -o "$tmp_file"
+  $SUDO chmod +x "$tmp_file"
+  $SUDO mv "$tmp_file" "$MANAGER_BIN_FILE"
 }
 
 json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
-if ! command -v curl >/dev/null 2>&1; then
-  apt-get update && apt-get install -y curl
-fi
-if ! command -v docker >/dev/null 2>&1; then
-  curl -fsSL https://get.docker.com | sh
-fi
-if ! docker info >/dev/null 2>&1; then
-  systemctl start docker 2>/dev/null || service docker start 2>/dev/null || true
-fi
-if ! docker info >/dev/null 2>&1; then
-  echo "docker not ready"
-  exit 1
-fi
-
 SAFE_NAME="$(sanitize_name "$AGENT_NAME")"
 CONTAINER_NAME="path-agent-${SAFE_NAME}"
 DATA_ROOT="${DATA_ROOT_BASE}/${SAFE_NAME}"
+MANAGER_SERVICE_NAME="aspanel-docker-manager-path-${SAFE_NAME}"
+MANAGER_SERVICE_FILE="/etc/systemd/system/${MANAGER_SERVICE_NAME}.service"
 OUTPUT_DIR_HOST="${DATA_ROOT}/output"
 TOKEN_FILE="${DATA_ROOT}/api_token"
 MANAGER_TOKEN_FILE="${DATA_ROOT}/manager_token"
@@ -103,8 +161,71 @@ MANAGER_STATE_FILE="${DATA_ROOT}/docker-manager.state.json"
 MANAGER_LOG_FILE="${DATA_ROOT}/docker-manager.log"
 UPDATE_SCRIPT_FILE="${DATA_ROOT}/update-agent.sh"
 UPDATE_LOG_FILE="${DATA_ROOT}/update-agent.log"
+ensure_packages
+ensure_docker
+
 mkdir -p "$OUTPUT_DIR_HOST"
 mkdir -p "$DATA_ROOT"
+
+write_manager_service() {
+  $SUDO tee "$MANAGER_SERVICE_FILE" >/dev/null <<EOF
+[Unit]
+Description=ASPanel Docker Manager (Path ${SAFE_NAME})
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=${DATA_ROOT}
+ExecStart=${MANAGER_BIN_FILE} --port ${MANAGER_PORT} --token ${MANAGER_TOKEN} --config ${MANAGER_CONFIG_FILE} --state-file ${MANAGER_STATE_FILE}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+stop_legacy_manager_pid() {
+  if [ -f "$MANAGER_PID_FILE" ]; then
+    OLD_PID="$(cat "$MANAGER_PID_FILE" 2>/dev/null || true)"
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" >/dev/null 2>&1; then
+      kill "$OLD_PID" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+start_manager() {
+  stop_legacy_manager_pid
+  if has_systemd; then
+    write_manager_service
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable --now "$MANAGER_SERVICE_NAME" >/dev/null
+    echo "systemd" > "$MANAGER_PID_FILE"
+    return 0
+  fi
+  nohup "$MANAGER_BIN_FILE" --port "$MANAGER_PORT" --token "$MANAGER_TOKEN" --config "$MANAGER_CONFIG_FILE" --state-file "$MANAGER_STATE_FILE" >> "$MANAGER_LOG_FILE" 2>&1 &
+  echo $! > "$MANAGER_PID_FILE"
+}
+
+wait_for_manager_health() {
+  local url="$1"
+  local attempt
+  for attempt in $(seq 1 30); do
+    if curl -fsS -H "X-Manager-Token: ${MANAGER_TOKEN}" "${url}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[!] docker-manager health check failed: ${url}/health"
+  if has_systemd; then
+    $SUDO systemctl status "$MANAGER_SERVICE_NAME" --no-pager || true
+    $SUDO journalctl -u "$MANAGER_SERVICE_NAME" -n 50 --no-pager || true
+  else
+    tail -n 50 "$MANAGER_LOG_FILE" 2>/dev/null || true
+  fi
+  return 1
+}
 
 if [ -f "$TOKEN_FILE" ]; then
   API_TOKEN="$(cat "$TOKEN_FILE" | tr -d ' \t\r\n')"
@@ -142,17 +263,20 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 curl -fsSL https://github.com/maximo896/as/archive/refs/heads/main.tar.gz | tar xz -C "$TMP" --strip-components=1
 
-PUBLIC_HOST="$(curl -fsSL https://api.ipify.org 2>/dev/null || true)"
-if [ -z "$PUBLIC_HOST" ]; then
-  PUBLIC_HOST="$(hostname -I | awk '{print $1}')"
-fi
-MANAGER_URL="http://${PUBLIC_HOST}:${MANAGER_PORT}"
+PUBLIC_HOST="$(detect_public_host)"
+MANAGER_HOST="$(resolve_manager_host)"
+MANAGER_URL="http://${MANAGER_HOST}:${MANAGER_PORT}"
+
+while ! check_port_free "$AGENT_PORT"; do
+  echo "[!] Port $AGENT_PORT is already in use. Assigning a new random port..."
+  AGENT_PORT="$((30000 + RANDOM % 10001))"
+done
 
 IMAGE="path-agent:${SAFE_NAME}"
-docker build --pull --no-cache -f "${TMP}/path-agent.Dockerfile" -t "$IMAGE" "$TMP"
-docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+$SUDO docker build --pull --no-cache -f "${TMP}/path-agent.Dockerfile" -t "$IMAGE" "$TMP"
+$SUDO docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
-docker run -d \
+$SUDO docker run -d \
   --name "$CONTAINER_NAME" \
   -p "${AGENT_PORT}:5000" \
   -e AGENT_NAME="$AGENT_NAME" \
@@ -174,6 +298,9 @@ install_manager_binary
   echo 'set -euo pipefail'
   echo 'sleep 1'
   printf 'MANAGER_ALLOW_REUSE_PORT=1 curl -fsSL https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/path-agent-entrypoint.sh | bash -s -- -n %q -p %q -c %q -d %q' "$AGENT_NAME" "$AGENT_PORT" "$MAX_CONCURRENT" "$DATA_ROOT_BASE"
+  if [ -n "$MANAGER_HOST_OVERRIDE" ]; then
+    printf ' -m %q' "$MANAGER_HOST_OVERRIDE"
+  fi
   echo
 } > "$UPDATE_SCRIPT_FILE"
 chmod +x "$UPDATE_SCRIPT_FILE"
@@ -183,14 +310,16 @@ if [ -f "$MANAGER_PID_FILE" ]; then
     kill "$OLD_PID" >/dev/null 2>&1 || true
   fi
 fi
-nohup "$MANAGER_BIN_FILE" --port "$MANAGER_PORT" --token "$MANAGER_TOKEN" --config "$MANAGER_CONFIG_FILE" --state-file "$MANAGER_STATE_FILE" >> "$MANAGER_LOG_FILE" 2>&1 &
-echo $! > "$MANAGER_PID_FILE"
+start_manager
+if ! wait_for_manager_health "$MANAGER_URL"; then
+  exit 1
+fi
 
 echo ""
 echo "[*] Waiting for pathagent:// link..."
 PROTO=""
 for i in $(seq 1 20); do
-  PROTO="$(docker logs "$CONTAINER_NAME" 2>/dev/null | grep -m1 'pathagent://' || true)"
+  PROTO="$($SUDO docker logs "$CONTAINER_NAME" 2>/dev/null | grep -m1 'pathagent://' || true)"
   if [ -n "$PROTO" ]; then
     break
   fi
@@ -220,5 +349,5 @@ if [ -n "$PROTO" ]; then
   fi
 else
   echo "[!] Protocol link not found in logs, showing last 80 lines:"
-  docker logs --tail 80 "$CONTAINER_NAME"
+  $SUDO docker logs --tail 80 "$CONTAINER_NAME"
 fi

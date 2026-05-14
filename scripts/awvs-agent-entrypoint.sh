@@ -1,17 +1,19 @@
 #!/bin/bash
 set -euo pipefail
 
-while getopts "n:p:c:" opt; do
+while getopts "n:p:c:m:" opt; do
   case "$opt" in
     n) AGENT_NAME="$OPTARG" ;;
     p) AGENT_PORT="$OPTARG" ;;
     c) MAX_CONCURRENT="$OPTARG" ;;
+    m) MANAGER_HOST_OVERRIDE="$OPTARG" ;;
   esac
 done
 
 AGENT_NAME="${AGENT_NAME:-awvs}"
 AGENT_PORT="${AGENT_PORT:-$((30000 + RANDOM % 10001))}"
 MAX_CONCURRENT="${MAX_CONCURRENT:-5}"
+MANAGER_HOST_OVERRIDE="${MANAGER_HOST_OVERRIDE:-}"
 
 sanitize_name() {
   local n
@@ -25,7 +27,7 @@ sanitize_name() {
 check_port_free() {
   local port="$1"
   # Check whether Docker already binds this port.
-  if docker ps --format '{{.Ports}}' | grep -q ":${port}->"; then
+  if $SUDO docker ps --format '{{.Ports}}' | grep -q ":${port}->"; then
     return 1
   fi
   # Check whether the host already listens on this port.
@@ -52,6 +54,34 @@ if [ "$(id -u)" -eq 0 ]; then
 else
   SUDO="sudo"
 fi
+
+has_systemd() {
+  command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
+}
+
+detect_public_host() {
+  local host=""
+  host="$(curl -4fsSL https://api.ipify.org 2>/dev/null || true)"
+  if [ -z "$host" ] && command -v ip >/dev/null 2>&1; then
+    host="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src"){print $(i+1); exit}}')"
+  fi
+  if [ -z "$host" ]; then
+    host="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  if [ -z "$host" ]; then
+    echo "failed to determine public host automatically; pass -m <host>"
+    exit 1
+  fi
+  printf '%s\n' "$host"
+}
+
+resolve_manager_host() {
+  if [ -n "$MANAGER_HOST_OVERRIDE" ]; then
+    printf '%s\n' "$MANAGER_HOST_OVERRIDE"
+    return 0
+  fi
+  printf '%s\n' "$PUBLIC_HOST"
+}
 
 ensure_packages() {
   if ! command -v curl >/dev/null 2>&1; then
@@ -224,6 +254,8 @@ ensure_docker
 SAFE_NAME="$(sanitize_name "$AGENT_NAME")"
 CONTAINER_NAME="awvs-agent-${SAFE_NAME}"
 DATA_ROOT="/opt/aspanel/awvs-agent/${SAFE_NAME}"
+MANAGER_SERVICE_NAME="aspanel-docker-manager-awvs-${SAFE_NAME}"
+MANAGER_SERVICE_FILE="/etc/systemd/system/${MANAGER_SERVICE_NAME}.service"
 MANAGER_TOKEN_FILE="${DATA_ROOT}/manager_token"
 MANAGER_PORT_FILE="${DATA_ROOT}/manager_port"
 MANAGER_CONFIG_FILE="${DATA_ROOT}/manager_config.json"
@@ -236,6 +268,66 @@ UPDATE_LOG_FILE="${DATA_ROOT}/update-agent.log"
 mkdir -p "$DATA_ROOT"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
+
+write_manager_service() {
+  $SUDO tee "$MANAGER_SERVICE_FILE" >/dev/null <<EOF
+[Unit]
+Description=ASPanel Docker Manager (AWVS ${SAFE_NAME})
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=${DATA_ROOT}
+ExecStart=${MANAGER_BIN_FILE} --port ${MANAGER_PORT} --token ${MANAGER_TOKEN} --config ${MANAGER_CONFIG_FILE} --state-file ${MANAGER_STATE_FILE}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+stop_legacy_manager_pid() {
+  if [ -f "$MANAGER_PID_FILE" ]; then
+    OLD_PID="$(cat "$MANAGER_PID_FILE" 2>/dev/null || true)"
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" >/dev/null 2>&1; then
+      kill "$OLD_PID" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+start_manager() {
+  stop_legacy_manager_pid
+  if has_systemd; then
+    write_manager_service
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable --now "$MANAGER_SERVICE_NAME" >/dev/null
+    echo "systemd" > "$MANAGER_PID_FILE"
+    return 0
+  fi
+  nohup "$MANAGER_BIN_FILE" --port "$MANAGER_PORT" --token "$MANAGER_TOKEN" --config "$MANAGER_CONFIG_FILE" --state-file "$MANAGER_STATE_FILE" >> "$MANAGER_LOG_FILE" 2>&1 &
+  echo $! > "$MANAGER_PID_FILE"
+}
+
+wait_for_manager_health() {
+  local url="$1"
+  local attempt
+  for attempt in $(seq 1 30); do
+    if curl -fsS -H "X-Manager-Token: ${MANAGER_TOKEN}" "${url}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[!] docker-manager health check failed: ${url}/health"
+  if has_systemd; then
+    $SUDO systemctl status "$MANAGER_SERVICE_NAME" --no-pager || true
+    $SUDO journalctl -u "$MANAGER_SERVICE_NAME" -n 50 --no-pager || true
+  else
+    tail -n 50 "$MANAGER_LOG_FILE" 2>/dev/null || true
+  fi
+  return 1
+}
 
 backup_existing_awvs_state() {
   local backup_root="${WORKDIR}/awvs-state"
@@ -325,11 +417,9 @@ while [ -z "$MANAGER_PORT" ]; do
 done
 echo "$MANAGER_PORT" > "$MANAGER_PORT_FILE"
 
-PUBLIC_HOST="$(curl -fsSL https://api.ipify.org 2>/dev/null || true)"
-if [ -z "$PUBLIC_HOST" ]; then
-  PUBLIC_HOST="$(hostname -I | awk '{print $1}')"
-fi
-MANAGER_URL="http://${PUBLIC_HOST}:${MANAGER_PORT}"
+PUBLIC_HOST="$(detect_public_host)"
+MANAGER_HOST="$(resolve_manager_host)"
+MANAGER_URL="http://${MANAGER_HOST}:${MANAGER_PORT}"
 
 # Reuse the original port for in-place updates of the same node.
 RESTORE_PREVIOUS_STATE=0
@@ -365,6 +455,9 @@ install_manager_binary
   echo 'set -euo pipefail'
   echo 'sleep 1'
   printf 'MANAGER_ALLOW_REUSE_PORT=1 curl -fsSL https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/awvs-agent-entrypoint.sh | bash -s -- -n %q -p %q -c %q' "$AGENT_NAME" "$AGENT_PORT" "$MAX_CONCURRENT"
+  if [ -n "$MANAGER_HOST_OVERRIDE" ]; then
+    printf ' -m %q' "$MANAGER_HOST_OVERRIDE"
+  fi
   echo
 } | $SUDO tee "$UPDATE_SCRIPT_FILE" >/dev/null
 $SUDO chmod +x "$UPDATE_SCRIPT_FILE"
@@ -374,8 +467,10 @@ if [ -f "$MANAGER_PID_FILE" ]; then
     kill "$OLD_PID" >/dev/null 2>&1 || true
   fi
 fi
-nohup "$MANAGER_BIN_FILE" --port "$MANAGER_PORT" --token "$MANAGER_TOKEN" --config "$MANAGER_CONFIG_FILE" --state-file "$MANAGER_STATE_FILE" >> "$MANAGER_LOG_FILE" 2>&1 &
-echo $! > "$MANAGER_PID_FILE"
+start_manager
+if ! wait_for_manager_health "$MANAGER_URL"; then
+  exit 1
+fi
 
 BASE_URL="https://${PUBLIC_HOST}:${AGENT_PORT}"
 LOCAL_URL="https://127.0.0.1:${AGENT_PORT}"
