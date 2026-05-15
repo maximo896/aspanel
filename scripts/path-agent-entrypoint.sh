@@ -200,7 +200,12 @@ start_manager() {
   if has_systemd; then
     write_manager_service
     $SUDO systemctl daemon-reload
-    $SUDO systemctl enable --now "$MANAGER_SERVICE_NAME" >/dev/null
+    $SUDO systemctl enable "$MANAGER_SERVICE_NAME" >/dev/null
+    if $SUDO systemctl is-active --quiet "$MANAGER_SERVICE_NAME"; then
+      $SUDO systemctl restart "$MANAGER_SERVICE_NAME" >/dev/null
+    else
+      $SUDO systemctl start "$MANAGER_SERVICE_NAME" >/dev/null
+    fi
     echo "systemd" > "$MANAGER_PID_FILE"
     return 0
   fi
