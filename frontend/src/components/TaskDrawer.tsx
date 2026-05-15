@@ -157,6 +157,13 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
   const sqlmapBusy = ['running', 'queued'].includes(liveSqlmapStatus)
   const canEditRequest = Boolean(finding.sqlmap_task_id && finding.sqlmap_agent_id && !sqlmapBusy)
   const manualCommand = buildSqlmapManualCommand(scan)
+  const agentOptions = [
+    { label: '自动', value: 0 },
+    ...sqlmapAgents.map(a => ({ label: a.name, value: a.ID })),
+  ]
+  if (agentId > 0 && !sqlmapAgents.some(agent => agent.ID === agentId)) {
+    agentOptions.unshift({ label: `当前代理不可用 (#${agentId})`, value: agentId })
+  }
 
   return (
     <div style={{ borderBottom: '1px solid #f0f0f0', padding: '8px 0' }}>
@@ -197,11 +204,8 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
             size="small"
             value={agentId}
             onChange={setAgentId}
-            options={[
-              { label: '自动', value: 0 },
-              ...sqlmapAgents.map(a => ({ label: a.name, value: a.ID })),
-            ]}
-            style={{ width: 90 }}
+            options={agentOptions}
+            style={{ width: 150 }}
           />
           <Popconfirm title="重新投递到 sqlmap?" onConfirm={() => retryMut.mutate()}>
             <Button size="small" icon={<SendOutlined />} loading={retryMut.isPending}>重投</Button>

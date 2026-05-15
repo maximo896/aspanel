@@ -13,6 +13,8 @@ import (
 	vpc "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/vpc/v20170312"
 )
 
+const defaultTencentAPIRequestTimeoutSec = 12
+
 var instanceTypeSpecs = map[string][2]int{
 	"S5.SMALL1":    {1, 2},
 	"S5.SMALL2":    {2, 2},
@@ -64,15 +66,25 @@ func NewClient(settings Settings) *Client {
 	return &Client{settings: settings}
 }
 
+func tencentClientProfile() *profile.ClientProfile {
+	pf := profile.NewClientProfile()
+	if pf.HttpProfile == nil {
+		pf.HttpProfile = profile.NewHttpProfile()
+	}
+	pf.HttpProfile.ReqMethod = "POST"
+	pf.HttpProfile.ReqTimeout = defaultTencentAPIRequestTimeoutSec
+	return pf
+}
+
 func (c *Client) cvmClient(region string) (*cvm.Client, error) {
 	cred := common.NewCredential(c.settings.SecretID, c.settings.SecretKey)
-	pf := profile.NewClientProfile()
+	pf := tencentClientProfile()
 	return cvm.NewClient(cred, region, pf)
 }
 
 func (c *Client) vpcClient(region string) (*vpc.Client, error) {
 	cred := common.NewCredential(c.settings.SecretID, c.settings.SecretKey)
-	pf := profile.NewClientProfile()
+	pf := tencentClientProfile()
 	return vpc.NewClient(cred, region, pf)
 }
 

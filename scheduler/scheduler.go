@@ -1383,7 +1383,9 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 	candidates := []string{"ap-singapore", "ap-seoul", "ap-tokyo", "ap-bangkok", "eu-frankfurt", "na-siliconvalley"}
 	offers := make([]tencent.SpotOffer, 0)
 	explicitType := strings.TrimSpace(instanceType)
+	log.Printf("[cloud][autoscale][%s] querying spot offers regions=%d explicit_type=%s", workload, len(candidates), explicitType)
 	for _, region := range tencent.FilterNonMainland(candidates) {
+		log.Printf("[cloud][autoscale][%s] list offers start region=%s type=%s", workload, region, explicitType)
 		rs, err := tClient.ListSpotOffers(region, explicitType)
 		if err != nil {
 			if explicitType != "" {
@@ -1393,8 +1395,10 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 			}
 			continue
 		}
+		log.Printf("[cloud][autoscale][%s] list offers done region=%s count=%d", workload, region, len(rs))
 		offers = append(offers, rs...)
 	}
+	log.Printf("[cloud][autoscale][%s] raw offers gathered=%d", workload, len(offers))
 	filtered := make([]tencent.SpotOffer, 0, len(offers))
 	for _, offer := range offers {
 		if offer.CPU < maxInt(1, minCPU) || offer.MemoryGB < maxInt(1, minMemory) {
@@ -1402,6 +1406,7 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 		}
 		filtered = append(filtered, offer)
 	}
+	log.Printf("[cloud][autoscale][%s] offers after min spec filter=%d", workload, len(filtered))
 	// Enrich offer price with configured runtime price so budgeting includes disk/bandwidth.
 	imageCache := map[string]string{}
 	for i := range filtered {
@@ -1454,6 +1459,7 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 		filtered[i].PriceUSD = configTotal
 	}
 	offers = tencent.FilterAndSortOffers(filtered, maxPrice)
+	log.Printf("[cloud][autoscale][%s] offers after price filter=%d", workload, len(offers))
 	if len(offers) == 0 {
 		msg := fmt.Sprintf("no spot offer found below max_price=%.4f USD/hr (min_cpu=%d min_memory=%dGB)", maxPrice, maxInt(1, minCPU), maxInt(1, minMemory))
 		log.Printf("[cloud][autoscale][%s] %s", workload, msg)
