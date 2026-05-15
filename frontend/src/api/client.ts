@@ -113,6 +113,13 @@ export interface SqlmapScan {
   sqlmap_status?: string
   phase?: string
   latest_action?: string
+  action_args?: {
+    search_kind?: string
+    search_query?: string
+    db?: string
+    table?: string
+    [key: string]: unknown
+  }
   dbms?: string
   hostname?: string
   current_user?: string

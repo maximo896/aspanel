@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import {
   Button, Space, Typography, Tag, Spin, message, Input, Select, Card,
@@ -39,6 +39,9 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResult, setSearchResult] = useState<Array<Record<string, unknown>> | null>(null)
   const [searchLoading, setSearchLoading] = useState(false)
+  const [searchNotice, setSearchNotice] = useState('')
+  const [searchQueued, setSearchQueued] = useState(false)
+  const [lastQueuedSearch, setLastQueuedSearch] = useState<{ kind: string; query: string } | null>(null)
   const [sensitiveOnly, setSensitiveOnly] = useState(false)
 
   const actionMut = useMutation({
@@ -56,9 +59,12 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
     setSearchLoading(true)
+    setSearchNotice('')
+    setSearchQueued(false)
     try {
+      const trimmedQuery = searchQuery.trim()
       const result = await searchFindingSqlmap(finding.ID, {
-        q: searchQuery.trim(),
+        q: trimmedQuery,
         kind: searchKind === 'data' ? 'data' : searchKind,
       })
       if (result?.message) {
@@ -66,6 +72,18 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
       }
       if (result?.warning) {
         message.warning(String(result.warning))
+      }
+      const queued = Boolean(result?.action_queued)
+      setSearchQueued(queued)
+      if (queued) {
+        setLastQueuedSearch({ kind: searchKind, query: trimmedQuery })
+        const flag = searchKind === 'column' ? '-C' : searchKind === 'table' ? '-T' : searchKind === 'data' ? '' : '-D'
+        const queuedText = flag
+          ? `已触发 sqlmap --search ${flag} '${trimmedQuery}'。当前立即显示的是本地缓存结果，请等待任务完成后点“刷新”再看。`
+          : '已触发 sqlmap 搜索。当前立即显示的是本地缓存结果，请等待任务完成后点“刷新”再看。'
+        setSearchNotice(queuedText)
+      } else if (result?.warning) {
+        setSearchNotice(String(result.warning))
       }
       setSearchResult(Array.isArray(result?.results) ? result.results : [])
       if (result?.action_queued) {
@@ -104,6 +122,68 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
       columnCount: table.columns?.length || 0,
     })))
   }, [filteredDatabases])
+
+  const recentSearch = useMemo(() => {
+    const liveAction = String(scan?.latest_action || '').trim().toLowerCase()
+    const liveKind = String(scan?.action_args?.search_kind || '').trim().toLowerCase()
+    const liveQuery = String(scan?.action_args?.search_query || '').trim()
+    if (liveAction === 'search' && liveKind && liveQuery) {
+      return {
+        kind: liveKind,
+        query: liveQuery,
+        status: String(scan?.status || scan?.sqlmap_status || 'queued').trim().toLowerCase(),
+        source: 'live',
+      }
+    }
+    if (lastQueuedSearch) {
+      return {
+        kind: lastQueuedSearch.kind,
+        query: lastQueuedSearch.query,
+        status: searchQueued ? 'queued' : String(scan?.status || scan?.sqlmap_status || '').trim().toLowerCase(),
+        source: 'local',
+      }
+    }
+    return null
+  }, [lastQueuedSearch, scan?.action_args?.search_kind, scan?.action_args?.search_query, scan?.latest_action, scan?.sqlmap_status, scan?.status, searchQueued])
+
+  const recentSearchMeta = useMemo(() => {
+    if (!recentSearch) return null
+    const kindLabelMap: Record<string, string> = {
+      column: '列名',
+      table: '表名',
+      data: '数据',
+      database: '库名',
+    }
+    const statusTextMap: Record<string, string> = {
+      queued: '等待中',
+      running: '运行中',
+      completed: '已完成',
+      done: '已完成',
+      failed: '失败',
+      error: '失败',
+    }
+    const statusKey = recentSearch.status || 'queued'
+    const color =
+      statusKey === 'completed' || statusKey === 'done'
+        ? 'success'
+        : statusKey === 'running' || statusKey === 'queued'
+          ? 'processing'
+          : statusKey === 'failed' || statusKey === 'error'
+            ? 'error'
+            : 'default'
+    return {
+      color,
+      text: `最近搜索任务: ${kindLabelMap[recentSearch.kind] || recentSearch.kind} ${recentSearch.query} ${statusTextMap[statusKey] || recentSearch.status || '未知'}`,
+    }
+  }, [recentSearch])
+
+  useEffect(() => {
+    const liveAction = String(scan?.latest_action || '').trim().toLowerCase()
+    const liveStatus = String(scan?.status || scan?.sqlmap_status || '').trim().toLowerCase()
+    if (liveAction === 'search' && ['completed', 'done', 'failed', 'error'].includes(liveStatus)) {
+      setSearchQueued(false)
+    }
+  }, [scan?.latest_action, scan?.sqlmap_status, scan?.status])
 
   if (!scan) {
     return (
@@ -173,6 +253,11 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
               搜索
             </Button>
           </Space.Compact>
+          {recentSearchMeta && (
+            <div style={{ marginBottom: 8 }}>
+              <Tag color={recentSearchMeta.color}>{recentSearchMeta.text}</Tag>
+            </div>
+          )}
 
           {searchResult && searchResult.length > 0 && (
             <Table
@@ -191,8 +276,14 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
               ]}
             />
           )}
-          {searchResult && searchResult.length === 0 && (
+          {searchNotice && (
+            <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>{searchNotice}</Text>
+          )}
+          {searchResult && searchResult.length === 0 && !searchQueued && (
             <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>未找到匹配结果</Text>
+          )}
+          {searchResult && searchResult.length === 0 && searchQueued && (
+            <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>搜索任务已触发，等待 sqlmap 返回结果后刷新查看。</Text>
           )}
 
           {filteredDatabases.length === 0 ? (

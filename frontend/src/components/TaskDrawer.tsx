@@ -136,6 +136,7 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
   }, [finding.ID, finding.sqlmap_agent_id])
 
   const liveSqlmapStatus = String((scan?.status || scan?.sqlmap_status || finding.sqlmap_status || '')).trim().toLowerCase()
+  const displaySqlmapStatus = scan?.status || scan?.sqlmap_status || finding.sqlmap_status || 'none'
   const shouldPollScan = expanded && liveSqlmapStatus === 'running'
 
   useEffect(() => {
@@ -189,8 +190,8 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
           {finding.has_injection && <Tag color="orange">注入</Tag>}
           <SqlmapDataTags item={finding} />
           {finding.has_shell && <Tag color="red">Shell</Tag>}
-          <Tag color={finding.sqlmap_status === 'done' ? 'success' : finding.sqlmap_status === 'running' ? 'processing' : 'default'}>
-            {finding.sqlmap_status || 'none'}
+          <Tag color={['done', 'completed'].includes(liveSqlmapStatus) ? 'success' : ['running', 'queued'].includes(liveSqlmapStatus) ? 'processing' : 'default'}>
+            {displaySqlmapStatus}
           </Tag>
         </Space>
         <Space size={4}>
@@ -223,7 +224,7 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
               bordered
               items={[
                 { key: 'task', label: '任务ID', children: scan?.current_sqlmap_task_id || finding.sqlmap_task_id || '-' },
-                { key: 'status', label: '状态', children: scan?.status || finding.sqlmap_status || '-' },
+                { key: 'status', label: '状态', children: displaySqlmapStatus || '-' },
                 { key: 'phase', label: '阶段', children: scan?.phase || '-' },
                 { key: 'currentdb', label: '当前数据库', children: scan?.content?.current_db || scan?.current_db || '-' },
                 { key: 'request', label: '请求文件', children: scan?.request_file || '-' },
