@@ -235,8 +235,8 @@ function PathScanLogs({
 }
 
 export default function PathScanPanel({ scans, taskId }: Props) {
-  const [onlyForms, setOnlyForms] = useState(false)
-  const [keywordFilter, setKeywordFilter] = useState(false)
+  const [onlyForms, setOnlyForms] = useState(true)
+  const [keywordFilter, setKeywordFilter] = useState(true)
   const [customQuery, setCustomQuery] = useState('')
 
   const filtered = useMemo(() => {

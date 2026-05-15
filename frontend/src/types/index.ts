@@ -84,6 +84,10 @@ export interface Task {
   sqlmap_status: string
   sqlmap_agent_url: string
   has_data: boolean
+  has_db_names: boolean
+  has_table_names: boolean
+  has_column_names: boolean
+  has_row_data: boolean
   has_shell: boolean
   has_finding: boolean
   has_injection: boolean
@@ -107,6 +111,10 @@ export interface TaskFinding {
   sqlmap_agent_url: string
   sqlmap_status: string
   has_data: boolean
+  has_db_names: boolean
+  has_table_names: boolean
+  has_column_names: boolean
+  has_row_data: boolean
   has_shell: boolean
   has_injection: boolean
   use_proxy: boolean

@@ -14,6 +14,7 @@ import {
 } from '../api/client'
 import SqlmapTree from './SqlmapTree'
 import PathScanPanel from './PathScanPanel'
+import SqlmapDataTags from './SqlmapDataTags'
 
 const { Text } = Typography
 const { TextArea } = Input
@@ -186,7 +187,7 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
             </Text>
           </Button>
           {finding.has_injection && <Tag color="orange">注入</Tag>}
-          {finding.has_data && <Tag color="blue">数据</Tag>}
+          <SqlmapDataTags item={finding} />
           {finding.has_shell && <Tag color="red">Shell</Tag>}
           <Tag color={finding.sqlmap_status === 'done' ? 'success' : finding.sqlmap_status === 'running' ? 'processing' : 'default'}>
             {finding.sqlmap_status || 'none'}

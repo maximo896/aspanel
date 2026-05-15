@@ -1035,21 +1035,122 @@ func (api *API) TestSqlmapAgent(c *gin.Context) {
 	})
 }
 
-func snapshotHasCurrentDB(snapshot map[string]interface{}) bool {
-	if len(snapshot) == 0 {
-		return false
-	}
-	if currentDB, ok := snapshot["current_db"].(string); ok && strings.TrimSpace(currentDB) != "" {
-		return true
-	}
-	content, _ := snapshot["content"].(map[string]interface{})
-	if currentDB, ok := content["current_db"].(string); ok && strings.TrimSpace(currentDB) != "" {
-		return true
-	}
-	return false
+type sqlmapDataFlags struct {
+	HasDBNames     bool
+	HasTableNames  bool
+	HasColumnNames bool
+	HasRowData     bool
 }
 
-func rawSnapshotHasCurrentDB(raw string) bool {
+func (flags sqlmapDataFlags) HasEnumeratedData() bool {
+	return flags.HasTableNames || flags.HasColumnNames || flags.HasRowData
+}
+
+func (flags sqlmapDataFlags) HasAnyLabel() bool {
+	return flags.HasDBNames || flags.HasTableNames || flags.HasColumnNames || flags.HasRowData
+}
+
+func mergeSQLMapDataFlags(dst *sqlmapDataFlags, src sqlmapDataFlags) {
+	if dst == nil {
+		return
+	}
+	dst.HasDBNames = dst.HasDBNames || src.HasDBNames
+	dst.HasTableNames = dst.HasTableNames || src.HasTableNames
+	dst.HasColumnNames = dst.HasColumnNames || src.HasColumnNames
+	dst.HasRowData = dst.HasRowData || src.HasRowData
+}
+
+func sqlmapDataFlagsFromSnapshot(snapshot map[string]interface{}) sqlmapDataFlags {
+	if len(snapshot) == 0 {
+		return sqlmapDataFlags{}
+	}
+	content, _ := snapshot["content"].(map[string]interface{})
+	if content == nil {
+		content = snapshot
+	}
+	flags := sqlmapDataFlags{}
+
+	if dbs, ok := content["dbs"].([]interface{}); ok && len(dbs) > 0 {
+		flags.HasDBNames = true
+	}
+	if currentDB := strings.TrimSpace(fmt.Sprint(content["current_db"])); currentDB != "" && currentDB != "<nil>" {
+		flags.HasDBNames = true
+	}
+	if tables, ok := content["tables"].(map[string]interface{}); ok {
+		if len(tables) > 0 {
+			flags.HasDBNames = true
+		}
+		for _, rawTables := range tables {
+			switch values := rawTables.(type) {
+			case []interface{}:
+				if len(values) > 0 {
+					flags.HasTableNames = true
+				}
+			case []string:
+				if len(values) > 0 {
+					flags.HasTableNames = true
+				}
+			}
+			if flags.HasTableNames {
+				break
+			}
+		}
+	}
+	if columns, ok := content["columns"].(map[string]interface{}); ok {
+		if len(columns) > 0 {
+			flags.HasDBNames = true
+		}
+		for _, rawTables := range columns {
+			tableMap, ok := rawTables.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if len(tableMap) > 0 {
+				flags.HasTableNames = true
+			}
+			for _, rawColumns := range tableMap {
+				switch values := rawColumns.(type) {
+				case map[string]interface{}:
+					if len(values) > 0 {
+						flags.HasColumnNames = true
+					}
+				case []interface{}:
+					if len(values) > 0 {
+						flags.HasColumnNames = true
+					}
+				case []string:
+					if len(values) > 0 {
+						flags.HasColumnNames = true
+					}
+				}
+				if flags.HasColumnNames {
+					break
+				}
+			}
+			if flags.HasColumnNames {
+				break
+			}
+		}
+	}
+	if dumpedTables, ok := snapshot["dumped_tables"].([]interface{}); ok && len(dumpedTables) > 0 {
+		flags.HasRowData = true
+	}
+	if content["dump_table"] != nil {
+		flags.HasRowData = true
+	}
+	if flags.HasRowData {
+		flags.HasDBNames = true
+		flags.HasTableNames = true
+		flags.HasColumnNames = true
+	}
+	return flags
+}
+
+func snapshotHasEnumeratedData(snapshot map[string]interface{}) bool {
+	return sqlmapDataFlagsFromSnapshot(snapshot).HasEnumeratedData()
+}
+
+func rawSnapshotHasEnumeratedData(raw string) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return false
@@ -1058,29 +1159,52 @@ func rawSnapshotHasCurrentDB(raw string) bool {
 	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
 		return false
 	}
-	return snapshotHasCurrentDB(snapshot)
+	return snapshotHasEnumeratedData(snapshot)
+}
+
+func rawSnapshotSQLMapDataFlags(raw string) sqlmapDataFlags {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return sqlmapDataFlags{}
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return sqlmapDataFlags{}
+	}
+	return sqlmapDataFlagsFromSnapshot(snapshot)
+}
+
+func loadDomainSnapshotSQLMapDataFlags(db *gorm.DB, rawURL string) sqlmapDataFlags {
+	rawURL = strings.TrimSpace(rawURL)
+	if db == nil || rawURL == "" {
+		return sqlmapDataFlags{}
+	}
+	snapshot, ok, err := domaincache.LoadSnapshotByURL(db, rawURL)
+	if err != nil || !ok {
+		return sqlmapDataFlags{}
+	}
+	return sqlmapDataFlagsFromSnapshot(snapshot)
 }
 
 func taskHasDataFromSQLite(db *gorm.DB, task *models.Task) bool {
 	if task == nil {
 		return false
 	}
-	if task.HasData || rawSnapshotHasCurrentDB(task.SqlmapResultJSON) {
+	if task.HasData || rawSnapshotSQLMapDataFlags(task.SqlmapResultJSON).HasEnumeratedData() {
 		return true
 	}
 	rawURL := strings.TrimSpace(task.URL)
 	if rawURL == "" {
 		return false
 	}
-	snapshot, ok, err := domaincache.LoadSnapshotByURL(db, rawURL)
-	return err == nil && ok && snapshotHasCurrentDB(snapshot)
+	return loadDomainSnapshotSQLMapDataFlags(db, rawURL).HasEnumeratedData()
 }
 
 func findingHasDataFromSQLite(db *gorm.DB, finding *models.TaskFinding, fallbackURL string) bool {
 	if finding == nil {
 		return false
 	}
-	if finding.HasData || rawSnapshotHasCurrentDB(finding.SqlmapResultJSON) {
+	if finding.HasData || rawSnapshotSQLMapDataFlags(finding.SqlmapResultJSON).HasEnumeratedData() {
 		return true
 	}
 	rawURL := strings.TrimSpace(finding.AffectsURL)
@@ -1090,13 +1214,16 @@ func findingHasDataFromSQLite(db *gorm.DB, finding *models.TaskFinding, fallback
 	if rawURL == "" {
 		return false
 	}
-	snapshot, ok, err := domaincache.LoadSnapshotByURL(db, rawURL)
-	return err == nil && ok && snapshotHasCurrentDB(snapshot)
+	return loadDomainSnapshotSQLMapDataFlags(db, rawURL).HasEnumeratedData()
 }
 
 func (api *API) GetTasks(c *gin.Context) {
 	var tasks []models.Task
 	api.DB.Order("id desc").Find(&tasks)
+	taskIDs := make([]uint, 0, len(tasks))
+	for _, task := range tasks {
+		taskIDs = append(taskIDs, task.ID)
+	}
 
 	var injectedTaskIDs []uint
 	api.DB.Model(&models.TaskFinding{}).
@@ -1137,6 +1264,17 @@ func (api *API) GetTasks(c *gin.Context) {
 		findingMap[taskID] = struct{}{}
 	}
 
+	taskFlagsMap := make(map[uint]sqlmapDataFlags, len(tasks))
+	if len(taskIDs) > 0 {
+		var findings []models.TaskFinding
+		api.DB.Select("task_id", "sqlmap_result_json").Where("task_id IN ?", taskIDs).Find(&findings)
+		for _, finding := range findings {
+			flags := taskFlagsMap[finding.TaskID]
+			mergeSQLMapDataFlags(&flags, rawSnapshotSQLMapDataFlags(finding.SqlmapResultJSON))
+			taskFlagsMap[finding.TaskID] = flags
+		}
+	}
+
 	var pathScans []models.TaskPathScan
 	api.DB.Select("task_id", "path_status").Order("id desc").Find(&pathScans)
 	pathStatusMap := make(map[uint]string, len(pathScans))
@@ -1150,8 +1288,15 @@ func (api *API) GetTasks(c *gin.Context) {
 		_, hasFinding := findingMap[tasks[i].ID]
 		tasks[i].HasFinding = hasFinding
 		_, tasks[i].HasInjection = injectionMap[tasks[i].ID]
+		flags := rawSnapshotSQLMapDataFlags(tasks[i].SqlmapResultJSON)
+		mergeSQLMapDataFlags(&flags, taskFlagsMap[tasks[i].ID])
+		mergeSQLMapDataFlags(&flags, loadDomainSnapshotSQLMapDataFlags(api.DB, tasks[i].URL))
+		tasks[i].HasDBNames = flags.HasDBNames
+		tasks[i].HasTableNames = flags.HasTableNames
+		tasks[i].HasColumnNames = flags.HasColumnNames
+		tasks[i].HasRowData = flags.HasRowData
 		_, tasks[i].HasData = dataMap[tasks[i].ID]
-		if !tasks[i].HasData && taskHasDataFromSQLite(api.DB, &tasks[i]) {
+		if !tasks[i].HasData && flags.HasEnumeratedData() {
 			tasks[i].HasData = true
 			api.DB.Model(&models.Task{}).Where("id = ?", tasks[i].ID).Update("has_data", true)
 		}
@@ -1394,17 +1539,38 @@ func (api *API) GetTaskFindings(c *gin.Context) {
 
 	var findings []models.TaskFinding
 	api.DB.Where("task_id = ?", task.ID).Order("id desc").Find(&findings)
-	if !task.HasData && taskHasDataFromSQLite(api.DB, &task) {
+	taskFlags := rawSnapshotSQLMapDataFlags(task.SqlmapResultJSON)
+	mergeSQLMapDataFlags(&taskFlags, loadDomainSnapshotSQLMapDataFlags(api.DB, task.URL))
+	task.HasDBNames = taskFlags.HasDBNames
+	task.HasTableNames = taskFlags.HasTableNames
+	task.HasColumnNames = taskFlags.HasColumnNames
+	task.HasRowData = taskFlags.HasRowData
+	if !task.HasData && taskFlags.HasEnumeratedData() {
 		task.HasData = true
 		api.DB.Model(&models.Task{}).Where("id = ?", task.ID).Update("has_data", true)
 	}
 	for i := range findings {
-		if !findings[i].HasData && findingHasDataFromSQLite(api.DB, &findings[i], task.URL) {
+		flags := rawSnapshotSQLMapDataFlags(findings[i].SqlmapResultJSON)
+		fallbackURL := findings[i].AffectsURL
+		if strings.TrimSpace(fallbackURL) == "" {
+			fallbackURL = task.URL
+		}
+		mergeSQLMapDataFlags(&flags, loadDomainSnapshotSQLMapDataFlags(api.DB, fallbackURL))
+		findings[i].HasDBNames = flags.HasDBNames
+		findings[i].HasTableNames = flags.HasTableNames
+		findings[i].HasColumnNames = flags.HasColumnNames
+		findings[i].HasRowData = flags.HasRowData
+		if !findings[i].HasData && flags.HasEnumeratedData() {
 			findings[i].HasData = true
 			api.DB.Model(&models.TaskFinding{}).Where("id = ?", findings[i].ID).Update("has_data", true)
 			task.HasData = true
 		}
+		mergeSQLMapDataFlags(&taskFlags, flags)
 	}
+	task.HasDBNames = taskFlags.HasDBNames
+	task.HasTableNames = taskFlags.HasTableNames
+	task.HasColumnNames = taskFlags.HasColumnNames
+	task.HasRowData = taskFlags.HasRowData
 	if task.HasData {
 		api.DB.Model(&models.Task{}).Where("id = ? AND has_data = ?", task.ID, false).Update("has_data", true)
 	}

@@ -88,6 +88,10 @@ type Task struct {
 	SqlmapResultJSON string `json:"sqlmap_result_json" gorm:"type:text"`
 	SqlmapCachedAt   int64  `json:"sqlmap_cached_at"`
 	HasData          bool   `json:"has_data"`
+	HasDBNames       bool   `json:"has_db_names" gorm:"-"`
+	HasTableNames    bool   `json:"has_table_names" gorm:"-"`
+	HasColumnNames   bool   `json:"has_column_names" gorm:"-"`
+	HasRowData       bool   `json:"has_row_data" gorm:"-"`
 	HasShell         bool   `json:"has_shell"`
 	HasFinding       bool   `json:"has_finding"`
 	HasInjection     bool   `json:"has_injection"`
@@ -134,6 +138,10 @@ type TaskFinding struct {
 	SqlmapResultJSON string `json:"sqlmap_result_json" gorm:"type:text"`
 	SqlmapCachedAt   int64  `json:"sqlmap_cached_at"`
 	HasData          bool   `json:"has_data"`
+	HasDBNames       bool   `json:"has_db_names" gorm:"-"`
+	HasTableNames    bool   `json:"has_table_names" gorm:"-"`
+	HasColumnNames   bool   `json:"has_column_names" gorm:"-"`
+	HasRowData       bool   `json:"has_row_data" gorm:"-"`
 	HasShell         bool   `json:"has_shell"`
 	HasInjection     bool   `json:"has_injection"`
 	UseProxy         bool   `json:"use_proxy" gorm:"default:false"`

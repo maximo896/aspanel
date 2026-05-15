@@ -1125,12 +1125,7 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 					changed = true
 				}
 
-				hasData := len(detail.DumpedTables) > 0 || detail.Content["dump_table"] != nil
-				if !hasData {
-					if currentDB, ok := detail.Content["current_db"].(string); ok && strings.TrimSpace(currentDB) != "" {
-						hasData = true
-					}
-				}
+				hasData := sqlmapSnapshotHasEnumeratedData(detail.Content, detail.DumpedTables)
 				if hasData && !task.HasData {
 					task.HasData = true
 					changed = true
@@ -1224,12 +1219,7 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 				changed = true
 			}
 
-			hasData := len(detail.DumpedTables) > 0 || detail.Content["dump_table"] != nil
-			if !hasData {
-				if currentDB, ok := detail.Content["current_db"].(string); ok && strings.TrimSpace(currentDB) != "" {
-					hasData = true
-				}
-			}
+			hasData := sqlmapSnapshotHasEnumeratedData(detail.Content, detail.DumpedTables)
 			if hasData && !finding.HasData {
 				finding.HasData = true
 				changed = true
@@ -2395,6 +2385,23 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func sqlmapSnapshotHasEnumeratedData(content map[string]interface{}, dumpedTables []interface{}) bool {
+	if len(dumpedTables) > 0 || content["dump_table"] != nil {
+		return true
+	}
+	if tables, ok := content["tables"].(map[string]interface{}); ok {
+		for _, rawTables := range tables {
+			if tableList, ok := rawTables.([]interface{}); ok && len(tableList) > 0 {
+				return true
+			}
+		}
+	}
+	if columns, ok := content["columns"].(map[string]interface{}); ok && len(columns) > 0 {
+		return true
+	}
+	return false
 }
 
 func randomPort(min, max int) int {

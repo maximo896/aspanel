@@ -15,6 +15,7 @@ import {
   getSqlmapAgents, getPathAgents,
 } from '../api/client'
 import TaskDrawer from '../components/TaskDrawer'
+import SqlmapDataTags from '../components/SqlmapDataTags'
 
 const { Text } = Typography
 
@@ -37,6 +38,10 @@ const statusColor: Record<string, 'default' | 'processing' | 'success' | 'error'
   aborted: 'warning',
   exit: 'warning',
   error: 'error',
+}
+
+function hasAnySqlmapDataTag(task: Task) {
+  return task.has_db_names || task.has_table_names || task.has_column_names || task.has_row_data || task.has_data
 }
 
 export default function TasksPage() {
@@ -116,7 +121,7 @@ export default function TasksPage() {
   const filtered = useMemo(() => (
     tasks
       .filter(t => {
-        if (filter === 'has_data') return t.has_data
+        if (filter === 'has_data') return hasAnySqlmapDataTag(t)
         if (filter === 'has_shell') return t.has_shell
         if (filter === 'has_injection') return t.has_injection
         if (filter === 'has_finding') return t.has_finding
@@ -240,7 +245,7 @@ export default function TasksPage() {
       width: 160,
       render: (_: unknown, row: Task) => (
         <Space size={2} wrap>
-          {row.has_data && <Tag color="blue" style={{ fontSize: 10, margin: 1 }}>数据</Tag>}
+          <SqlmapDataTags item={row} compact />
           {row.has_shell && <Tag color="red" style={{ fontSize: 10, margin: 1 }}>Shell</Tag>}
           {row.has_injection && <Tag color="orange" style={{ fontSize: 10, margin: 1 }}>注入</Tag>}
           {row.has_finding && <Tag color="green" style={{ fontSize: 10, margin: 1 }}>漏洞</Tag>}
