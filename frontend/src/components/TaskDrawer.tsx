@@ -349,8 +349,20 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
 
   const findings = findingsData?.findings || []
   const sqliFindings = findings.filter(f => f.is_sqli)
-  const latestPathScan = (((pathScans as { scans?: Array<{ scan?: { path_status?: string }, result?: { status?: string } }> })?.scans) || [])[0]
+  const latestPathScan = (((pathScans as {
+    scans?: Array<{
+      scan?: { path_status?: string; path_agent_id?: number; path_agent_url?: string }
+      result?: { status?: string }
+    }>
+  })?.scans) || [])[0]
   const latestPathStatus = latestPathScan?.scan?.path_status || latestPathScan?.result?.status
+  const latestPathAgentId = Number(latestPathScan?.scan?.path_agent_id || 0)
+  const latestPathAgent = latestPathAgentId > 0 ? pathAgents.find(agent => agent.ID === latestPathAgentId) : undefined
+  const latestPathAgentLabel = latestPathAgent
+    ? latestPathAgent.name
+    : latestPathAgentId > 0
+      ? `当前代理不可用 (#${latestPathAgentId})`
+      : '自动选择'
 
   const tabs = [
     {
@@ -392,6 +404,9 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
         <Spin spinning={pathLoading}>
           <Space direction="vertical" style={{ width: '100%' }}>
             <Space wrap>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                当前代理: {latestPathAgentLabel}
+              </Text>
               <Select
                 size="small"
                 value={pathSeedMode}
