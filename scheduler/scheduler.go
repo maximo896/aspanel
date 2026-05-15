@@ -33,7 +33,11 @@ import (
 var (
 	autoscaleResultMu   sync.RWMutex
 	autoscaleResultData = map[string]string{}
+	autoscaleCycleMu    sync.Mutex
+	autoscaleCycleBusy  bool
 )
+
+const cloudAutoscaleInquiryLimit = 24
 
 func setAutoscaleResult(workload, msg string) {
 	autoscaleResultMu.Lock()
@@ -1310,6 +1314,20 @@ func syncScanningTaskVulnerabilities(db *gorm.DB) {
 }
 
 func runCloudAutoscaleCycle(db *gorm.DB) {
+	autoscaleCycleMu.Lock()
+	if autoscaleCycleBusy {
+		autoscaleCycleMu.Unlock()
+		log.Printf("[cloud][autoscale] previous cycle still running, skip overlapping trigger")
+		return
+	}
+	autoscaleCycleBusy = true
+	autoscaleCycleMu.Unlock()
+	defer func() {
+		autoscaleCycleMu.Lock()
+		autoscaleCycleBusy = false
+		autoscaleCycleMu.Unlock()
+	}()
+
 	settings, ok := getCloudSettings(db)
 	if !ok {
 		return
@@ -1407,6 +1425,13 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 		filtered = append(filtered, offer)
 	}
 	log.Printf("[cloud][autoscale][%s] offers after min spec filter=%d", workload, len(filtered))
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].PriceUSD < filtered[j].PriceUSD
+	})
+	if len(filtered) > cloudAutoscaleInquiryLimit {
+		log.Printf("[cloud][autoscale][%s] trimming inquiry candidates from %d to cheapest %d offers", workload, len(filtered), cloudAutoscaleInquiryLimit)
+		filtered = filtered[:cloudAutoscaleInquiryLimit]
+	}
 	// Enrich offer price with configured runtime price so budgeting includes disk/bandwidth.
 	imageCache := map[string]string{}
 	for i := range filtered {
@@ -1425,6 +1450,7 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 		}
 		baseInstancePrice := filtered[i].PriceUSD
 		trafficEstimate := estimatedPublicTrafficUSD
+		log.Printf("[cloud][autoscale][%s] inquiry configured price start %d/%d region=%s zone=%s type=%s base=%.4f", workload, i+1, len(filtered), filtered[i].Region, filtered[i].Zone, filtered[i].InstanceType, baseInstancePrice)
 		instancePrice, _, totalPrice, err := tClient.InquirySpotConfiguredPrice(tencent.SpotPriceInquiryRequest{
 			Region:       filtered[i].Region,
 			Zone:         filtered[i].Zone,
@@ -1442,6 +1468,7 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 			filtered[i].PublicTrafficPriceUSD = trafficEstimate
 			filtered[i].ConfigPriceUSD = configTotal
 			filtered[i].PriceUSD = configTotal
+			log.Printf("[cloud][autoscale][%s] inquiry configured price fallback %d/%d region=%s zone=%s type=%s total=%.4f", workload, i+1, len(filtered), filtered[i].Region, filtered[i].Zone, filtered[i].InstanceType, configTotal)
 			continue
 		}
 		if instancePrice <= 0 {
@@ -1457,6 +1484,7 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 		filtered[i].PublicTrafficPriceUSD = trafficEstimate
 		filtered[i].ConfigPriceUSD = configTotal
 		filtered[i].PriceUSD = configTotal
+		log.Printf("[cloud][autoscale][%s] inquiry configured price done %d/%d region=%s zone=%s type=%s total=%.4f", workload, i+1, len(filtered), filtered[i].Region, filtered[i].Zone, filtered[i].InstanceType, configTotal)
 	}
 	offers = tencent.FilterAndSortOffers(filtered, maxPrice)
 	log.Printf("[cloud][autoscale][%s] offers after price filter=%d", workload, len(offers))
