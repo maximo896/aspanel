@@ -245,6 +245,7 @@ export default function PathScanPanel({ scans, taskId }: Props) {
       const customTerms = customQuery.trim() ? customQuery.trim().toLowerCase().split(/\s+/) : []
 
       const kept = paths.filter((item: PathItem) => {
+        if (Number(item.status_code || 0) === 404) return false
         const hasForms = (item.forms || []).length > 0
         const matchesSensitive = matchesKeyword(item, SENSITIVE_KEYWORDS)
         const matchesCustom = customTerms.length === 0 || matchesKeyword(item, customTerms)

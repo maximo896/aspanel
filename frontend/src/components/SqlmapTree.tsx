@@ -61,7 +61,16 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
         q: searchQuery.trim(),
         kind: searchKind === 'data' ? 'data' : searchKind,
       })
+      if (result?.message) {
+        message.success(String(result.message))
+      }
+      if (result?.warning) {
+        message.warning(String(result.warning))
+      }
       setSearchResult(Array.isArray(result?.results) ? result.results : [])
+      if (result?.action_queued) {
+        onRefresh()
+      }
     } catch (e) {
       setSearchResult([{ error: extractError(e) }])
     } finally {

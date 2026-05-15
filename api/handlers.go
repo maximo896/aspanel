@@ -1597,6 +1597,109 @@ func writeSqlmapUpstreamResponse(c *gin.Context, statusCode int, body []byte, ac
 	c.Data(statusCode, "application/json", body)
 }
 
+func sqlmapSearchString(v interface{}) string {
+	text := strings.TrimSpace(fmt.Sprint(v))
+	if text == "" || text == "<nil>" {
+		return ""
+	}
+	return text
+}
+
+func buildSQLMapTreeSearchResults(tree map[string]interface{}, term, kindFilter string) []gin.H {
+	results := make([]gin.H, 0)
+	needle := strings.ToLower(strings.TrimSpace(term))
+	kindFilter = strings.ToLower(strings.TrimSpace(kindFilter))
+	if needle == "" || len(tree) == 0 {
+		return results
+	}
+	include := func(kindName string) bool {
+		return kindFilter == "" || kindFilter == kindName
+	}
+
+	databases, _ := tree["databases"].([]interface{})
+	for _, rawDatabase := range databases {
+		database, ok := rawDatabase.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		dbName := sqlmapSearchString(database["name"])
+		if include("database") && strings.Contains(strings.ToLower(dbName), needle) {
+			results = append(results, gin.H{"kind": "database", "database": dbName, "table": "", "column": "", "value": dbName})
+		}
+		tables, _ := database["tables"].([]interface{})
+		for _, rawTable := range tables {
+			table, ok := rawTable.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			tableName := sqlmapSearchString(table["name"])
+			if include("table") && strings.Contains(strings.ToLower(tableName), needle) {
+				results = append(results, gin.H{"kind": "table", "database": dbName, "table": tableName, "column": "", "value": tableName})
+			}
+			columns, _ := table["columns"].([]interface{})
+			for _, rawColumn := range columns {
+				columnName := sqlmapSearchString(rawColumn)
+				if include("column") && strings.Contains(strings.ToLower(columnName), needle) {
+					results = append(results, gin.H{"kind": "column", "database": dbName, "table": tableName, "column": columnName, "value": columnName})
+				}
+			}
+			rows, _ := table["rows"].([]interface{})
+			for _, rawRow := range rows {
+				row, ok := rawRow.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				for columnName, rawValue := range row {
+					value := sqlmapSearchString(rawValue)
+					if include("data") && strings.Contains(strings.ToLower(value), needle) {
+						results = append(results, gin.H{
+							"kind":     "data",
+							"database": dbName,
+							"table":    tableName,
+							"column":   columnName,
+							"value":    value,
+						})
+					}
+				}
+			}
+			if len(results) >= 200 {
+				return results[:200]
+			}
+		}
+	}
+	if len(results) > 200 {
+		return results[:200]
+	}
+	return results
+}
+
+func loadFindingSearchSnapshot(db *gorm.DB, finding *models.TaskFinding, fallbackURL string) map[string]interface{} {
+	if finding == nil {
+		return map[string]interface{}{}
+	}
+	if strings.TrimSpace(finding.SqlmapResultJSON) != "" {
+		var cachedScan map[string]interface{}
+		if err := json.Unmarshal([]byte(finding.SqlmapResultJSON), &cachedScan); err == nil {
+			if mergedScan, mergeErr := domaincache.ApplySnapshot(db, cachedScan); mergeErr == nil {
+				cachedScan = mergedScan
+			}
+			return cachedScan
+		}
+	}
+	rawURL := strings.TrimSpace(finding.AffectsURL)
+	if rawURL == "" {
+		rawURL = strings.TrimSpace(fallbackURL)
+	}
+	if rawURL == "" {
+		return map[string]interface{}{}
+	}
+	scan, ok, err := domaincache.LoadSnapshotByURL(db, rawURL)
+	if err != nil || !ok {
+		return map[string]interface{}{}
+	}
+	return scan
+}
+
 func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 	finding, err := api.getFinding(c)
 	if err != nil {
@@ -1735,34 +1838,67 @@ func (api *API) SearchFindingSqlmap(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "finding not found"})
 		return
 	}
-	if finding.SqlmapTaskID == "" || finding.SqlmapAgentID == 0 {
-		c.JSON(400, gin.H{"error": "finding is not bound to a sqlmap agent"})
+	var task models.Task
+	if err := api.DB.First(&task, finding.TaskID).Error; err != nil {
+		c.JSON(404, gin.H{"error": "task not found"})
+		return
+	}
+	query := strings.TrimSpace(c.Query("q"))
+	kind := strings.TrimSpace(strings.ToLower(c.Query("kind")))
+	if query == "" {
+		c.JSON(400, gin.H{"error": "q is required"})
 		return
 	}
 
-	agent, err := api.getFindingAgent(finding)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "sqlmap agent not found"})
-		return
+	actionQueued := false
+	messageText := ""
+	warningText := ""
+	if (kind == "column" || kind == "table" || kind == "database") && finding.SqlmapTaskID != "" && finding.SqlmapAgentID != 0 {
+		payload := map[string]interface{}{
+			"action":       "search",
+			"search_kind":  kind,
+			"search_query": query,
+		}
+		respStatus, respBody, runErr := api.runFindingSqlmapAction(finding, payload)
+		if runErr != nil {
+			warningText = runErr.Error()
+		} else if respStatus >= 300 {
+			warningText = strings.TrimSpace(string(respBody))
+			if warningText == "" {
+				warningText = fmt.Sprintf("sqlmap search request failed with status %d", respStatus)
+			}
+		} else {
+			actionQueued = true
+			messageText = fmt.Sprintf("已触发 sqlmap --search %s '%s'", map[string]string{
+				"database": "-D",
+				"table":    "-T",
+				"column":   "-C",
+			}[kind], query)
+		}
+	} else if kind == "column" || kind == "table" || kind == "database" {
+		if finding.SqlmapTaskID == "" || finding.SqlmapAgentID == 0 {
+			warningText = "finding is not bound to a sqlmap agent, showing cached tree results only"
+		} else {
+			warningText = "sqlmap agent not found, showing cached tree results only"
+		}
 	}
 
-	query := url.QueryEscape(c.Query("q"))
-	kind := url.QueryEscape(strings.TrimSpace(c.Query("kind")))
-	searchURL := fmt.Sprintf("%s/scan/%s/search?q=%s", agent.URL, finding.SqlmapTaskID, query)
-	if kind != "" {
-		searchURL += "&kind=" + kind
+	scan := loadFindingSearchSnapshot(api.DB, finding, task.URL)
+	tree, _ := scan["tree"].(map[string]interface{})
+	results := buildSQLMapTreeSearchResults(tree, query, kind)
+	response := gin.H{
+		"query":         query,
+		"kind":          kind,
+		"results":       results,
+		"action_queued": actionQueued,
 	}
-	req, _ := http.NewRequest("GET", searchURL, nil)
-	req.Header.Set("X-Api-Token", agent.APIKey)
-	resp, err := httpClient().Do(req)
-	if err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
+	if messageText != "" {
+		response["message"] = messageText
 	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	writeSqlmapUpstreamResponse(c, resp.StatusCode, body, "searching finding tree")
+	if warningText != "" {
+		response["warning"] = warningText
+	}
+	c.JSON(200, response)
 }
 
 func (api *API) UpdateFindingSqlmapRequest(c *gin.Context) {
@@ -1931,7 +2067,10 @@ func (api *API) BatchProbeTaskOsshell(c *gin.Context) {
 
 	for _, taskID := range req.IDs {
 		var findings []models.TaskFinding
-		if err := api.DB.Where("task_id = ? AND is_sqli = ?", taskID, true).Order("id desc").Find(&findings).Error; err != nil {
+		if err := api.DB.Where(&models.TaskFinding{
+			TaskID: taskID,
+			IsSQLi: true,
+		}).Order("id desc").Find(&findings).Error; err != nil {
 			failedTasks++
 			failedDetails = append(failedDetails, gin.H{
 				"task_id": taskID,
