@@ -103,6 +103,8 @@ export interface TaskFinding {
   vuln_id: string
   vuln_name: string
   affects_url: string
+  confidence: number
+  awvs_status: string
   severity: string
   is_sqli: boolean
   sent_to_sqlmap: boolean
@@ -110,6 +112,7 @@ export interface TaskFinding {
   sqlmap_agent_id: number
   sqlmap_agent_url: string
   sqlmap_status: string
+  sqlmap_techniques: string
   has_data: boolean
   has_db_names: boolean
   has_table_names: boolean
@@ -120,6 +123,7 @@ export interface TaskFinding {
   use_proxy: boolean
   sqlmap_options: string
   awvs_payload: string
+  awvs_raw: string
 }
 
 export interface ProxyAgent {

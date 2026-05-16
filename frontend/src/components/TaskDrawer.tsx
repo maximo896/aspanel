@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Drawer, Tabs, Tag, Button, Space, Typography, Switch, Spin,
@@ -10,7 +10,7 @@ import type { SqlmapScan } from '../api/client'
 import {
   getTaskFindings, getFindingSqlmapDetail, retryFindingSqlmap,
   updateFinding, retryTaskPathScan, getTaskPathScans, extractError,
-  updateFindingRequest,
+  updateFindingRequest, runFindingSqlmapAction,
 } from '../api/client'
 import SqlmapTree from './SqlmapTree'
 import PathScanPanel from './PathScanPanel'
@@ -18,6 +18,15 @@ import SqlmapDataTags from './SqlmapDataTags'
 
 const { Text } = Typography
 const { TextArea } = Input
+const TECHNIQUE_OPTIONS = [
+  { value: 'B', label: 'B Boolean-based' },
+  { value: 'E', label: 'E Error-based' },
+  { value: 'U', label: 'U UNION query' },
+  { value: 'S', label: 'S Stacked queries' },
+  { value: 'T', label: 'T Time-based blind' },
+  { value: 'Q', label: 'Q Inline query' },
+]
+const TECHNIQUE_ORDER = ['B', 'E', 'U', 'S', 'T', 'Q']
 
 function quoteShellArg(value: string) {
   return `"${String(value || '').replace(/(["\\$`])/g, '\\$1')}"`
@@ -48,6 +57,41 @@ function buildSqlmapManualCommand(scan: SqlmapScan | null) {
   return parts.join(' ')
 }
 
+function normalizeTechniqueValue(rawValue: unknown): string[] {
+  if (!rawValue) return []
+  const letters = Array.from(String(rawValue).toUpperCase()).filter(letter => TECHNIQUE_ORDER.includes(letter))
+  return TECHNIQUE_ORDER.filter(letter => letters.includes(letter))
+}
+
+function extractTechniqueFromScan(scan: SqlmapScan | null): string[] {
+  const summary = new Set<string>(normalizeTechniqueValue(scan?.requested_options?.technique))
+  ;(scan?.content?.techniques || []).forEach(item => {
+    ;(item.entries || []).forEach(entry => {
+      const text = `${entry.type || ''} ${entry.title || ''}`.toLowerCase()
+      if (text.includes('boolean')) summary.add('B')
+      if (text.includes('error')) summary.add('E')
+      if (text.includes('union')) summary.add('U')
+      if (text.includes('stacked')) summary.add('S')
+      if (text.includes('time')) summary.add('T')
+      if (text.includes('inline')) summary.add('Q')
+    })
+  })
+  return TECHNIQUE_ORDER.filter(letter => summary.has(letter))
+}
+
+function techniqueLabel(letter: string) {
+  return TECHNIQUE_OPTIONS.find(option => option.value === letter)?.label || letter
+}
+
+function extractTextFromHTML(value: string) {
+  if (!value) return ''
+  try {
+    return new DOMParser().parseFromString(value, 'text/html').body.textContent?.trim() || ''
+  } catch {
+    return value.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  }
+}
+
 interface Props {
   task: Task | null
   onClose: () => void
@@ -63,6 +107,7 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
   const [scanLoading, setScanLoading] = useState(false)
   const [scanError, setScanError] = useState('')
   const [requestDraft, setRequestDraft] = useState('')
+  const [selectedTechnique, setSelectedTechnique] = useState<string[]>(normalizeTechniqueValue(finding.sqlmap_techniques))
   const requestDirtyRef = useRef(false)
 
   const retryMut = useMutation({
@@ -103,6 +148,17 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
     onError: (e) => message.error(extractError(e)),
   })
 
+  const rerunTechniqueMut = useMutation({
+    mutationFn: (technique: string) => runFindingSqlmapAction(finding.ID, { action: 'initial_scan', technique }),
+    onSuccess: (_, technique) => {
+      qc.invalidateQueries({ queryKey: ['task-findings', finding.task_id] })
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      void loadScan(false)
+      message.success(technique ? `Technique ${technique} queued` : 'Technique rerun queued')
+    },
+    onError: (e) => message.error(extractError(e)),
+  })
+
   const loadScan = useCallback(async (preserveDraft = true) => {
     setScanLoading(true)
     try {
@@ -135,6 +191,15 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
     setAgentId(finding.sqlmap_agent_id || 0)
   }, [finding.ID, finding.sqlmap_agent_id])
 
+  useEffect(() => {
+    const requestedTechnique = normalizeTechniqueValue(scan?.requested_options?.technique)
+    if (requestedTechnique.length > 0) {
+      setSelectedTechnique(requestedTechnique)
+      return
+    }
+    setSelectedTechnique(normalizeTechniqueValue(finding.sqlmap_techniques))
+  }, [finding.ID, finding.sqlmap_techniques, scan?.requested_options?.technique])
+
   const liveSqlmapStatus = String((scan?.status || scan?.sqlmap_status || finding.sqlmap_status || '')).trim().toLowerCase()
   const displaySqlmapStatus = scan?.status || scan?.sqlmap_status || finding.sqlmap_status || 'none'
   const shouldPollScan = expanded && liveSqlmapStatus === 'running'
@@ -159,6 +224,11 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
   const sqlmapBusy = ['running', 'queued'].includes(liveSqlmapStatus)
   const canEditRequest = Boolean(finding.sqlmap_task_id && finding.sqlmap_agent_id && !sqlmapBusy)
   const manualCommand = buildSqlmapManualCommand(scan)
+  const detectedTechniques = TECHNIQUE_ORDER.filter(letter => (
+    normalizeTechniqueValue(finding.sqlmap_techniques).includes(letter) || extractTechniqueFromScan(scan).includes(letter)
+  ))
+  const techniqueValue = selectedTechnique.join('')
+  const canRerunTechnique = Boolean(finding.sqlmap_task_id && finding.sqlmap_agent_id && !sqlmapBusy && !rerunTechniqueMut.isPending)
   const agentOptions = [
     { label: '自动', value: 0 },
     ...sqlmapAgents.map(a => ({ label: a.name, value: a.ID })),
@@ -166,6 +236,29 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
   if (agentId > 0 && !sqlmapAgents.some(agent => agent.ID === agentId)) {
     agentOptions.unshift({ label: `当前代理不可用 (#${agentId})`, value: agentId })
   }
+
+  const awvsDetails = useMemo(() => {
+    const fallback = {
+      details: '',
+      parameter: '',
+      proof: '',
+      request: '',
+      originalValue: '',
+    }
+    if (!finding.awvs_raw) return fallback
+    try {
+      const raw = JSON.parse(finding.awvs_raw) as Record<string, unknown>
+      return {
+        details: extractTextFromHTML(String(raw.details || '')),
+        parameter: String(raw.parameter || ''),
+        proof: String(raw.proof || ''),
+        request: String(raw.request || ''),
+        originalValue: String(raw.original_value || ''),
+      }
+    } catch {
+      return fallback
+    }
+  }, [finding.awvs_raw])
 
   return (
     <div style={{ borderBottom: '1px solid #f0f0f0', padding: '8px 0' }}>
@@ -231,6 +324,98 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
                 { key: 'proxycfg', label: '代理配置', children: scan?.runtime_proxy_file || '-' },
               ]}
             />
+            <Card
+              size="small"
+              title="SQLMap Techniques"
+              extra={(
+                <Space size={4} wrap>
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    size="small"
+                    value={selectedTechnique}
+                    onChange={value => setSelectedTechnique(TECHNIQUE_ORDER.filter(letter => value.includes(letter)))}
+                    options={TECHNIQUE_OPTIONS}
+                    placeholder="Select technique"
+                    style={{ minWidth: 260 }}
+                  />
+                  <Button
+                    size="small"
+                    type="primary"
+                    onClick={() => rerunTechniqueMut.mutate(techniqueValue)}
+                    loading={rerunTechniqueMut.isPending}
+                    disabled={!canRerunTechnique}
+                  >
+                    Run selected tech
+                  </Button>
+                </Space>
+              )}
+            >
+              <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                <Space wrap>
+                  <Text type="secondary">Detected:</Text>
+                  {detectedTechniques.length > 0 ? detectedTechniques.map(letter => (
+                    <Tag key={letter} color="orange">{techniqueLabel(letter)}</Tag>
+                  )) : <Text type="secondary">None</Text>}
+                </Space>
+                <Space wrap>
+                  <Text type="secondary">Current filter:</Text>
+                  {normalizeTechniqueValue(scan?.requested_options?.technique).length > 0 ? normalizeTechniqueValue(scan?.requested_options?.technique).map(letter => (
+                    <Tag key={letter} color="blue">{techniqueLabel(letter)}</Tag>
+                  )) : <Text type="secondary">Default</Text>}
+                </Space>
+                {!finding.sqlmap_task_id || !finding.sqlmap_agent_id ? (
+                  <Text type="secondary">A bound sqlmap task and agent are required to rerun with a manual technique.</Text>
+                ) : sqlmapBusy ? (
+                  <Text type="secondary">Wait for the current sqlmap task to finish before rerunning with a manual technique.</Text>
+                ) : null}
+              </Space>
+            </Card>
+            <Card size="small" title="AWVS Details">
+              <Descriptions
+                size="small"
+                column={2}
+                bordered
+                items={[
+                  { key: 'vulnid', label: 'Vuln ID', children: finding.vuln_id || '-' },
+                  { key: 'name', label: 'Name', children: finding.vuln_name || '-' },
+                  { key: 'severity', label: 'Severity', children: finding.severity || '-' },
+                  { key: 'confidence', label: 'Confidence', children: String(finding.confidence || 0) },
+                  { key: 'awvsstatus', label: 'AWVS Status', children: finding.awvs_status || '-' },
+                  { key: 'url', label: 'URL', children: finding.affects_url || '-' },
+                  { key: 'payload', label: 'Payload', children: finding.awvs_payload || '-' },
+                  { key: 'parameter', label: 'Parameter', children: awvsDetails.parameter || '-' },
+                ]}
+              />
+              {(awvsDetails.proof || awvsDetails.originalValue || awvsDetails.details || awvsDetails.request) && (
+                <Space direction="vertical" style={{ width: '100%', marginTop: 12 }} size={8}>
+                  {awvsDetails.proof && (
+                    <div>
+                      <Text strong>Proof</Text>
+                      <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{awvsDetails.proof}</pre>
+                    </div>
+                  )}
+                  {awvsDetails.originalValue && (
+                    <div>
+                      <Text strong>Original Value</Text>
+                      <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{awvsDetails.originalValue}</pre>
+                    </div>
+                  )}
+                  {awvsDetails.details && (
+                    <div>
+                      <Text strong>Details</Text>
+                      <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{awvsDetails.details}</pre>
+                    </div>
+                  )}
+                  {awvsDetails.request && (
+                    <div>
+                      <Text strong>Request</Text>
+                      <pre style={{ margin: '4px 0 0', maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{awvsDetails.request}</pre>
+                    </div>
+                  )}
+                </Space>
+              )}
+            </Card>
             {scan ? (
               <SqlmapTree
                 finding={finding}
