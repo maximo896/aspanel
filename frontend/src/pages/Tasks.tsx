@@ -281,13 +281,7 @@ export default function TasksPage() {
       title: 'AWVS',
       dataIndex: 'status',
       width: 90,
-      render: (s: string, row: Task) => {
-        let displayStatus = s;
-        if (s === 'pending' && row.has_finding) {
-          displayStatus = 'exit';
-        }
-        return <Badge status={statusColor[displayStatus] || 'default'} text={<Text style={{ fontSize: 11 }}>{displayStatus}</Text>} />;
-      },
+      render: (s: string) => <Badge status={statusColor[s] || 'default'} text={<Text style={{ fontSize: 11 }}>{s || 'none'}</Text>} />,
     },
     {
       title: 'Sqlmap',

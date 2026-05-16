@@ -1217,6 +1217,53 @@ func findingHasDataFromSQLite(db *gorm.DB, finding *models.TaskFinding, fallback
 	return loadDomainSnapshotSQLMapDataFlags(db, rawURL).HasEnumeratedData()
 }
 
+func normalizeRuntimeStatus(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+func aggregateSQLMapStatus(taskStatus string, findingStatuses []string) string {
+	statuses := make([]string, 0, len(findingStatuses)+1)
+	for _, status := range findingStatuses {
+		normalized := normalizeRuntimeStatus(status)
+		if normalized != "" && normalized != "none" {
+			statuses = append(statuses, normalized)
+		}
+	}
+	fallback := normalizeRuntimeStatus(taskStatus)
+	if fallback != "" && fallback != "none" {
+		statuses = append(statuses, fallback)
+	}
+	if len(statuses) == 0 {
+		return "none"
+	}
+	has := func(targets ...string) bool {
+		for _, current := range statuses {
+			for _, target := range targets {
+				if current == target {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	switch {
+	case has("running"):
+		return "running"
+	case has("queued"):
+		return "queued"
+	case has("pending"):
+		return "pending"
+	case has("failed", "error"):
+		return "failed"
+	case has("aborted", "exit"):
+		return "exit"
+	case has("completed", "done"):
+		return "completed"
+	default:
+		return statuses[0]
+	}
+}
+
 func (api *API) GetTasks(c *gin.Context) {
 	var tasks []models.Task
 	api.DB.Order("id desc").Find(&tasks)
@@ -1265,13 +1312,15 @@ func (api *API) GetTasks(c *gin.Context) {
 	}
 
 	taskFlagsMap := make(map[uint]sqlmapDataFlags, len(tasks))
+	taskSQLMapStatusMap := make(map[uint][]string, len(tasks))
 	if len(taskIDs) > 0 {
 		var findings []models.TaskFinding
-		api.DB.Select("task_id", "sqlmap_result_json").Where("task_id IN ?", taskIDs).Find(&findings)
+		api.DB.Select("task_id", "sqlmap_result_json", "sqlmap_status").Where("task_id IN ?", taskIDs).Find(&findings)
 		for _, finding := range findings {
 			flags := taskFlagsMap[finding.TaskID]
 			mergeSQLMapDataFlags(&flags, rawSnapshotSQLMapDataFlags(finding.SqlmapResultJSON))
 			taskFlagsMap[finding.TaskID] = flags
+			taskSQLMapStatusMap[finding.TaskID] = append(taskSQLMapStatusMap[finding.TaskID], finding.SqlmapStatus)
 		}
 	}
 
@@ -1300,6 +1349,7 @@ func (api *API) GetTasks(c *gin.Context) {
 			tasks[i].HasData = true
 			api.DB.Model(&models.Task{}).Where("id = ?", tasks[i].ID).Update("has_data", true)
 		}
+		tasks[i].SqlmapStatus = aggregateSQLMapStatus(tasks[i].SqlmapStatus, taskSQLMapStatusMap[tasks[i].ID])
 		_, tasks[i].HasShell = shellMap[tasks[i].ID]
 		if status, ok := pathStatusMap[tasks[i].ID]; ok {
 			tasks[i].HasPathScan = true
@@ -1579,6 +1629,7 @@ func (api *API) GetTaskFindings(c *gin.Context) {
 		api.DB.Model(&models.Task{}).Where("id = ?", task.ID).Update("has_data", true)
 	}
 	for i := range findings {
+		findings[i].AWVSStatus = task.Status
 		flags := rawSnapshotSQLMapDataFlags(findings[i].SqlmapResultJSON)
 		fallbackURL := findings[i].AffectsURL
 		if strings.TrimSpace(fallbackURL) == "" {
@@ -1737,9 +1788,14 @@ func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 	}
 
 	loadCached := func(message string) bool {
+		if status := normalizeRuntimeStatus(finding.SqlmapStatus); status == "running" {
+			finding.SqlmapStatus = "failed"
+			api.DB.Model(&models.TaskFinding{}).Where("id = ?", finding.ID).Update("sqlmap_status", finding.SqlmapStatus)
+		}
 		if strings.TrimSpace(finding.SqlmapResultJSON) != "" {
 			var cachedScan map[string]interface{}
 			if err := json.Unmarshal([]byte(finding.SqlmapResultJSON), &cachedScan); err == nil {
+				cachedScan["sqlmap_status"] = finding.SqlmapStatus
 				if mergedScan, mergeErr := domaincache.ApplySnapshot(api.DB, cachedScan); mergeErr == nil {
 					cachedScan = mergedScan
 				}
@@ -1764,6 +1820,7 @@ func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 		if err != nil || !ok {
 			return false
 		}
+		scan["sqlmap_status"] = finding.SqlmapStatus
 		c.JSON(200, gin.H{
 			"scan":    scan,
 			"finding": finding,

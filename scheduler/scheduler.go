@@ -1070,7 +1070,7 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 
 				var agent models.SqlmapAgent
 				if err := db.First(&agent, task.SqlmapAgentID).Error; err != nil {
-					if task.SqlmapStatus == "running" || task.SqlmapStatus == "queued" {
+					if task.SqlmapStatus == "running" {
 						task.SqlmapStatus = "failed"
 						db.Save(&task)
 					}
@@ -1094,7 +1094,7 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 					continue
 				}
 				if resp.StatusCode != http.StatusOK {
-					if task.SqlmapStatus == "running" || task.SqlmapStatus == "queued" {
+					if task.SqlmapStatus == "running" {
 						task.SqlmapStatus = "failed"
 						db.Save(&task)
 					}
@@ -1164,7 +1164,7 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 
 			var agent models.SqlmapAgent
 			if err := db.First(&agent, finding.SqlmapAgentID).Error; err != nil {
-				if finding.SqlmapStatus == "running" || finding.SqlmapStatus == "queued" {
+				if finding.SqlmapStatus == "running" {
 					finding.SqlmapStatus = "failed"
 					db.Save(&finding)
 				}
@@ -1188,7 +1188,7 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 				continue
 			}
 			if resp.StatusCode != http.StatusOK {
-				if finding.SqlmapStatus == "running" || finding.SqlmapStatus == "queued" {
+				if finding.SqlmapStatus == "running" {
 					finding.SqlmapStatus = "failed"
 					db.Save(&finding)
 				}

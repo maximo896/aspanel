@@ -99,7 +99,7 @@ interface Props {
   pathAgents: Array<{ ID: number; name: string }>
 }
 
-function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAgents: Props['sqlmapAgents'] }) {
+function FindingRow({ finding, sqlmapAgents, awvsStatus }: { finding: TaskFinding; sqlmapAgents: Props['sqlmapAgents']; awvsStatus: string }) {
   const qc = useQueryClient()
   const [expanded, setExpanded] = useState(false)
   const [agentId, setAgentId] = useState(finding.sqlmap_agent_id || 0)
@@ -163,7 +163,7 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
     setScanLoading(true)
     try {
       const data = await getFindingSqlmapDetail(finding.ID)
-      setScan(data.scan)
+      setScan(data.scan ? { ...data.scan, sqlmap_status: data.finding?.sqlmap_status || data.scan.sqlmap_status } : null)
       setScanError('')
       if (!preserveDraft || !requestDirtyRef.current) {
         setRequestDraft(data.scan?.request_content || '')
@@ -371,51 +371,6 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
                 ) : null}
               </Space>
             </Card>
-            <Card size="small" title="AWVS Details">
-              <Descriptions
-                size="small"
-                column={2}
-                bordered
-                items={[
-                  { key: 'vulnid', label: 'Vuln ID', children: finding.vuln_id || '-' },
-                  { key: 'name', label: 'Name', children: finding.vuln_name || '-' },
-                  { key: 'severity', label: 'Severity', children: finding.severity || '-' },
-                  { key: 'confidence', label: 'Confidence', children: String(finding.confidence || 0) },
-                  { key: 'awvsstatus', label: 'AWVS Status', children: finding.awvs_status || '-' },
-                  { key: 'url', label: 'URL', children: finding.affects_url || '-' },
-                  { key: 'payload', label: 'Payload', children: finding.awvs_payload || '-' },
-                  { key: 'parameter', label: 'Parameter', children: awvsDetails.parameter || '-' },
-                ]}
-              />
-              {(awvsDetails.proof || awvsDetails.originalValue || awvsDetails.details || awvsDetails.request) && (
-                <Space direction="vertical" style={{ width: '100%', marginTop: 12 }} size={8}>
-                  {awvsDetails.proof && (
-                    <div>
-                      <Text strong>Proof</Text>
-                      <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{awvsDetails.proof}</pre>
-                    </div>
-                  )}
-                  {awvsDetails.originalValue && (
-                    <div>
-                      <Text strong>Original Value</Text>
-                      <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{awvsDetails.originalValue}</pre>
-                    </div>
-                  )}
-                  {awvsDetails.details && (
-                    <div>
-                      <Text strong>Details</Text>
-                      <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{awvsDetails.details}</pre>
-                    </div>
-                  )}
-                  {awvsDetails.request && (
-                    <div>
-                      <Text strong>Request</Text>
-                      <pre style={{ margin: '4px 0 0', maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{awvsDetails.request}</pre>
-                    </div>
-                  )}
-                </Space>
-              )}
-            </Card>
             {scan ? (
               <SqlmapTree
                 finding={finding}
@@ -483,6 +438,51 @@ function FindingRow({ finding, sqlmapAgents }: { finding: TaskFinding; sqlmapAge
                 </Text>
               )}
             </Card>
+            <Card size="small" title="AWVS Details">
+              <Descriptions
+                size="small"
+                column={2}
+                bordered
+                items={[
+                  { key: 'vulnid', label: 'Vuln ID', children: finding.vuln_id || '-' },
+                  { key: 'name', label: 'Name', children: finding.vuln_name || '-' },
+                  { key: 'severity', label: 'Severity', children: finding.severity || '-' },
+                  { key: 'confidence', label: 'Confidence', children: String(finding.confidence || 0) },
+                  { key: 'awvsstatus', label: 'AWVS Status', children: awvsStatus || finding.awvs_status || '-' },
+                  { key: 'url', label: 'URL', children: finding.affects_url || '-' },
+                  { key: 'payload', label: 'Payload', children: finding.awvs_payload || '-' },
+                  { key: 'parameter', label: 'Parameter', children: awvsDetails.parameter || '-' },
+                ]}
+              />
+              {(awvsDetails.proof || awvsDetails.originalValue || awvsDetails.details || awvsDetails.request) && (
+                <Space direction="vertical" style={{ width: '100%', marginTop: 12 }} size={8}>
+                  {awvsDetails.proof && (
+                    <div>
+                      <Text strong>Proof</Text>
+                      <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{awvsDetails.proof}</pre>
+                    </div>
+                  )}
+                  {awvsDetails.originalValue && (
+                    <div>
+                      <Text strong>Original Value</Text>
+                      <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{awvsDetails.originalValue}</pre>
+                    </div>
+                  )}
+                  {awvsDetails.details && (
+                    <div>
+                      <Text strong>Details</Text>
+                      <pre style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{awvsDetails.details}</pre>
+                    </div>
+                  )}
+                  {awvsDetails.request && (
+                    <div>
+                      <Text strong>Request</Text>
+                      <pre style={{ margin: '4px 0 0', maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{awvsDetails.request}</pre>
+                    </div>
+                  )}
+                </Space>
+              )}
+            </Card>
             <Card size="small" title="最近日志">
               <pre style={{ margin: 0, maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                 {logText || scan?.last_error || scanError || '暂无日志'}
@@ -535,6 +535,8 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
   })
 
   const findings = findingsData?.findings || []
+  const liveTask = findingsData?.task || task
+  const currentAWVSStatus = liveTask?.status || ''
   const sqliFindings = findings.filter(f => f.is_sqli)
   const latestPathScan = (((pathScans as {
     scans?: Array<{
@@ -566,7 +568,7 @@ export default function TaskDrawer({ task, onClose, sqlmapAgents, pathAgents }: 
               <Text type="secondary">暂无 SQLi 发现</Text>
             )}
             {sqliFindings.map(f => (
-              <FindingRow key={f.ID} finding={f} sqlmapAgents={sqlmapAgents} />
+              <FindingRow key={f.ID} finding={f} sqlmapAgents={sqlmapAgents} awvsStatus={currentAWVSStatus} />
             ))}
             {findings.filter(f => !f.is_sqli).length > 0 && (
               <details>
