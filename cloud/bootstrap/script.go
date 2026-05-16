@@ -33,6 +33,21 @@ touch "$RUN_LOG"
   echo "[panel-bootstrap] path_log=$PATH_LOG"
 } >> "$RUN_LOG"
 
+CALLBACK_URL=%q
+TOKEN=%q
+REGION=%q
+ZONE=%q
+
+if [ -n "$CALLBACK_URL" ] && [ -n "$TOKEN" ]; then
+  curl -fsSL --max-time 10 -G \
+    --data-urlencode "token=$TOKEN" \
+    --data-urlencode "kind=bootstrap" \
+    --data-urlencode "region=$REGION" \
+    --data-urlencode "zone=$ZONE" \
+    --data-urlencode "proto=bootstrap://installing" \
+    "$CALLBACK_URL" >/dev/null 2>&1 || true
+fi
+
 bash -lc "$AWVS_INSTALL_CMD" 2>&1 | tee "$AWVS_LOG" >> "$RUN_LOG" || true
 bash -lc "$SQLMAP_INSTALL_CMD" 2>&1 | tee "$SQLMAP_LOG" >> "$RUN_LOG" || true
 bash -lc "$PATH_INSTALL_CMD" 2>&1 | tee "$PATH_LOG" >> "$RUN_LOG" || true
@@ -40,11 +55,6 @@ bash -lc "$PATH_INSTALL_CMD" 2>&1 | tee "$PATH_LOG" >> "$RUN_LOG" || true
 AWVS_LINK=$(grep -Eo "awvsagent://[^[:space:]]*" "$AWVS_LOG" 2>/dev/null | tail -n 1 || true)
 SQLMAP_LINK=$(grep -Eo "sqlmapagent://[^[:space:]]*" "$SQLMAP_LOG" 2>/dev/null | tail -n 1 || true)
 PATH_LINK=$(grep -Eo "pathagent://[^[:space:]]*" "$PATH_LOG" 2>/dev/null | tail -n 1 || true)
-
-CALLBACK_URL=%q
-TOKEN=%q
-REGION=%q
-ZONE=%q
 
 {
   echo "[panel-bootstrap] callback_url=$CALLBACK_URL"

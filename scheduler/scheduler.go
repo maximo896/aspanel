@@ -59,6 +59,7 @@ func GetAutoscaleResults() map[string]string {
 const (
 	defaultTencentInstanceType  = "S5.SMALL1"
 	bootstrapCallbackTimeoutSec = 480
+	bootstrapProtocolTimeoutSec = 1800
 	agentHeartbeatIntervalSec   = 60
 	agentHeartbeatTimeoutSec    = 1200
 	estimatedPublicTrafficUSD   = 0.02
@@ -1695,6 +1696,19 @@ func disableWorkloadAutoscale(db *gorm.DB, settings *models.CloudSettings, workl
 	db.Save(settings)
 }
 
+func cloudProtocolSeen(inst models.CloudInstance) bool {
+	switch strings.ToLower(strings.TrimSpace(inst.Workload)) {
+	case "awvs":
+		return inst.AWVSProtocolSeen
+	case "sqlmap":
+		return inst.SQLProtocolSeen
+	case "path":
+		return inst.PathProtocolSeen
+	default:
+		return inst.AWVSProtocolSeen || inst.SQLProtocolSeen || inst.PathProtocolSeen
+	}
+}
+
 func recycleWorkloadInstances(db *gorm.DB, workload string) {
 	var settings models.CloudSettings
 	if err := db.Order("id desc").First(&settings).Error; err != nil {
@@ -1833,6 +1847,19 @@ func reconcileCloudInstances(db *gorm.DB) {
 				markCloudBoundAgentsOffline(db, inst, "bootstrap_no_callback_timeout")
 				continue
 			}
+			if !cloudProtocolSeen(inst) && inst.LaunchedAt > 0 &&
+				(inst.Status == "creating" || inst.Status == "running" || inst.Status == "pending") &&
+				now-inst.LaunchedAt > bootstrapProtocolTimeoutSec {
+				log.Printf("[cloud][reconcile] terminate by protocol timeout instance_id=%s region=%s launched_at=%d timeout_sec=%d workload=%s",
+					inst.InstanceID, inst.Region, inst.LaunchedAt, bootstrapProtocolTimeoutSec, inst.Workload)
+				_ = tClient.TerminateInstances(inst.Region, []string{inst.InstanceID})
+				inst.Status = "bootstrap_protocol_timeout_terminated"
+				inst.FailureReason = "bootstrap heartbeat received but no agent protocol registration completed"
+				db.Save(&inst)
+				requeueBindingsForInstance(db, inst, "bootstrap_no_protocol_timeout")
+				markCloudBoundAgentsOffline(db, inst, "bootstrap_no_protocol_timeout")
+				continue
+			}
 			// User policy:
 			// After the first successful callback, do not terminate cloud instances by heartbeat timeout.
 			// Keep lifecycle control based on cloud status/budget/constraints/manual cleanup only.
@@ -1865,19 +1892,25 @@ func collectInteractSignals(db *gorm.DB) {
 			}
 			inst.LastHeartbeatAt = time.Now().Unix()
 			inst.FailureReason = ""
+			recognizedProto := false
 			if strings.HasPrefix(sig.Proto, "awvsagent://") {
 				log.Printf("[cloud][interact] awvs proto received token=%s", sig.Token)
 				registerAWVSFromProto(db, sig, &inst)
+				recognizedProto = true
 			}
 			if strings.HasPrefix(sig.Proto, "sqlmapagent://") {
 				log.Printf("[cloud][interact] sqlmap proto received token=%s", sig.Token)
 				registerSQLMapFromProto(db, sig, &inst)
+				recognizedProto = true
 			}
-		if strings.HasPrefix(sig.Proto, "pathagent://") {
-			log.Printf("[cloud][interact] path proto received token=%s", sig.Token)
-			registerPathFromProto(db, sig, &inst)
-		}
-			inst.Status = "running"
+			if strings.HasPrefix(sig.Proto, "pathagent://") {
+				log.Printf("[cloud][interact] path proto received token=%s", sig.Token)
+				registerPathFromProto(db, sig, &inst)
+				recognizedProto = true
+			}
+			if recognizedProto {
+				inst.Status = "running"
+			}
 			db.Save(&inst)
 		}
 	}

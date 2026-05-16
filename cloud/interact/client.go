@@ -43,7 +43,7 @@ func ensureStarted() error {
 			initErr = fmt.Errorf("interactsh payload url is empty")
 			return
 		}
-		_ = sdk.StartPolling(5*time.Second, func(interaction *interactshserver.Interaction) {
+		if err := sdk.StartPolling(5*time.Second, func(interaction *interactshserver.Interaction) {
 			sig, ok := parseInteraction(interaction)
 			if !ok {
 				return
@@ -52,7 +52,10 @@ func ensureStarted() error {
 			case eventQueue <- sig:
 			default:
 			}
-		})
+		}); err != nil {
+			initErr = fmt.Errorf("interactsh start polling failed: %w", err)
+			return
+		}
 	})
 	return initErr
 }
@@ -115,7 +118,10 @@ func parseInteraction(interaction *interactshserver.Interaction) (Signal, bool) 
 	if token == "" || proto == "" {
 		return Signal{}, false
 	}
-	if !strings.HasPrefix(proto, "awvsagent://") && !strings.HasPrefix(proto, "sqlmapagent://") {
+	if !strings.HasPrefix(proto, "awvsagent://") &&
+		!strings.HasPrefix(proto, "sqlmapagent://") &&
+		!strings.HasPrefix(proto, "pathagent://") &&
+		!strings.HasPrefix(proto, "bootstrap://") {
 		return Signal{}, false
 	}
 	return Signal{
