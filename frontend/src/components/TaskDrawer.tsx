@@ -227,6 +227,7 @@ function FindingRow({ finding, sqlmapAgents, awvsStatus }: { finding: TaskFindin
   const detectedTechniques = TECHNIQUE_ORDER.filter(letter => (
     normalizeTechniqueValue(finding.sqlmap_techniques).includes(letter) || extractTechniqueFromScan(scan).includes(letter)
   ))
+  const compactTechniqueText = detectedTechniques.join('')
   const techniqueValue = selectedTechnique.join('')
   const canRerunTechnique = Boolean(finding.sqlmap_task_id && finding.sqlmap_agent_id && !sqlmapBusy && !rerunTechniqueMut.isPending)
   const agentOptions = [
@@ -283,6 +284,7 @@ function FindingRow({ finding, sqlmapAgents, awvsStatus }: { finding: TaskFindin
           {finding.has_injection && <Tag color="orange">注入</Tag>}
           <SqlmapDataTags item={finding} />
           {finding.has_shell && <Tag color="red">Shell</Tag>}
+          {compactTechniqueText && <Tag color="geekblue">Tech {compactTechniqueText}</Tag>}
           <Tag color={['done', 'completed'].includes(liveSqlmapStatus) ? 'success' : ['running', 'queued'].includes(liveSqlmapStatus) ? 'processing' : 'default'}>
             {displaySqlmapStatus}
           </Tag>
