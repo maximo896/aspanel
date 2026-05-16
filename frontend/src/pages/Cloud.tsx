@@ -37,6 +37,16 @@ const SQLMAP_FORM_FIELDS: Array<keyof CloudSettings> = [
   'cloud_proxy_agent_id',
 ]
 
+const PATH_FORM_FIELDS: Array<keyof CloudSettings> = [
+  'path_max_price_usd_per_hour',
+  'path_hourly_budget_usd',
+  'path_budget_hours',
+  'path_max_concurrency',
+  'path_min_cpu',
+  'path_min_memory_gb',
+  'path_instance_type',
+]
+
 function formatTime(ts: number) {
   if (!ts) return '-'
   return new Date(ts * 1000).toLocaleString()
@@ -142,6 +152,7 @@ export default function CloudPage() {
   const qc = useQueryClient()
   const [awvsForm] = Form.useForm()
   const [sqlmapForm] = Form.useForm()
+  const [pathForm] = Form.useForm()
   const [credentialsForm] = Form.useForm()
   const [dirty, setDirty] = useState(false)
   const [autoscaleResult, setAutoscaleResult] = useState<string | null>(null)
@@ -179,6 +190,7 @@ export default function CloudPage() {
   const latestLaunchStartedAt = Math.max(
     Number(settings?.awvs_launch_started_at || 0),
     Number(settings?.sqlmap_launch_started_at || 0),
+    Number(settings?.path_launch_started_at || 0),
   )
 
   useEffect(() => {
@@ -199,16 +211,18 @@ export default function CloudPage() {
 
   const updateDirtyState = () => {
     if (!settings) {
-      setDirty(awvsForm.isFieldsTouched() || sqlmapForm.isFieldsTouched())
+      setDirty(awvsForm.isFieldsTouched() || sqlmapForm.isFieldsTouched() || pathForm.isFieldsTouched())
       return
     }
     const baseline = {
       ...pickComparableValues(settings, AWVS_FORM_FIELDS),
       ...pickComparableValues(settings, SQLMAP_FORM_FIELDS),
+      ...pickComparableValues(settings, PATH_FORM_FIELDS),
     }
     const current = {
       ...pickComparableValues(awvsForm.getFieldsValue(AWVS_FORM_FIELDS), AWVS_FORM_FIELDS),
       ...pickComparableValues(sqlmapForm.getFieldsValue(SQLMAP_FORM_FIELDS), SQLMAP_FORM_FIELDS),
+      ...pickComparableValues(pathForm.getFieldsValue(PATH_FORM_FIELDS), PATH_FORM_FIELDS),
     }
     setDirty(JSON.stringify(current) !== JSON.stringify(baseline))
   }
@@ -219,9 +233,11 @@ export default function CloudPage() {
       qc.setQueryData(['cloud-settings'], savedSettings)
       awvsForm.setFieldsValue(savedSettings)
       sqlmapForm.setFieldsValue(savedSettings)
+      pathForm.setFieldsValue(savedSettings)
       setDirty(false)
       awvsForm.setFields(Object.keys(awvsForm.getFieldsValue()).map(name => ({ name, touched: false })))
       sqlmapForm.setFields(Object.keys(sqlmapForm.getFieldsValue()).map(name => ({ name, touched: false })))
+      pathForm.setFields(Object.keys(pathForm.getFieldsValue()).map(name => ({ name, touched: false })))
       qc.invalidateQueries({ queryKey: ['cloud-settings'] })
       message.success('保存成功')
     },
@@ -229,13 +245,14 @@ export default function CloudPage() {
   })
 
   useEffect(() => {
-    const formsTouched = awvsForm.isFieldsTouched() || sqlmapForm.isFieldsTouched()
+    const formsTouched = awvsForm.isFieldsTouched() || sqlmapForm.isFieldsTouched() || pathForm.isFieldsTouched()
     if (settings && !dirty && !formsTouched && !saveMut.isPending) {
       awvsForm.setFieldsValue(settings)
       sqlmapForm.setFieldsValue(settings)
+      pathForm.setFieldsValue(settings)
       setDirty(false)
     }
-  }, [settings, dirty, awvsForm, sqlmapForm, saveMut.isPending])
+  }, [settings, dirty, awvsForm, sqlmapForm, pathForm, saveMut.isPending])
 
   const startMut = useMutation({
     mutationFn: (workload: string) => startCloudScale(workload),
@@ -284,8 +301,8 @@ export default function CloudPage() {
   })
 
   const handleSave = () => {
-    Promise.all([awvsForm.validateFields(), sqlmapForm.validateFields()]).then(([awvsVals, sqlmapVals]) => {
-      saveMut.mutate({ ...awvsVals, ...sqlmapVals })
+    Promise.all([awvsForm.validateFields(), sqlmapForm.validateFields(), pathForm.validateFields()]).then(([awvsVals, sqlmapVals, pathVals]) => {
+      saveMut.mutate({ ...awvsVals, ...sqlmapVals, ...pathVals })
     })
   }
 
@@ -299,6 +316,7 @@ export default function CloudPage() {
 
   const awvsInstances = instances.filter(i => i.workload === 'awvs')
   const sqlmapInstances = instances.filter(i => i.workload === 'sqlmap')
+  const pathInstances = instances.filter(i => i.workload === 'path')
 
   const instanceColumns: ColumnsType<CloudInstance> = [
     { title: '实例ID', dataIndex: 'instance_id', ellipsis: true, width: 180 },
@@ -389,8 +407,8 @@ export default function CloudPage() {
         />
       )}
 
-      <Row gutter={16}>
-        <Col xs={24} xl={12}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} xl={8}>
           <Card
             title="AWVS云竞价"
             loading={settingsLoading}
@@ -448,7 +466,7 @@ export default function CloudPage() {
           </Card>
         </Col>
 
-        <Col xs={24} xl={12}>
+        <Col xs={24} xl={8}>
           <Card
             title="Sqlmap云竞价"
             loading={settingsLoading}
@@ -535,6 +553,64 @@ export default function CloudPage() {
             <Button type="primary" block onClick={handleSave} loading={saveMut.isPending}>保存</Button>
           </Card>
         </Col>
+
+        <Col xs={24} xl={8}>
+          <Card
+            title="Path云竞价"
+            loading={settingsLoading}
+            extra={
+              <Space>
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<PlayCircleOutlined />}
+                  onClick={() => guardedStart('path')}
+                  loading={startMut.isPending && startingWorkload === 'path'}
+                >
+                  启动
+                </Button>
+                <Button
+                  size="small"
+                  icon={<StopOutlined />}
+                  onClick={() => stopMut.mutate('path')}
+                >
+                  停止
+                </Button>
+                <Popconfirm title="清理Path竞价实例？" onConfirm={() => cleanupMut.mutate('path')}>
+                  <Button size="small" danger icon={<DeleteOutlined />}>清理</Button>
+                </Popconfirm>
+              </Space>
+            }
+          >
+            {settings && (
+              <Space style={{ marginBottom: 12 }} wrap>
+                <Tag color={settings.path_autoscale_status === 'running' ? 'success' : 'default'}>
+                  状态: {settings.path_autoscale_status || 'stopped'}
+                </Tag>
+                {settings.path_launch_started_at > 0 && (
+                  <Tag color="processing">启动时间: {formatTime(settings.path_launch_started_at)}</Tag>
+                )}
+              </Space>
+            )}
+            <Form
+              form={pathForm}
+              layout="vertical"
+              size="small"
+              onValuesChange={updateDirtyState}
+            >
+              <Row gutter={8}>
+                <Col span={12}><Form.Item name="path_max_price_usd_per_hour" label="最高价格(USD/h)"><InputNumber step={0.001} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col span={12}><Form.Item name="path_hourly_budget_usd" label="每小时预算(USD)"><InputNumber step={0.001} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col span={12}><Form.Item name="path_budget_hours" label="预算时长(h)"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col span={12}><Form.Item name="path_max_concurrency" label="Path并发数"><InputNumber min={1} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col span={12}><Form.Item name="path_min_cpu" label="最低CPU数"><InputNumber min={1} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col span={12}><Form.Item name="path_min_memory_gb" label="最低内存(GB)"><InputNumber min={1} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col span={24}><Form.Item name="path_instance_type" label="机型(可选)"><Input placeholder="如 S5.SMALL1" /></Form.Item></Col>
+              </Row>
+            </Form>
+            <Button type="primary" block onClick={handleSave} loading={saveMut.isPending}>保存</Button>
+          </Card>
+        </Col>
       </Row>
 
       <Divider>AWVS竞价实例 ({awvsInstances.length})</Divider>
@@ -550,6 +626,16 @@ export default function CloudPage() {
       <Divider>Sqlmap竞价实例 ({sqlmapInstances.length})</Divider>
       <Table
         dataSource={sqlmapInstances}
+        columns={instanceColumns}
+        rowKey="ID"
+        size="small"
+        pagination={{ pageSize: 10 }}
+        scroll={{ x: 800 }}
+      />
+
+      <Divider>Path竞价实例 ({pathInstances.length})</Divider>
+      <Table
+        dataSource={pathInstances}
         columns={instanceColumns}
         rowKey="ID"
         size="small"

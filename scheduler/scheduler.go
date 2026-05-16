@@ -1323,28 +1323,34 @@ func runCloudAutoscaleCycle(db *gorm.DB) {
 		return
 	}
 	if strings.TrimSpace(settings.SecretID) == "" || strings.TrimSpace(settings.SecretKey) == "" {
-		log.Printf("[cloud][autoscale] missing credentials, autoscale disabled for both workloads")
+		log.Printf("[cloud][autoscale] missing credentials, autoscale disabled for all workloads")
 		settings.Enabled = false
 		settings.AWVSAutoEnabled = false
 		settings.SQLMapAutoEnabled = false
+		settings.PathAutoEnabled = false
 		settings.LaunchStartedAt = 0
 		settings.AWVSLaunchStartedAt = 0
 		settings.SQLMapLaunchStartedAt = 0
+		settings.PathLaunchStartedAt = 0
 		db.Save(&settings)
 		return
 	}
-	if settings.Enabled && !settings.AWVSAutoEnabled && !settings.SQLMapAutoEnabled {
+	if settings.Enabled && !settings.AWVSAutoEnabled && !settings.SQLMapAutoEnabled && !settings.PathAutoEnabled {
 		settings.AWVSAutoEnabled = true
 		settings.SQLMapAutoEnabled = true
+		settings.PathAutoEnabled = true
 		db.Save(&settings)
 	}
-	settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled
+	settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled || settings.PathAutoEnabled
 	db.Save(&settings)
 	if settings.AWVSAutoEnabled {
 		autoscaleByWorkload(db, settings, "awvs")
 	}
 	if settings.SQLMapAutoEnabled {
 		autoscaleByWorkload(db, settings, "sqlmap")
+	}
+	if settings.PathAutoEnabled {
+		autoscaleByWorkload(db, settings, "path")
 	}
 }
 
@@ -1515,6 +1521,7 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 	securityCache := map[string]string{}
 	awvsConcurrency := maxInt(1, settings.AWVSMaxConcurrency)
 	sqlmapConcurrency := maxInt(1, settings.SQLMapMaxConcurrency)
+	pathConcurrency := maxInt(1, settings.PathMaxConcurrency)
 	for i, offer := range plan {
 		region := offer.Region
 		vpcID := strings.TrimSpace(settings.VpcID)
@@ -1566,20 +1573,25 @@ func autoscaleByWorkload(db *gorm.DB, settings models.CloudSettings, workload st
 		}
 		awvsPort := randomPort(settings.PortMin, settings.PortMax)
 		sqlmapPort := randomPort(settings.PortMin, settings.PortMax)
+		pathPort := randomPort(settings.PortMin, settings.PortMax)
 		_, cloudProxyLink := pickCloudProxyForLaunch(db, settings, i)
 		awvsInstall := ""
 		sqlmapInstall := ""
+		pathInstall := ""
 		if workload == "awvs" {
 			awvsInstall = fmt.Sprintf(`curl -fsSL https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/awvs-agent-entrypoint.sh | bash -s -- -n "awvs-%s" -p %d -c %d`, token, awvsPort, awvsConcurrency)
-		} else {
+		} else if workload == "sqlmap" {
 			sqlmapInstall = fmt.Sprintf(`curl -fsSL https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/sqlmap-agent-entrypoint.sh | bash -s -- -n "sqlmap-%s" -p %d -c %d`, token, sqlmapPort, sqlmapConcurrency)
 			if cloudProxyLink != "" {
 				sqlmapInstall = fmt.Sprintf(`%s -l %q`, sqlmapInstall, cloudProxyLink)
 			}
+		} else {
+			pathInstall = fmt.Sprintf(`curl -fsSL https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/path-agent-entrypoint.sh | bash -s -- -n "path-%s" -p %d -c %d`, token, pathPort, pathConcurrency)
 		}
 		script := bootstrap.BuildInitScript(bootstrap.ScriptOptions{
 			AWVSInstallCommand:   awvsInstall,
 			SQLMapInstallCommand: sqlmapInstall,
+			PathInstallCommand:   pathInstall,
 			CallbackURL:          callbackURL,
 			Token:                token,
 			Region:               offer.Region,
@@ -1635,12 +1647,18 @@ func workloadConfig(settings models.CloudSettings, workload string) (float64, fl
 	if workload == "awvs" {
 		return settings.AWVSMaxPriceUSDPerHour, settings.AWVSHourlyBudgetUSD, settings.AWVSBudgetHours, settings.AWVSLaunchStartedAt, settings.AWVSInstanceType, settings.AWVSMinCPU, settings.AWVSMinMemoryGB
 	}
+	if workload == "path" {
+		return settings.PathMaxPriceUSDPerHour, settings.PathHourlyBudgetUSD, settings.PathBudgetHours, settings.PathLaunchStartedAt, settings.PathInstanceType, settings.PathMinCPU, settings.PathMinMemoryGB
+	}
 	return settings.SQLMapMaxPriceUSDPerHour, settings.SQLMapHourlyBudgetUSD, settings.SQLMapBudgetHours, settings.SQLMapLaunchStartedAt, settings.SQLMapInstanceType, settings.SQLMapMinCPU, settings.SQLMapMinMemoryGB
 }
 
 func workloadMinConstraints(settings models.CloudSettings, workload string) (int, int) {
 	if workload == "awvs" {
 		return settings.AWVSMinCPU, settings.AWVSMinMemoryGB
+	}
+	if workload == "path" {
+		return settings.PathMinCPU, settings.PathMinMemoryGB
 	}
 	return settings.SQLMapMinCPU, settings.SQLMapMinMemoryGB
 }
@@ -1651,6 +1669,8 @@ func updateWorkloadLaunchStartedAt(db *gorm.DB, settings *models.CloudSettings, 
 	}
 	if workload == "awvs" {
 		settings.AWVSLaunchStartedAt = ts
+	} else if workload == "path" {
+		settings.PathLaunchStartedAt = ts
 	} else {
 		settings.SQLMapLaunchStartedAt = ts
 	}
@@ -1664,11 +1684,14 @@ func disableWorkloadAutoscale(db *gorm.DB, settings *models.CloudSettings, workl
 	if workload == "awvs" {
 		settings.AWVSAutoEnabled = false
 		settings.AWVSLaunchStartedAt = 0
+	} else if workload == "path" {
+		settings.PathAutoEnabled = false
+		settings.PathLaunchStartedAt = 0
 	} else {
 		settings.SQLMapAutoEnabled = false
 		settings.SQLMapLaunchStartedAt = 0
 	}
-	settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled
+	settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled || settings.PathAutoEnabled
 	db.Save(settings)
 }
 
@@ -1850,6 +1873,10 @@ func collectInteractSignals(db *gorm.DB) {
 				log.Printf("[cloud][interact] sqlmap proto received token=%s", sig.Token)
 				registerSQLMapFromProto(db, sig, &inst)
 			}
+		if strings.HasPrefix(sig.Proto, "pathagent://") {
+			log.Printf("[cloud][interact] path proto received token=%s", sig.Token)
+			registerPathFromProto(db, sig, &inst)
+		}
 			inst.Status = "running"
 			db.Save(&inst)
 		}
@@ -1955,6 +1982,48 @@ func registerSQLMapFromProto(db *gorm.DB, sig interact.Signal, inst *models.Clou
 	inst.SqlmapAgentID = agent.ID
 	inst.SQLProtocolSeen = true
 	log.Printf("[cloud][register] sqlmap agent created id=%d url=%s instance_id=%s", agent.ID, agent.URL, inst.InstanceID)
+}
+
+func registerPathFromProto(db *gorm.DB, sig interact.Signal, inst *models.CloudInstance) {
+	cfg, err := decodeProto(sig.Proto, "pathagent://")
+	if err != nil {
+		log.Printf("[cloud][register] decode path proto failed token=%s err=%v", sig.Token, err)
+		return
+	}
+	var existing models.PathAgent
+	if err := db.Where("url = ?", cfg.URL).First(&existing).Error; err == nil {
+		existing.LastHeartbeatAt = time.Now().Unix()
+		existing.InstanceID = inst.InstanceID
+		existing.Provider = "tencent"
+		existing.IsActive = true
+		existing.Name = cloudAgentName("path", inst.InstanceID, cfg.Name)
+		existing.ManagerURL = strings.TrimRight(strings.TrimSpace(cfg.ManagerURL), "/")
+		existing.ManagerToken = strings.TrimSpace(cfg.ManagerToken)
+		db.Save(&existing)
+		inst.PathAgentID = existing.ID
+		inst.PathProtocolSeen = true
+		log.Printf("[cloud][register] path agent refreshed id=%d url=%s instance_id=%s", existing.ID, existing.URL, inst.InstanceID)
+		return
+	}
+	agent := models.PathAgent{
+		Name:            cloudAgentName("path", inst.InstanceID, cfg.Name),
+		URL:             strings.TrimRight(cfg.URL, "/"),
+		APIKey:          cfg.APIKey,
+		ManagerURL:      strings.TrimRight(strings.TrimSpace(cfg.ManagerURL), "/"),
+		ManagerToken:    strings.TrimSpace(cfg.ManagerToken),
+		MaxConcurrency:  maxInt(1, cfg.MaxConcurrency),
+		IsActive:        true,
+		LastCheckedAt:   time.Now().Unix(),
+		LastHeartbeatAt: time.Now().Unix(),
+		Provider:        "tencent",
+		InstanceID:      inst.InstanceID,
+		Region:          sig.Region,
+		Zone:            sig.Zone,
+	}
+	db.Create(&agent)
+	inst.PathAgentID = agent.ID
+	inst.PathProtocolSeen = true
+	log.Printf("[cloud][register] path agent created id=%d url=%s instance_id=%s", agent.ID, agent.URL, inst.InstanceID)
 }
 
 func sqlmapAgentDefaultUseProxy(db *gorm.DB) bool {
@@ -2180,6 +2249,9 @@ func requeueBindingsForInstance(db *gorm.DB, inst models.CloudInstance, reason s
 	if inst.SqlmapAgentID != 0 {
 		requeueSqlmapAgentTasks(db, inst.SqlmapAgentID, reason)
 	}
+	if inst.PathAgentID != 0 {
+		requeuePathAgentTasks(db, inst.PathAgentID, reason)
+	}
 }
 
 func markCloudBoundAgentsOffline(db *gorm.DB, inst models.CloudInstance, reason string) {
@@ -2208,6 +2280,15 @@ func markCloudBoundAgentsOffline(db *gorm.DB, inst models.CloudInstance, reason 
 			node.LastCheckedAt = ts
 			db.Save(&node)
 			log.Printf("[cloud][reconcile] marked sqlmap node offline id=%d instance_id=%s reason=%s", node.ID, inst.InstanceID, offlineReason)
+		}
+	}
+	var pathNodes []models.PathAgent
+	if err := db.Where("provider = ? AND instance_id = ?", "tencent", inst.InstanceID).Find(&pathNodes).Error; err == nil {
+		for _, node := range pathNodes {
+			node.IsActive = false
+			node.LastCheckedAt = ts
+			db.Save(&node)
+			log.Printf("[cloud][reconcile] marked path node offline id=%d instance_id=%s reason=%s", node.ID, inst.InstanceID, offlineReason)
 		}
 	}
 }
@@ -2267,6 +2348,22 @@ func requeueSqlmapAgentTasks(db *gorm.DB, agentID uint, reason string) {
 		"has_shell":         false,
 		"has_injection":     false,
 		"sqlmap_techniques": "",
+	})
+}
+
+func requeuePathAgentTasks(db *gorm.DB, agentID uint, reason string) {
+	lastError := ""
+	if strings.TrimSpace(reason) != "" {
+		lastError = "requeued: " + strings.TrimSpace(reason)
+	}
+	db.Model(&models.TaskPathScan{}).Where("path_agent_id = ? AND path_status IN ?", agentID, []string{"running", "queued"}).Updates(map[string]interface{}{
+		"path_agent_id":       0,
+		"path_agent_url":      "",
+		"path_task_id":        "",
+		"path_status":         "none",
+		"agent_version":       "",
+		"last_error":          lastError,
+		"last_dispatched_at":  time.Now().Unix(),
 	})
 }
 

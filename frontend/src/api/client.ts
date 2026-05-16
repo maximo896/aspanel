@@ -63,6 +63,7 @@ export const restartPathDocker = (ids: number[]) => api.post('/api/path/agents/r
 // Tasks
 export const getTasks = () => api.get<Task[]>('/api/tasks').then(r => r.data)
 export const addTasks = (urls: string[]) => api.post('/api/tasks', { urls }).then(r => r.data)
+export const updateTaskRemark = (taskId: number, remark: string) => api.put<{ message: string; task: Task }>(`/api/tasks/${taskId}/remark`, { remark }).then(r => r.data)
 export const batchDeleteTasks = (ids: number[]) => api.post('/api/tasks/batch-delete', { ids }).then(r => r.data)
 export const batchRetryPush = (ids: number[]) => api.post('/api/tasks/batch-retry-push', { ids }).then(r => r.data)
 export const batchProbeTaskOsshell = (ids: number[]) => api.post('/api/tasks/batch-probe-osshell', { ids }).then(r => r.data)

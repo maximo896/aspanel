@@ -178,6 +178,7 @@ func main() {
 
 	r.GET("/api/tasks", h.GetTasks)
 	r.POST("/api/tasks", h.AddTasks)
+	r.PUT("/api/tasks/:id/remark", h.UpdateTaskRemark)
 	r.POST("/api/tasks/batch-delete", h.BatchDeleteTasks)
 	r.POST("/api/tasks/batch-retry-push", h.BatchRetryTaskSqlmapPush)
 	r.POST("/api/tasks/batch-probe-osshell", h.BatchProbeTaskOsshell)

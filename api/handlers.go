@@ -1337,6 +1337,35 @@ func (api *API) AddTasks(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "Tasks added", "count": len(tasks)})
 }
 
+func normalizeTaskRemark(raw string) string {
+	remark := strings.ReplaceAll(raw, "\r\n", "\n")
+	remark = strings.ReplaceAll(remark, "\r", "\n")
+	return remark
+}
+
+func (api *API) UpdateTaskRemark(c *gin.Context) {
+	var task models.Task
+	if err := api.DB.First(&task, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "task not found"})
+		return
+	}
+
+	var req struct {
+		Remark string `json:"remark"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	task.Remark = normalizeTaskRemark(req.Remark)
+	if err := api.DB.Save(&task).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"message": "task remark updated", "task": task})
+}
+
 func (api *API) BatchDeleteTasks(c *gin.Context) {
 	var req struct {
 		IDs []uint `json:"ids" binding:"required"`
@@ -3178,13 +3207,17 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 			InstanceType:             "S5.SMALL1",
 			AWVSMaxConcurrency:       5,
 			SQLMapMaxConcurrency:     10,
+			PathMaxConcurrency:       5,
 			CloudProxyMode:           "none",
 			AWVSMaxPriceUSDPerHour:   0.02,
 			SQLMapMaxPriceUSDPerHour: 0.02,
+			PathMaxPriceUSDPerHour:   0.02,
 			AWVSMinCPU:               1,
 			AWVSMinMemoryGB:          1,
 			SQLMapMinCPU:             1,
 			SQLMapMinMemoryGB:        1,
+			PathMinCPU:               1,
+			PathMinMemoryGB:          1,
 			InteractCmd:              "interact.sh client",
 		}
 		api.DB.Create(&settings)
@@ -3201,6 +3234,9 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 	if settings.SQLMapMaxConcurrency <= 0 {
 		settings.SQLMapMaxConcurrency = 10
 	}
+	if settings.PathMaxConcurrency <= 0 {
+		settings.PathMaxConcurrency = 5
+	}
 	if strings.TrimSpace(settings.CloudProxyMode) == "" {
 		settings.CloudProxyMode = "none"
 	}
@@ -3209,6 +3245,9 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 	}
 	if settings.SQLMapMaxPriceUSDPerHour <= 0 {
 		settings.SQLMapMaxPriceUSDPerHour = 0.02
+	}
+	if settings.PathMaxPriceUSDPerHour <= 0 {
+		settings.PathMaxPriceUSDPerHour = 0.02
 	}
 	if settings.AWVSMinCPU <= 0 {
 		settings.AWVSMinCPU = 1
@@ -3222,18 +3261,28 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 	if settings.SQLMapMinMemoryGB <= 0 {
 		settings.SQLMapMinMemoryGB = 1
 	}
+	if settings.PathMinCPU <= 0 {
+		settings.PathMinCPU = 1
+	}
+	if settings.PathMinMemoryGB <= 0 {
+		settings.PathMinMemoryGB = 1
+	}
 	masked := settings
 	masked.SecretID = ""
 	masked.SecretKey = ""
 	awvsStatus, awvsRemaining := cloudWorkloadStatus(masked.AWVSAutoEnabled, masked.AWVSLaunchStartedAt, masked.AWVSBudgetHours)
 	sqlmapStatus, sqlmapRemaining := cloudWorkloadStatus(masked.SQLMapAutoEnabled, masked.SQLMapLaunchStartedAt, masked.SQLMapBudgetHours)
+	pathStatus, pathRemaining := cloudWorkloadStatus(masked.PathAutoEnabled, masked.PathLaunchStartedAt, masked.PathBudgetHours)
 	status := "stopped"
-	if masked.AWVSAutoEnabled || masked.SQLMapAutoEnabled {
+	if masked.AWVSAutoEnabled || masked.SQLMapAutoEnabled || masked.PathAutoEnabled {
 		status = "running"
 	}
 	remaining := awvsRemaining
 	if sqlmapRemaining > 0 && (remaining == 0 || sqlmapRemaining < remaining) {
 		remaining = sqlmapRemaining
+	}
+	if pathRemaining > 0 && (remaining == 0 || pathRemaining < remaining) {
+		remaining = pathRemaining
 	}
 	c.JSON(200, gin.H{
 		"ID":                             masked.ID,
@@ -3250,6 +3299,7 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 		"instance_type":                  masked.InstanceType,
 		"awvs_max_concurrency":           masked.AWVSMaxConcurrency,
 		"sqlmap_max_concurrency":         masked.SQLMapMaxConcurrency,
+		"path_max_concurrency":           masked.PathMaxConcurrency,
 		"cloud_proxy_mode":               masked.CloudProxyMode,
 		"cloud_proxy_agent_id":           masked.CloudProxyAgentID,
 		"image_id":                       masked.ImageID,
@@ -3286,6 +3336,16 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 		"sqlmap_min_memory_gb":           masked.SQLMapMinMemoryGB,
 		"sqlmap_autoscale_status":        sqlmapStatus,
 		"sqlmap_autoscale_remaining_sec": sqlmapRemaining,
+		"path_auto_enabled":              masked.PathAutoEnabled,
+		"path_launch_started_at":         masked.PathLaunchStartedAt,
+		"path_max_price_usd_per_hour":    masked.PathMaxPriceUSDPerHour,
+		"path_hourly_budget_usd":         masked.PathHourlyBudgetUSD,
+		"path_budget_hours":              masked.PathBudgetHours,
+		"path_instance_type":             masked.PathInstanceType,
+		"path_min_cpu":                   masked.PathMinCPU,
+		"path_min_memory_gb":             masked.PathMinMemoryGB,
+		"path_autoscale_status":          pathStatus,
+		"path_autoscale_remaining_sec":   pathRemaining,
 	})
 }
 
@@ -3437,11 +3497,17 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	if req.SQLMapMaxConcurrency > 0 {
 		settings.SQLMapMaxConcurrency = req.SQLMapMaxConcurrency
 	}
+	if req.PathMaxConcurrency > 0 {
+		settings.PathMaxConcurrency = req.PathMaxConcurrency
+	}
 	if _, ok := present["awvs_auto_enabled"]; ok {
 		settings.AWVSAutoEnabled = req.AWVSAutoEnabled
 	}
 	if _, ok := present["sqlmap_auto_enabled"]; ok {
 		settings.SQLMapAutoEnabled = req.SQLMapAutoEnabled
+	}
+	if _, ok := present["path_auto_enabled"]; ok {
+		settings.PathAutoEnabled = req.PathAutoEnabled
 	}
 	if req.AWVSMaxPriceUSDPerHour > 0 {
 		settings.AWVSMaxPriceUSDPerHour = req.AWVSMaxPriceUSDPerHour
@@ -3449,11 +3515,17 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	if req.SQLMapMaxPriceUSDPerHour > 0 {
 		settings.SQLMapMaxPriceUSDPerHour = req.SQLMapMaxPriceUSDPerHour
 	}
+	if req.PathMaxPriceUSDPerHour > 0 {
+		settings.PathMaxPriceUSDPerHour = req.PathMaxPriceUSDPerHour
+	}
 	if req.AWVSHourlyBudgetUSD >= 0 {
 		settings.AWVSHourlyBudgetUSD = req.AWVSHourlyBudgetUSD
 	}
 	if req.SQLMapHourlyBudgetUSD >= 0 {
 		settings.SQLMapHourlyBudgetUSD = req.SQLMapHourlyBudgetUSD
+	}
+	if req.PathHourlyBudgetUSD >= 0 {
+		settings.PathHourlyBudgetUSD = req.PathHourlyBudgetUSD
 	}
 	if req.AWVSBudgetHours >= 0 {
 		settings.AWVSBudgetHours = req.AWVSBudgetHours
@@ -3461,11 +3533,17 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	if req.SQLMapBudgetHours >= 0 {
 		settings.SQLMapBudgetHours = req.SQLMapBudgetHours
 	}
+	if req.PathBudgetHours >= 0 {
+		settings.PathBudgetHours = req.PathBudgetHours
+	}
 	if _, ok := present["awvs_instance_type"]; ok {
 		settings.AWVSInstanceType = strings.TrimSpace(req.AWVSInstanceType)
 	}
 	if _, ok := present["sqlmap_instance_type"]; ok {
 		settings.SQLMapInstanceType = strings.TrimSpace(req.SQLMapInstanceType)
+	}
+	if _, ok := present["path_instance_type"]; ok {
+		settings.PathInstanceType = strings.TrimSpace(req.PathInstanceType)
 	}
 	if req.AWVSMinCPU > 0 {
 		settings.AWVSMinCPU = req.AWVSMinCPU
@@ -3478,6 +3556,12 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	}
 	if req.SQLMapMinMemoryGB > 0 {
 		settings.SQLMapMinMemoryGB = req.SQLMapMinMemoryGB
+	}
+	if req.PathMinCPU > 0 {
+		settings.PathMinCPU = req.PathMinCPU
+	}
+	if req.PathMinMemoryGB > 0 {
+		settings.PathMinMemoryGB = req.PathMinMemoryGB
 	}
 	mode := strings.TrimSpace(req.CloudProxyMode)
 	if mode != "" {
@@ -3542,6 +3626,9 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	if settings.SQLMapMaxConcurrency <= 0 {
 		settings.SQLMapMaxConcurrency = 10
 	}
+	if settings.PathMaxConcurrency <= 0 {
+		settings.PathMaxConcurrency = 5
+	}
 	if strings.TrimSpace(settings.CloudProxyMode) == "" {
 		settings.CloudProxyMode = "none"
 	}
@@ -3550,6 +3637,9 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	}
 	if settings.SQLMapMaxPriceUSDPerHour <= 0 {
 		settings.SQLMapMaxPriceUSDPerHour = 0.02
+	}
+	if settings.PathMaxPriceUSDPerHour <= 0 {
+		settings.PathMaxPriceUSDPerHour = 0.02
 	}
 	if settings.AWVSMinCPU <= 0 {
 		settings.AWVSMinCPU = 1
@@ -3563,6 +3653,12 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	if settings.SQLMapMinMemoryGB <= 0 {
 		settings.SQLMapMinMemoryGB = 1
 	}
+	if settings.PathMinCPU <= 0 {
+		settings.PathMinCPU = 1
+	}
+	if settings.PathMinMemoryGB <= 0 {
+		settings.PathMinMemoryGB = 1
+	}
 	if strings.TrimSpace(settings.AWVSInstanceType) != "" {
 		cpu, mem, ok := tencent.InstanceTypeSpec(settings.AWVSInstanceType)
 		if ok && (cpu < settings.AWVSMinCPU || mem < settings.AWVSMinMemoryGB) {
@@ -3574,6 +3670,13 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 		cpu, mem, ok := tencent.InstanceTypeSpec(settings.SQLMapInstanceType)
 		if ok && (cpu < settings.SQLMapMinCPU || mem < settings.SQLMapMinMemoryGB) {
 			c.JSON(400, gin.H{"error": fmt.Sprintf("sqlmap_instance_type %s is below min constraint (%dC/%dG < %dC/%dG)", settings.SQLMapInstanceType, cpu, mem, settings.SQLMapMinCPU, settings.SQLMapMinMemoryGB)})
+			return
+		}
+	}
+	if strings.TrimSpace(settings.PathInstanceType) != "" {
+		cpu, mem, ok := tencent.InstanceTypeSpec(settings.PathInstanceType)
+		if ok && (cpu < settings.PathMinCPU || mem < settings.PathMinMemoryGB) {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("path_instance_type %s is below min constraint (%dC/%dG < %dC/%dG)", settings.PathInstanceType, cpu, mem, settings.PathMinCPU, settings.PathMinMemoryGB)})
 			return
 		}
 	}
@@ -3671,7 +3774,7 @@ func (api *API) GetCloudInstances(c *gin.Context) {
 	var instances []models.CloudInstance
 	workload := strings.TrimSpace(strings.ToLower(c.Query("workload")))
 	query := api.DB.Order("id desc")
-	if workload == "awvs" || workload == "sqlmap" {
+	if workload == "awvs" || workload == "sqlmap" || workload == "path" {
 		query = query.Where("workload = ?", workload)
 	}
 	query.Find(&instances)
@@ -3790,8 +3893,8 @@ func (api *API) RebootCloudInstances(c *gin.Context) {
 		return
 	}
 	workload := strings.TrimSpace(strings.ToLower(c.Query("workload")))
-	if workload != "" && workload != "awvs" && workload != "sqlmap" {
-		c.JSON(400, gin.H{"error": "invalid workload, expected awvs/sqlmap"})
+	if workload != "" && workload != "awvs" && workload != "sqlmap" && workload != "path" {
+		c.JSON(400, gin.H{"error": "invalid workload, expected awvs/sqlmap/path"})
 		return
 	}
 	tc, err := api.loadCloudClient()
@@ -3834,6 +3937,9 @@ func (api *API) RebootCloudInstances(c *gin.Context) {
 		}
 		if inst.SqlmapAgentID != 0 {
 			api.DB.Model(&models.SqlmapAgent{}).Where("id = ?", inst.SqlmapAgentID).Update("is_active", false)
+		}
+		if inst.PathAgentID != 0 {
+			api.DB.Model(&models.PathAgent{}).Where("id = ?", inst.PathAgentID).Update("is_active", false)
 		}
 		succeeded++
 	}
@@ -3957,16 +4063,21 @@ func (api *API) StartCloudScale(c *gin.Context) {
 	case "sqlmap":
 		settings.SQLMapAutoEnabled = true
 		settings.SQLMapLaunchStartedAt = now
+	case "path":
+		settings.PathAutoEnabled = true
+		settings.PathLaunchStartedAt = now
 	case "all":
 		settings.AWVSAutoEnabled = true
 		settings.SQLMapAutoEnabled = true
+		settings.PathAutoEnabled = true
 		settings.AWVSLaunchStartedAt = now
 		settings.SQLMapLaunchStartedAt = now
+		settings.PathLaunchStartedAt = now
 	default:
-		c.JSON(400, gin.H{"error": "invalid workload, expected awvs/sqlmap/all"})
+		c.JSON(400, gin.H{"error": "invalid workload, expected awvs/sqlmap/path/all"})
 		return
 	}
-	settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled
+	settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled || settings.PathAutoEnabled
 	settings.LaunchStartedAt = now
 	if err := api.DB.Save(&settings).Error; err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
@@ -4003,16 +4114,21 @@ func (api *API) StopCloudScale(c *gin.Context) {
 	case "sqlmap":
 		settings.SQLMapAutoEnabled = false
 		settings.SQLMapLaunchStartedAt = 0
+	case "path":
+		settings.PathAutoEnabled = false
+		settings.PathLaunchStartedAt = 0
 	case "all":
 		settings.AWVSAutoEnabled = false
 		settings.SQLMapAutoEnabled = false
+		settings.PathAutoEnabled = false
 		settings.AWVSLaunchStartedAt = 0
 		settings.SQLMapLaunchStartedAt = 0
+		settings.PathLaunchStartedAt = 0
 	default:
-		c.JSON(400, gin.H{"error": "invalid workload, expected awvs/sqlmap/all"})
+		c.JSON(400, gin.H{"error": "invalid workload, expected awvs/sqlmap/path/all"})
 		return
 	}
-	settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled
+	settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled || settings.PathAutoEnabled
 	if !settings.Enabled {
 		settings.LaunchStartedAt = 0
 	}
@@ -4022,8 +4138,8 @@ func (api *API) StopCloudScale(c *gin.Context) {
 
 func (api *API) CleanupCloudInstances(c *gin.Context) {
 	kind := strings.TrimSpace(strings.ToLower(c.Query("workload")))
-	if kind != "awvs" && kind != "sqlmap" {
-		c.JSON(400, gin.H{"error": "invalid workload, expected awvs/sqlmap"})
+	if kind != "awvs" && kind != "sqlmap" && kind != "path" {
+		c.JSON(400, gin.H{"error": "invalid workload, expected awvs/sqlmap/path"})
 		return
 	}
 
@@ -4044,11 +4160,14 @@ func (api *API) CleanupCloudInstances(c *gin.Context) {
 	if kind == "awvs" {
 		settings.AWVSAutoEnabled = false
 		settings.AWVSLaunchStartedAt = 0
-	} else {
+	} else if kind == "sqlmap" {
 		settings.SQLMapAutoEnabled = false
 		settings.SQLMapLaunchStartedAt = 0
+	} else {
+		settings.PathAutoEnabled = false
+		settings.PathLaunchStartedAt = 0
 	}
-	settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled
+	settings.Enabled = settings.AWVSAutoEnabled || settings.SQLMapAutoEnabled || settings.PathAutoEnabled
 	if !settings.Enabled {
 		settings.LaunchStartedAt = 0
 	}
@@ -4115,6 +4234,18 @@ func (api *API) cleanupCloudBoundRecords(inst models.CloudInstance, reason strin
 		})
 		api.DB.Delete(&models.SqlmapAgent{}, inst.SqlmapAgentID)
 	}
+	if inst.PathAgentID != 0 {
+		api.DB.Model(&models.TaskPathScan{}).Where("path_agent_id = ? AND path_status IN ?", inst.PathAgentID, []string{"running", "queued"}).Updates(map[string]interface{}{
+			"path_agent_id":      0,
+			"path_agent_url":     "",
+			"path_task_id":       "",
+			"path_status":        "none",
+			"agent_version":      "",
+			"last_error":         reason,
+			"last_dispatched_at": now,
+		})
+		api.DB.Delete(&models.PathAgent{}, inst.PathAgentID)
+	}
 
 	if strings.TrimSpace(inst.InstanceID) == "" {
 		return
@@ -4154,6 +4285,21 @@ func (api *API) cleanupCloudBoundRecords(inst models.CloudInstance, reason strin
 				"sqlmap_status":    "none",
 				"sqlmap_agent_url": "",
 				"has_injection":    false,
+			})
+			api.DB.Delete(&node)
+		}
+	}
+	var pathNodes []models.PathAgent
+	if err := api.DB.Where("provider = ? AND instance_id = ?", "tencent", inst.InstanceID).Find(&pathNodes).Error; err == nil {
+		for _, node := range pathNodes {
+			api.DB.Model(&models.TaskPathScan{}).Where("path_agent_id = ? AND path_status IN ?", node.ID, []string{"running", "queued"}).Updates(map[string]interface{}{
+				"path_agent_id":      0,
+				"path_agent_url":     "",
+				"path_task_id":       "",
+				"path_status":        "none",
+				"agent_version":      "",
+				"last_error":         reason,
+				"last_dispatched_at": now,
 			})
 			api.DB.Delete(&node)
 		}

@@ -12,7 +12,7 @@ import type { Task } from '../types'
 import {
   getTasks, batchDeleteTasks, batchRetryPush, cleanupTasks, cleanupNoVulnTasks,
   addTasks, batchRetryPathScan, batchProbeTaskOsshell, extractError,
-  getSqlmapAgents, getPathAgents,
+  getSqlmapAgents, getPathAgents, updateTaskRemark,
 } from '../api/client'
 import TaskDrawer from '../components/TaskDrawer'
 import SqlmapDataTags from '../components/SqlmapDataTags'
@@ -54,6 +54,7 @@ export default function TasksPage() {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
+  const [remarkDrafts, setRemarkDrafts] = useState<Record<number, string>>({})
 
   const { data: tasks = [], isLoading, error: tasksError, refetch } = useQuery({
     queryKey: ['tasks'],
@@ -118,6 +119,27 @@ export default function TasksPage() {
     onError: (e) => message.error(extractError(e)),
   })
 
+  const updateRemarkMut = useMutation({
+    mutationFn: ({ taskId, remark }: { taskId: number; remark: string }) => updateTaskRemark(taskId, remark),
+    onSuccess: (data, variables) => {
+      qc.setQueryData<Task[]>(['tasks'], prev => (
+        Array.isArray(prev)
+          ? prev.map(task => (task.ID === variables.taskId ? { ...task, remark: data.task.remark } : task))
+          : prev
+      ))
+      setRemarkDrafts(prev => {
+        const next = { ...prev }
+        delete next[variables.taskId]
+        return next
+      })
+      if (selectedTask?.ID === variables.taskId) {
+        setSelectedTask(prev => (prev ? { ...prev, remark: data.task.remark } : prev))
+      }
+      message.success('备注已保存')
+    },
+    onError: (e) => message.error(extractError(e)),
+  })
+
   const filtered = useMemo(() => (
     tasks
       .filter(t => {
@@ -140,6 +162,7 @@ export default function TasksPage() {
           t.target_id,
           t.scan_session_id,
           t.requeue_reason,
+          t.remark,
         ].join(' ').toLowerCase()
         return haystack.includes(needle)
       })
@@ -161,6 +184,28 @@ export default function TasksPage() {
       setCurrentPage(maxPage)
     }
   }, [filtered.length, pageSize, currentPage])
+
+  useEffect(() => {
+    setRemarkDrafts(prev => {
+      const next: Record<number, string> = {}
+      for (const task of tasks) {
+        if (Object.prototype.hasOwnProperty.call(prev, task.ID)) {
+          next[task.ID] = prev[task.ID]
+        }
+      }
+      return next
+    })
+  }, [tasks])
+
+  const saveRemark = (task: Task) => {
+    const nextRemark = Object.prototype.hasOwnProperty.call(remarkDrafts, task.ID)
+      ? remarkDrafts[task.ID]
+      : (task.remark || '')
+    if (nextRemark === (task.remark || '')) {
+      return
+    }
+    updateRemarkMut.mutate({ taskId: task.ID, remark: nextRemark })
+  }
 
   const currentPageTaskIds = useMemo(() => {
     const start = (currentPage - 1) * pageSize
@@ -252,6 +297,36 @@ export default function TasksPage() {
           {row.has_path_scan && <Tag color="purple" style={{ fontSize: 10, margin: 1 }}>{row.path_scan_status || '路径'}</Tag>}
         </Space>
       ),
+    },
+    {
+      title: '备注',
+      key: 'remark',
+      width: 320,
+      render: (_: unknown, row: Task) => {
+        const value = Object.prototype.hasOwnProperty.call(remarkDrafts, row.ID)
+          ? remarkDrafts[row.ID]
+          : (row.remark || '')
+        return (
+          <Input.TextArea
+            value={value}
+            autoSize={{ minRows: 1, maxRows: 6 }}
+            placeholder="Write remark"
+            onClick={e => e.stopPropagation()}
+            onFocus={e => e.stopPropagation()}
+            onChange={e => {
+              const nextValue = e.target.value
+              setRemarkDrafts(prev => ({ ...prev, [row.ID]: nextValue }))
+            }}
+            onBlur={() => saveRemark(row)}
+            onPressEnter={e => {
+              if (e.ctrlKey || e.metaKey) {
+                e.preventDefault()
+                saveRemark(row)
+              }
+            }}
+          />
+        )
+      },
     },
     {
       title: '操作',
@@ -346,7 +421,7 @@ export default function TasksPage() {
           loading={isLoading}
           size="small"
           pagination={{ current: currentPage, pageSize, showSizeChanger: true, showQuickJumper: true }}
-          scroll={{ x: 800 }}
+          scroll={{ x: 1120 }}
           onChange={pagination => {
             setCurrentPage(pagination.current || 1)
             setPageSize(pagination.pageSize || 20)

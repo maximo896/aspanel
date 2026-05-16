@@ -77,6 +77,7 @@ type PathAgent struct {
 type Task struct {
 	gorm.Model
 	URL              string `json:"url"`
+	Remark           string `json:"remark" gorm:"type:text"`
 	Status           string `json:"status" gorm:"default:'pending'"`
 	AWVSServerID     uint   `json:"awvs_server_id"`
 	SqlmapAgentID    uint   `json:"sqlmap_agent_id"`
@@ -213,6 +214,15 @@ type CloudSettings struct {
 	SQLMapInstanceType         string  `json:"sqlmap_instance_type"`
 	SQLMapMinCPU               int     `json:"sqlmap_min_cpu" gorm:"default:1"`
 	SQLMapMinMemoryGB          int     `json:"sqlmap_min_memory_gb" gorm:"default:1"`
+	PathAutoEnabled            bool    `json:"path_auto_enabled" gorm:"default:false"`
+	PathLaunchStartedAt        int64   `json:"path_launch_started_at"`
+	PathMaxPriceUSDPerHour     float64 `json:"path_max_price_usd_per_hour" gorm:"default:0.02"`
+	PathHourlyBudgetUSD        float64 `json:"path_hourly_budget_usd" gorm:"default:0"`
+	PathBudgetHours            int     `json:"path_budget_hours" gorm:"default:0"`
+	PathInstanceType           string  `json:"path_instance_type"`
+	PathMinCPU                 int     `json:"path_min_cpu" gorm:"default:1"`
+	PathMinMemoryGB            int     `json:"path_min_memory_gb" gorm:"default:1"`
+	PathMaxConcurrency         int     `json:"path_max_concurrency" gorm:"default:5"`
 }
 
 type CloudInstance struct {
@@ -236,8 +246,10 @@ type CloudInstance struct {
 	LastHeartbeatAt       int64   `json:"last_heartbeat_at"`
 	AWVSServerID          uint    `json:"awvs_server_id"`
 	SqlmapAgentID         uint    `json:"sqlmap_agent_id"`
+	PathAgentID           uint    `json:"path_agent_id"`
 	AWVSProtocolSeen      bool    `json:"awvs_protocol_seen"`
 	SQLProtocolSeen       bool    `json:"sql_protocol_seen"`
+	PathProtocolSeen      bool    `json:"path_protocol_seen"`
 	InteractToken         string  `json:"interact_token" gorm:"index"`
 	Workload              string  `json:"workload" gorm:"default:'mixed'"`
 }

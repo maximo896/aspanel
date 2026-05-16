@@ -75,6 +75,7 @@ export interface Task {
   ID: number
   CreatedAt: string
   url: string
+  remark: string
   status: string
   awvs_server_id: number
   sqlmap_agent_id: number
@@ -151,18 +152,26 @@ export interface CloudSettings {
   sqlmap_max_concurrency: number
   awvs_auto_enabled: boolean
   sqlmap_auto_enabled: boolean
+  path_auto_enabled: boolean
   awvs_max_price_usd_per_hour: number
   sqlmap_max_price_usd_per_hour: number
+  path_max_price_usd_per_hour: number
   awvs_hourly_budget_usd: number
   sqlmap_hourly_budget_usd: number
+  path_hourly_budget_usd: number
   awvs_budget_hours: number
   sqlmap_budget_hours: number
+  path_budget_hours: number
   awvs_instance_type: string
   sqlmap_instance_type: string
+  path_instance_type: string
   awvs_min_cpu: number
   awvs_min_memory_gb: number
   sqlmap_min_cpu: number
   sqlmap_min_memory_gb: number
+  path_min_cpu: number
+  path_min_memory_gb: number
+  path_max_concurrency: number
   cloud_proxy_mode: string
   cloud_proxy_agent_id: number
   image_id: string
@@ -176,10 +185,13 @@ export interface CloudSettings {
   sqlmap_agent_default_use_proxy: boolean
   awvs_launch_started_at: number
   sqlmap_launch_started_at: number
+  path_launch_started_at: number
   awvs_autoscale_status?: string
   sqlmap_autoscale_status?: string
+  path_autoscale_status?: string
   awvs_autoscale_remaining_sec?: number
   sqlmap_autoscale_remaining_sec?: number
+  path_autoscale_remaining_sec?: number
 }
 
 export interface CloudCredentialsStatus {
