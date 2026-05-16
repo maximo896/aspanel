@@ -286,20 +286,22 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
             <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>搜索任务已触发，等待 sqlmap 返回结果后刷新查看。</Text>
           )}
 
+          <Space wrap style={{ marginBottom: 8 }}>
+            <Button size="small" icon={<DatabaseOutlined />} onClick={handleGetDatabases}>
+              获取数据库列表
+            </Button>
+            <Button size="small" onClick={handleGetCurrentDb}>
+              获取当前数据库
+            </Button>
+            {currentDb && (
+              <Button size="small" onClick={() => handleGetTables(currentDb)}>
+                获取当前库表
+              </Button>
+            )}
+          </Space>
+
           {filteredDatabases.length === 0 ? (
-            <Space wrap>
-              <Button size="small" icon={<DatabaseOutlined />} onClick={handleGetDatabases}>
-                获取数据库列表
-              </Button>
-              <Button size="small" onClick={handleGetCurrentDb}>
-                获取当前数据库
-              </Button>
-              {currentDb && (
-                <Button size="small" onClick={() => handleGetTables(currentDb)}>
-                  获取当前库表
-                </Button>
-              )}
-            </Space>
+            <Text type="secondary">暂无数据库树结果</Text>
           ) : (
             <Space direction="vertical" style={{ width: '100%' }} size={4}>
               {filteredDatabases.map(db => (
