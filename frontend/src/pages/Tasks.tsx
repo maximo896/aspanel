@@ -18,6 +18,7 @@ import TaskDrawer from '../components/TaskDrawer'
 import SqlmapDataTags from '../components/SqlmapDataTags'
 
 const { Text } = Typography
+const EMPTY_TASKS: Task[] = []
 
 const filterOptions = [
   { label: '全部', value: 'all' },
@@ -56,10 +57,12 @@ export default function TasksPage() {
   const [pageSize, setPageSize] = useState(20)
   const [remarkDrafts, setRemarkDrafts] = useState<Record<number, string>>({})
 
-  const { data: tasks = [], isLoading, error: tasksError, refetch } = useQuery({
+  const tasksQuery = useQuery({
     queryKey: ['tasks'],
     queryFn: getTasks,
   })
+  const tasks = tasksQuery.data ?? EMPTY_TASKS
+  const { isLoading, error: tasksError, refetch } = tasksQuery
 
   const { data: sqlmapAgents = [] } = useQuery({
     queryKey: ['sqlmap-agents'],
@@ -192,6 +195,14 @@ export default function TasksPage() {
         if (Object.prototype.hasOwnProperty.call(prev, task.ID)) {
           next[task.ID] = prev[task.ID]
         }
+      }
+      const prevKeys = Object.keys(prev)
+      const nextKeys = Object.keys(next)
+      if (
+        prevKeys.length === nextKeys.length &&
+        prevKeys.every(key => prev[Number(key)] === next[Number(key)])
+      ) {
+        return prev
       }
       return next
     })
