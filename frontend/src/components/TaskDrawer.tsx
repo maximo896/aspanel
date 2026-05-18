@@ -27,6 +27,11 @@ const TECHNIQUE_OPTIONS = [
   { value: 'Q', label: 'Q Inline query' },
 ]
 const TECHNIQUE_ORDER = ['B', 'E', 'U', 'S', 'T', 'Q']
+const DEFAULT_SQLMAP_LEVEL = 5
+const DEFAULT_SQLMAP_RISK = 3
+const DEFAULT_SQLMAP_THREADS = 4
+const DEFAULT_SQLMAP_TIMEOUT = 20
+const DEFAULT_SQLMAP_RETRIES = 4
 
 function quoteShellArg(value: string) {
   return `"${String(value || '').replace(/(["\\$`])/g, '\\$1')}"`
@@ -36,6 +41,11 @@ function buildSqlmapManualCommand(scan: SqlmapScan | null) {
   const requestFile = String(scan?.request_file || '').trim()
   if (!requestFile) return ''
   const requestedOptions = scan?.requested_options || {}
+  const level = Number(requestedOptions.level || DEFAULT_SQLMAP_LEVEL)
+  const risk = Number(requestedOptions.risk || DEFAULT_SQLMAP_RISK)
+  const threads = Number(requestedOptions.threads || DEFAULT_SQLMAP_THREADS)
+  const timeout = Number(requestedOptions.timeout || DEFAULT_SQLMAP_TIMEOUT)
+  const retries = Number(requestedOptions.retries || DEFAULT_SQLMAP_RETRIES)
   const parts = ['sqlmap', '-r', quoteShellArg(requestFile), '--batch']
   if (scan?.force_ssl) parts.push('--force-ssl')
   if (requestedOptions.randomAgent !== false) parts.push('--random-agent')
@@ -44,11 +54,11 @@ function buildSqlmapManualCommand(scan: SqlmapScan | null) {
   if (requestedOptions.skipWaf !== false) parts.push('--skip-waf')
   const proxyValue = String(scan?.runtime_proxy || scan?.requested_proxy || requestedOptions.proxy || '').trim()
   if (proxyValue) parts.push(`--proxy=${quoteShellArg(proxyValue)}`)
-  if (requestedOptions.level) parts.push(`--level=${requestedOptions.level}`)
-  if (requestedOptions.risk) parts.push(`--risk=${requestedOptions.risk}`)
-  if (requestedOptions.threads) parts.push(`--threads=${requestedOptions.threads}`)
-  if (requestedOptions.timeout) parts.push(`--timeout=${requestedOptions.timeout}`)
-  if (requestedOptions.retries) parts.push(`--retries=${requestedOptions.retries}`)
+  parts.push(`--level=${level}`)
+  parts.push(`--risk=${risk}`)
+  parts.push(`--threads=${threads}`)
+  parts.push(`--timeout=${timeout}`)
+  parts.push(`--retries=${retries}`)
   if (requestedOptions.technique) parts.push(`--technique=${requestedOptions.technique}`)
   if (requestedOptions.tamper) parts.push(`--tamper=${requestedOptions.tamper}`)
   if (requestedOptions.smart === true) parts.push('--smart')

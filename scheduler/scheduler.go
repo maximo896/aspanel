@@ -2339,6 +2339,7 @@ func cloudAgentName(prefix, instanceID, fallback string) string {
 }
 
 func requeueAWVSServerTasks(db *gorm.DB, serverID uint, reason string) {
+	BestEffortDeleteAWVSTargetsForServer(db, serverID)
 	now := time.Now().Unix()
 	db.Model(&models.Task{}).Where("awvs_server_id = ? AND status IN ?", serverID, []string{"running", "scanning"}).Updates(map[string]interface{}{
 		"status":           "pending",
@@ -2350,7 +2351,209 @@ func requeueAWVSServerTasks(db *gorm.DB, serverID uint, reason string) {
 	})
 }
 
+func BestEffortDeleteAWVSTargetForTask(db *gorm.DB, task models.Task) {
+	if db == nil || task.AWVSServerID == 0 || strings.TrimSpace(task.TargetID) == "" {
+		return
+	}
+	var server models.AWVSServer
+	if err := db.First(&server, task.AWVSServerID).Error; err != nil {
+		return
+	}
+	client := awvs.NewClient(server.URL, server.APIKey)
+	if err := client.DeleteTarget(task.TargetID); err != nil {
+		log.Printf("[awvs][cleanup] server=%d target=%s delete failed: %v", task.AWVSServerID, task.TargetID, err)
+	}
+}
+
+func BestEffortDeleteAWVSTargetsForServer(db *gorm.DB, serverID uint) {
+	if db == nil || serverID == 0 {
+		return
+	}
+	var tasks []models.Task
+	if err := db.Select("id", "awvs_server_id", "target_id").Where("awvs_server_id = ? AND target_id <> ''", serverID).Find(&tasks).Error; err != nil {
+		return
+	}
+	seen := map[string]struct{}{}
+	for _, task := range tasks {
+		targetID := strings.TrimSpace(task.TargetID)
+		if targetID == "" {
+			continue
+		}
+		if _, exists := seen[targetID]; exists {
+			continue
+		}
+		seen[targetID] = struct{}{}
+		BestEffortDeleteAWVSTargetForTask(db, task)
+	}
+}
+
+func postAgentControlJSON(targetURL, apiToken string, payload map[string]interface{}) error {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	client := &http.Client{Timeout: 5 * time.Second, Transport: tr}
+	reqBody, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", targetURL, bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	if strings.TrimSpace(apiToken) != "" {
+		req.Header.Set("X-Api-Token", apiToken)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("agent control status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+func BestEffortCancelTaskRemoteWork(db *gorm.DB, taskID uint) {
+	if db == nil || taskID == 0 {
+		return
+	}
+	var task models.Task
+	if err := db.First(&task, taskID).Error; err == nil {
+		BestEffortDeleteAWVSTargetForTask(db, task)
+	}
+
+	type sqlBinding struct {
+		SqlmapAgentID  uint
+		SqlmapTaskID   string
+		SqlmapStatus   string
+		SqlmapAgentURL string
+	}
+	var sqlBindings []sqlBinding
+	if err := db.Model(&models.TaskFinding{}).
+		Select("sqlmap_agent_id", "sqlmap_task_id", "sqlmap_status", "sqlmap_agent_url").
+		Where("task_id = ? AND sqlmap_agent_id <> 0 AND sqlmap_task_id <> '' AND sqlmap_status IN ?", taskID, []string{"running", "queued"}).
+		Find(&sqlBindings).Error; err == nil {
+		seen := map[string]struct{}{}
+		if task.SqlmapAgentID != 0 && strings.TrimSpace(task.SqlmapTaskID) != "" && (task.SqlmapStatus == "running" || task.SqlmapStatus == "queued") {
+			sqlBindings = append(sqlBindings, sqlBinding{
+				SqlmapAgentID:  task.SqlmapAgentID,
+				SqlmapTaskID:   task.SqlmapTaskID,
+				SqlmapStatus:   task.SqlmapStatus,
+				SqlmapAgentURL: task.SqlmapAgentURL,
+			})
+		}
+		for _, binding := range sqlBindings {
+			rootTaskID := strings.TrimSpace(binding.SqlmapTaskID)
+			if rootTaskID == "" || binding.SqlmapAgentID == 0 {
+				continue
+			}
+			key := fmt.Sprintf("%d:%s", binding.SqlmapAgentID, rootTaskID)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			var agent models.SqlmapAgent
+			if err := db.First(&agent, binding.SqlmapAgentID).Error; err != nil {
+				continue
+			}
+			agentURL := strings.TrimRight(strings.TrimSpace(agent.URL), "/")
+			if agentURL == "" {
+				continue
+			}
+			err := postAgentControlJSON(agentURL+"/scan/"+rootTaskID+"/cancel", agent.APIKey, map[string]interface{}{"force_kill": true})
+			if err != nil {
+				log.Printf("[sqlmap][cancel-task] task=%d agent=%d root_task=%s cancel failed: %v", taskID, binding.SqlmapAgentID, rootTaskID, err)
+			}
+		}
+	}
+
+	type pathBinding struct {
+		PathAgentID uint
+		PathTaskID  string
+		PathStatus  string
+	}
+	var pathBindings []pathBinding
+	if err := db.Model(&models.TaskPathScan{}).
+		Select("path_agent_id", "path_task_id", "path_status").
+		Where("task_id = ? AND path_agent_id <> 0 AND path_task_id <> '' AND path_status IN ?", taskID, []string{"running", "queued"}).
+		Find(&pathBindings).Error; err == nil {
+		seen := map[string]struct{}{}
+		for _, binding := range pathBindings {
+			pathTaskID := strings.TrimSpace(binding.PathTaskID)
+			if pathTaskID == "" || binding.PathAgentID == 0 {
+				continue
+			}
+			key := fmt.Sprintf("%d:%s", binding.PathAgentID, pathTaskID)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			var agent models.PathAgent
+			if err := db.First(&agent, binding.PathAgentID).Error; err != nil {
+				continue
+			}
+			agentURL := strings.TrimRight(strings.TrimSpace(agent.URL), "/")
+			if agentURL == "" {
+				continue
+			}
+			err := postAgentControlJSON(agentURL+"/scan/"+pathTaskID+"/cancel", agent.APIKey, map[string]interface{}{})
+			if err != nil {
+				log.Printf("[path][cancel-task] task=%d agent=%d path_task=%s cancel failed: %v", taskID, binding.PathAgentID, pathTaskID, err)
+			}
+		}
+	}
+}
+
+func BestEffortCancelSqlmapAgentTasks(db *gorm.DB, agentID uint) {
+	if db == nil || agentID == 0 {
+		return
+	}
+	var agent models.SqlmapAgent
+	if err := db.First(&agent, agentID).Error; err != nil {
+		return
+	}
+	agentURL := strings.TrimRight(strings.TrimSpace(agent.URL), "/")
+	if agentURL == "" {
+		return
+	}
+
+	seen := map[string]struct{}{}
+	rootTaskIDs := make([]string, 0)
+	var taskBindings []models.Task
+	if err := db.Select("sqlmap_task_id").Where("sqlmap_agent_id = ? AND sqlmap_status IN ?", agentID, []string{"running", "queued"}).Find(&taskBindings).Error; err == nil {
+		for _, binding := range taskBindings {
+			taskID := strings.TrimSpace(binding.SqlmapTaskID)
+			if taskID == "" {
+				continue
+			}
+			if _, exists := seen[taskID]; exists {
+				continue
+			}
+			seen[taskID] = struct{}{}
+			rootTaskIDs = append(rootTaskIDs, taskID)
+		}
+	}
+	var findingBindings []models.TaskFinding
+	if err := db.Select("sqlmap_task_id").Where("sqlmap_agent_id = ? AND sqlmap_status IN ?", agentID, []string{"running", "queued"}).Find(&findingBindings).Error; err == nil {
+		for _, binding := range findingBindings {
+			taskID := strings.TrimSpace(binding.SqlmapTaskID)
+			if taskID == "" {
+				continue
+			}
+			if _, exists := seen[taskID]; exists {
+				continue
+			}
+			seen[taskID] = struct{}{}
+			rootTaskIDs = append(rootTaskIDs, taskID)
+		}
+	}
+
+	for _, rootTaskID := range rootTaskIDs {
+		err := postAgentControlJSON(agentURL+"/scan/"+rootTaskID+"/cancel", agent.APIKey, map[string]interface{}{"force_kill": true})
+		if err != nil {
+			log.Printf("[sqlmap][cancel] agent=%d task=%s cancel failed: %v", agentID, rootTaskID, err)
+		}
+	}
+}
+
 func requeueSqlmapAgentTasks(db *gorm.DB, agentID uint, reason string) {
+	BestEffortCancelSqlmapAgentTasks(db, agentID)
 	now := time.Now().Unix()
 	var activeTaskIDs []uint
 	db.Model(&models.Task{}).
@@ -2364,7 +2567,6 @@ func requeueSqlmapAgentTasks(db *gorm.DB, agentID uint, reason string) {
 		"has_data":         false,
 		"has_shell":        false,
 		"has_injection":    false,
-		"status":           "pending",
 		"last_requeued_at": now,
 		"requeue_reason":   reason,
 	})
@@ -2384,7 +2586,42 @@ func requeueSqlmapAgentTasks(db *gorm.DB, agentID uint, reason string) {
 	})
 }
 
+func BestEffortCancelPathAgentTasks(db *gorm.DB, agentID uint) {
+	if db == nil || agentID == 0 {
+		return
+	}
+	var agent models.PathAgent
+	if err := db.First(&agent, agentID).Error; err != nil {
+		return
+	}
+	agentURL := strings.TrimRight(strings.TrimSpace(agent.URL), "/")
+	if agentURL == "" {
+		return
+	}
+
+	var scans []models.TaskPathScan
+	if err := db.Select("path_task_id").Where("path_agent_id = ? AND path_status IN ?", agentID, []string{"running", "queued"}).Find(&scans).Error; err != nil {
+		return
+	}
+	seen := map[string]struct{}{}
+	for _, scan := range scans {
+		taskID := strings.TrimSpace(scan.PathTaskID)
+		if taskID == "" {
+			continue
+		}
+		if _, exists := seen[taskID]; exists {
+			continue
+		}
+		seen[taskID] = struct{}{}
+		err := postAgentControlJSON(agentURL+"/scan/"+taskID+"/cancel", agent.APIKey, map[string]interface{}{})
+		if err != nil {
+			log.Printf("[path][cancel] agent=%d task=%s cancel failed: %v", agentID, taskID, err)
+		}
+	}
+}
+
 func requeuePathAgentTasks(db *gorm.DB, agentID uint, reason string) {
+	BestEffortCancelPathAgentTasks(db, agentID)
 	lastError := ""
 	if strings.TrimSpace(reason) != "" {
 		lastError = "requeued: " + strings.TrimSpace(reason)
@@ -2580,13 +2817,7 @@ func cleanupAWVSNoVulnTasksPeriodically(db *gorm.DB) {
 
 		deletedCount := 0
 		for _, task := range tasks {
-			if task.AWVSServerID != 0 && task.TargetID != "" {
-				var server models.AWVSServer
-				if err := db.First(&server, task.AWVSServerID).Error; err == nil {
-					client := awvs.NewClient(server.URL, server.APIKey)
-					_ = client.DeleteTarget(task.TargetID)
-				}
-			}
+			BestEffortCancelTaskRemoteWork(db, task.ID)
 			db.Where("task_id = ?", task.ID).Delete(&models.TaskPathScan{})
 			db.Delete(&task)
 			deletedCount++

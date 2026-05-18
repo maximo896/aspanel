@@ -35,7 +35,7 @@ type API struct {
 }
 
 const (
-	defaultLatestSQLMapAgentVersion = "2.4.4"
+	defaultLatestSQLMapAgentVersion = "2.4.8"
 	sqlmapAgentReleaseAPI           = "https://api.github.com/repos/maximo896/as/releases/latest"
 	sqlmapAgentTagsAPI              = "https://api.github.com/repos/maximo896/as/tags?per_page=1"
 	sqlmapAgentVersionCacheTTL      = 10 * time.Minute
@@ -526,6 +526,9 @@ func (api *API) UpdateAWVSServerVersion(c *gin.Context) {
 
 func (api *API) DeleteServer(c *gin.Context) {
 	id := c.Param("id")
+	if idValue, err := strconv.ParseUint(id, 10, 64); err == nil {
+		scheduler.BestEffortDeleteAWVSTargetsForServer(api.DB, uint(idValue))
+	}
 	// Reset associated tasks to pending so they can be picked up by another node
 	api.DB.Model(&models.Task{}).Where("awvs_server_id = ? AND status IN ?", id, []string{"running", "scanning"}).Updates(map[string]interface{}{
 		"status":          "pending",
@@ -550,6 +553,7 @@ func (api *API) CleanupOfflineAWVSServers(c *gin.Context) {
 
 	ids := make([]uint, 0, len(servers))
 	for _, server := range servers {
+		scheduler.BestEffortDeleteAWVSTargetsForServer(api.DB, server.ID)
 		ids = append(ids, server.ID)
 	}
 	api.DB.Model(&models.Task{}).Where("awvs_server_id IN ? AND status IN ?", ids, []string{"running", "scanning"}).Updates(map[string]interface{}{
@@ -801,6 +805,9 @@ func (api *API) UpdateSqlmapAgent(c *gin.Context) {
 
 func (api *API) DeleteSqlmapAgent(c *gin.Context) {
 	id := c.Param("id")
+	if idValue, err := strconv.ParseUint(id, 10, 64); err == nil {
+		scheduler.BestEffortCancelSqlmapAgentTasks(api.DB, uint(idValue))
+	}
 	// Reset associated task findings
 	api.DB.Model(&models.TaskFinding{}).Where("sqlmap_agent_id = ? AND sqlmap_status IN ?", id, []string{"running", "queued"}).Updates(map[string]interface{}{
 		"sent_to_sqlmap":    false,
@@ -840,6 +847,7 @@ func (api *API) CleanupOfflineSqlmapAgents(c *gin.Context) {
 
 	ids := make([]uint, 0, len(agents))
 	for _, agent := range agents {
+		scheduler.BestEffortCancelSqlmapAgentTasks(api.DB, agent.ID)
 		ids = append(ids, agent.ID)
 	}
 	api.DB.Model(&models.TaskFinding{}).Where("sqlmap_agent_id IN ? AND sqlmap_status IN ?", ids, []string{"running", "queued"}).Updates(map[string]interface{}{
@@ -1430,13 +1438,7 @@ func (api *API) BatchDeleteTasks(c *gin.Context) {
 
 	deletedCount := 0
 	for _, task := range tasks {
-		if task.AWVSServerID != 0 && task.TargetID != "" {
-			var server models.AWVSServer
-			if err := api.DB.First(&server, task.AWVSServerID).Error; err == nil {
-				client := awvs.NewClient(server.URL, server.APIKey)
-				_ = client.DeleteTarget(task.TargetID)
-			}
-		}
+		scheduler.BestEffortCancelTaskRemoteWork(api.DB, task.ID)
 		api.DB.Where("task_id = ?", task.ID).Delete(&models.TaskFinding{})
 		api.DB.Where("task_id = ?", task.ID).Delete(&models.TaskPathScan{})
 		api.DB.Delete(&task)
@@ -1464,14 +1466,7 @@ func (api *API) CleanupTasks(c *gin.Context) {
 				continue
 			}
 		}
-		// Clean up AWVS target if possible
-		if task.AWVSServerID != 0 && task.TargetID != "" {
-			var server models.AWVSServer
-			if err := api.DB.First(&server, task.AWVSServerID).Error; err == nil {
-				client := awvs.NewClient(server.URL, server.APIKey)
-				_ = client.DeleteTarget(task.TargetID)
-			}
-		}
+		scheduler.BestEffortCancelTaskRemoteWork(api.DB, task.ID)
 
 		// Delete task and its findings from DB
 		api.DB.Where("task_id = ?", task.ID).Delete(&models.TaskFinding{})
@@ -1491,13 +1486,7 @@ func (api *API) CleanupAWVSNoVulnTasks(c *gin.Context) {
 
 	deletedCount := 0
 	for _, task := range tasks {
-		if task.AWVSServerID != 0 && task.TargetID != "" {
-			var server models.AWVSServer
-			if err := api.DB.First(&server, task.AWVSServerID).Error; err == nil {
-				client := awvs.NewClient(server.URL, server.APIKey)
-				_ = client.DeleteTarget(task.TargetID)
-			}
-		}
+		scheduler.BestEffortCancelTaskRemoteWork(api.DB, task.ID)
 		api.DB.Where("task_id = ?", task.ID).Delete(&models.TaskPathScan{})
 		api.DB.Delete(&task)
 		deletedCount++
@@ -4261,6 +4250,7 @@ func (api *API) cleanupCloudBoundRecords(inst models.CloudInstance, reason strin
 	now := time.Now().Unix()
 
 	if inst.AWVSServerID != 0 {
+		scheduler.BestEffortDeleteAWVSTargetsForServer(api.DB, inst.AWVSServerID)
 		api.DB.Model(&models.Task{}).Where("awvs_server_id = ? AND status IN ?", inst.AWVSServerID, []string{"running", "scanning"}).Updates(map[string]interface{}{
 			"status":           "pending",
 			"awvs_server_id":   0,
@@ -4272,12 +4262,12 @@ func (api *API) cleanupCloudBoundRecords(inst models.CloudInstance, reason strin
 		api.DB.Delete(&models.AWVSServer{}, inst.AWVSServerID)
 	}
 	if inst.SqlmapAgentID != 0 {
+		scheduler.BestEffortCancelSqlmapAgentTasks(api.DB, inst.SqlmapAgentID)
 		api.DB.Model(&models.Task{}).Where("sqlmap_agent_id = ? AND sqlmap_status IN ?", inst.SqlmapAgentID, []string{"running", "queued"}).Updates(map[string]interface{}{
 			"sqlmap_agent_id":  0,
 			"sqlmap_task_id":   "",
 			"sqlmap_status":    "none",
 			"sqlmap_agent_url": "",
-			"status":           "pending",
 			"last_requeued_at": now,
 			"requeue_reason":   reason,
 		})
@@ -4292,6 +4282,7 @@ func (api *API) cleanupCloudBoundRecords(inst models.CloudInstance, reason strin
 		api.DB.Delete(&models.SqlmapAgent{}, inst.SqlmapAgentID)
 	}
 	if inst.PathAgentID != 0 {
+		scheduler.BestEffortCancelPathAgentTasks(api.DB, inst.PathAgentID)
 		api.DB.Model(&models.TaskPathScan{}).Where("path_agent_id = ? AND path_status IN ?", inst.PathAgentID, []string{"running", "queued"}).Updates(map[string]interface{}{
 			"path_agent_id":      0,
 			"path_agent_url":     "",
@@ -4311,6 +4302,7 @@ func (api *API) cleanupCloudBoundRecords(inst models.CloudInstance, reason strin
 	var awvsNodes []models.AWVSServer
 	if err := api.DB.Where("provider = ? AND instance_id = ?", "tencent", inst.InstanceID).Find(&awvsNodes).Error; err == nil {
 		for _, node := range awvsNodes {
+			scheduler.BestEffortDeleteAWVSTargetsForServer(api.DB, node.ID)
 			api.DB.Model(&models.Task{}).Where("awvs_server_id = ? AND status IN ?", node.ID, []string{"running", "scanning"}).Updates(map[string]interface{}{
 				"status":           "pending",
 				"awvs_server_id":   0,
@@ -4326,12 +4318,12 @@ func (api *API) cleanupCloudBoundRecords(inst models.CloudInstance, reason strin
 	var sqlNodes []models.SqlmapAgent
 	if err := api.DB.Where("provider = ? AND instance_id = ?", "tencent", inst.InstanceID).Find(&sqlNodes).Error; err == nil {
 		for _, node := range sqlNodes {
+			scheduler.BestEffortCancelSqlmapAgentTasks(api.DB, node.ID)
 			api.DB.Model(&models.Task{}).Where("sqlmap_agent_id = ? AND sqlmap_status IN ?", node.ID, []string{"running", "queued"}).Updates(map[string]interface{}{
 				"sqlmap_agent_id":  0,
 				"sqlmap_task_id":   "",
 				"sqlmap_status":    "none",
 				"sqlmap_agent_url": "",
-				"status":           "pending",
 				"last_requeued_at": now,
 				"requeue_reason":   reason,
 			})
@@ -4349,6 +4341,7 @@ func (api *API) cleanupCloudBoundRecords(inst models.CloudInstance, reason strin
 	var pathNodes []models.PathAgent
 	if err := api.DB.Where("provider = ? AND instance_id = ?", "tencent", inst.InstanceID).Find(&pathNodes).Error; err == nil {
 		for _, node := range pathNodes {
+			scheduler.BestEffortCancelPathAgentTasks(api.DB, node.ID)
 			api.DB.Model(&models.TaskPathScan{}).Where("path_agent_id = ? AND path_status IN ?", node.ID, []string{"running", "queued"}).Updates(map[string]interface{}{
 				"path_agent_id":      0,
 				"path_agent_url":     "",

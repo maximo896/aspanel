@@ -250,7 +250,57 @@ func RetryTaskPathScanToAgent(db *gorm.DB, taskID uint, preferredPathAgentID uin
 			targetURL = strings.TrimSpace(existing.TargetURL)
 		}
 		if existing.PathStatus == "running" || existing.PathStatus == "queued" {
-			return fmt.Errorf("path scan is already %s", existing.PathStatus)
+			if existing.PathAgentID == 0 {
+				db.Model(&models.TaskPathScan{}).Where("id = ?", existing.ID).Updates(map[string]interface{}{
+					"path_task_id":   "",
+					"path_status":    "none",
+					"path_agent_url": "",
+					"last_error":     "stale path binding cleared before retry",
+				})
+			} else {
+				var agent models.PathAgent
+				agentErr := db.First(&agent, existing.PathAgentID).Error
+				if agentErr != nil || !agent.IsActive {
+					db.Model(&models.TaskPathScan{}).Where("id = ?", existing.ID).Updates(map[string]interface{}{
+						"path_agent_id":  0,
+						"path_task_id":   "",
+						"path_status":    "none",
+						"path_agent_url": "",
+						"agent_version":  "",
+						"last_error":     "stale path binding cleared before retry",
+					})
+				} else {
+					statusReq, _ := http.NewRequest("GET", strings.TrimRight(agent.URL, "/")+"/status", nil)
+					statusReq.Header.Set("X-Api-Token", agent.APIKey)
+					resp, pingErr := (&http.Client{Timeout: 5 * time.Second, Transport: pathAgentTransport()}).Do(statusReq)
+					if resp != nil {
+						resp.Body.Close()
+					}
+					if pingErr == nil && resp != nil && resp.StatusCode == http.StatusOK {
+						if strings.TrimSpace(existing.PathTaskID) != "" {
+							scanReq, _ := http.NewRequest("GET", strings.TrimRight(agent.URL, "/")+"/scan/"+existing.PathTaskID, nil)
+							scanReq.Header.Set("X-Api-Token", agent.APIKey)
+							scanResp, scanErr := (&http.Client{Timeout: 5 * time.Second, Transport: pathAgentTransport()}).Do(scanReq)
+							if scanResp != nil {
+								scanResp.Body.Close()
+							}
+							if scanErr == nil && scanResp != nil && scanResp.StatusCode == http.StatusOK {
+								return fmt.Errorf("path scan is already %s", existing.PathStatus)
+							}
+						} else {
+							return fmt.Errorf("path scan is already %s", existing.PathStatus)
+						}
+					}
+					db.Model(&models.TaskPathScan{}).Where("id = ?", existing.ID).Updates(map[string]interface{}{
+						"path_agent_id":  0,
+						"path_task_id":   "",
+						"path_status":    "none",
+						"path_agent_url": "",
+						"agent_version":  "",
+						"last_error":     "stale path binding cleared after unreachable agent check",
+					})
+				}
+			}
 		}
 	}
 	if targetURL == "" {

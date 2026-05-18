@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -75,6 +76,11 @@ func (c *Client) TestConnection() (map[string]interface{}, error) {
 }
 
 func (c *Client) doReq(method, path string, body interface{}) ([]byte, error) {
+	respBody, _, err := c.doReqDetailed(method, path, body)
+	return respBody, err
+}
+
+func (c *Client) doReqDetailed(method, path string, body interface{}) ([]byte, http.Header, error) {
 	var reqBody []byte
 	if body != nil {
 		reqBody, _ = json.Marshal(body)
@@ -82,7 +88,7 @@ func (c *Client) doReq(method, path string, body interface{}) ([]byte, error) {
 
 	req, err := http.NewRequest(method, c.BaseURL+path, bytes.NewBuffer(reqBody))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	req.Header.Set("X-Auth", c.APIKey)
@@ -92,22 +98,22 @@ func (c *Client) doReq(method, path string, body interface{}) ([]byte, error) {
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
 	respBody, readErr := ioutil.ReadAll(resp.Body)
 	if readErr != nil {
-		return nil, readErr
+		return nil, resp.Header, readErr
 	}
 	if resp.StatusCode >= 400 {
-		return nil, &APIError{
+		return nil, resp.Header, &APIError{
 			StatusCode: resp.StatusCode,
 			Body:       string(respBody),
 		}
 	}
 
-	return respBody, nil
+	return respBody, resp.Header, nil
 }
 
 func (c *Client) CreateTarget(url string) (string, error) {
@@ -146,9 +152,31 @@ func (c *Client) StartScan(targetID string) (string, error) {
 		},
 	}
 
-	_, err = c.doReq("POST", "/api/v1/scans", body)
+	res, headers, err := c.doReqDetailed("POST", "/api/v1/scans", body)
 	if err != nil {
 		return "", err
+	}
+	var data struct {
+		ScanID string `json:"scan_id"`
+	}
+	if len(res) > 0 && json.Unmarshal(res, &data) == nil && strings.TrimSpace(data.ScanID) != "" {
+		return strings.TrimSpace(data.ScanID), nil
+	}
+	location := ""
+	if headers != nil {
+		location = strings.TrimSpace(headers.Get("Location"))
+	}
+	if location != "" {
+		if parsed, parseErr := url.Parse(location); parseErr == nil {
+			pathPart := strings.TrimSpace(parsed.Path)
+			pathPart = strings.TrimRight(pathPart, "/")
+			if idx := strings.LastIndex(pathPart, "/"); idx >= 0 && idx < len(pathPart)-1 {
+				scanID := strings.TrimSpace(pathPart[idx+1:])
+				if scanID != "" {
+					return scanID, nil
+				}
+			}
+		}
 	}
 
 	// response could be 201 Created and a header Location, or returns json

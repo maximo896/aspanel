@@ -203,6 +203,9 @@ func (api *API) UpdatePathAgent(c *gin.Context) {
 
 func (api *API) DeletePathAgent(c *gin.Context) {
 	id := c.Param("id")
+	if idValue, err := strconv.ParseUint(id, 10, 64); err == nil {
+		scheduler.BestEffortCancelPathAgentTasks(api.DB, uint(idValue))
+	}
 	api.DB.Model(&models.TaskPathScan{}).Where("path_agent_id = ? AND path_status IN ?", id, []string{"running", "queued"}).Updates(map[string]interface{}{
 		"path_agent_id":  0,
 		"path_agent_url": "",
@@ -225,6 +228,7 @@ func (api *API) CleanupOfflinePathAgents(c *gin.Context) {
 	}
 	ids := make([]uint, 0, len(agents))
 	for _, agent := range agents {
+		scheduler.BestEffortCancelPathAgentTasks(api.DB, agent.ID)
 		ids = append(ids, agent.ID)
 	}
 	api.DB.Model(&models.TaskPathScan{}).Where("path_agent_id IN ? AND path_status IN ?", ids, []string{"running", "queued"}).Updates(map[string]interface{}{
