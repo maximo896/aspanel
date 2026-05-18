@@ -1070,11 +1070,12 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 				}
 
 				var agent models.SqlmapAgent
-				if err := db.First(&agent, task.SqlmapAgentID).Error; err != nil {
-					if task.SqlmapStatus == "running" {
-						task.SqlmapStatus = "failed"
-						db.Save(&task)
-					}
+				agentLookup := db.Where("id = ?", task.SqlmapAgentID).Find(&agent)
+				if agentLookup.Error != nil {
+					continue
+				}
+				if agentLookup.RowsAffected == 0 {
+					clearStaleTaskSqlmapBinding(db, &task, "stale_sqlmap_agent_binding")
 					continue
 				}
 
@@ -1164,11 +1165,12 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 			}
 
 			var agent models.SqlmapAgent
-			if err := db.First(&agent, finding.SqlmapAgentID).Error; err != nil {
-				if finding.SqlmapStatus == "running" {
-					finding.SqlmapStatus = "failed"
-					db.Save(&finding)
-				}
+			agentLookup := db.Where("id = ?", finding.SqlmapAgentID).Find(&agent)
+			if agentLookup.Error != nil {
+				continue
+			}
+			if agentLookup.RowsAffected == 0 {
+				clearStaleFindingSqlmapBinding(db, &finding, "stale_sqlmap_agent_binding")
 				continue
 			}
 
@@ -1251,6 +1253,53 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 			}
 		}
 	}
+}
+
+func clearStaleTaskSqlmapBinding(db *gorm.DB, task *models.Task, reason string) {
+	if db == nil || task == nil {
+		return
+	}
+	updates := map[string]interface{}{
+		"sqlmap_agent_id":  0,
+		"sqlmap_task_id":   "",
+		"sqlmap_agent_url": "",
+		"last_requeued_at": time.Now().Unix(),
+		"requeue_reason":   reason,
+	}
+	status := strings.ToLower(strings.TrimSpace(task.SqlmapStatus))
+	if status == "running" || status == "queued" {
+		updates["sqlmap_status"] = "failed"
+	} else {
+		updates["sqlmap_status"] = "none"
+	}
+	db.Model(&models.Task{}).Where("id = ?", task.ID).Updates(updates)
+	task.SqlmapAgentID = 0
+	task.SqlmapTaskID = ""
+	task.SqlmapAgentURL = ""
+	task.SqlmapStatus = fmt.Sprintf("%v", updates["sqlmap_status"])
+}
+
+func clearStaleFindingSqlmapBinding(db *gorm.DB, finding *models.TaskFinding, reason string) {
+	if db == nil || finding == nil {
+		return
+	}
+	updates := map[string]interface{}{
+		"sqlmap_agent_id":  0,
+		"sqlmap_task_id":   "",
+		"sqlmap_agent_url": "",
+	}
+	status := strings.ToLower(strings.TrimSpace(finding.SqlmapStatus))
+	if status == "running" || status == "queued" {
+		updates["sqlmap_status"] = "failed"
+		updates["sent_to_sqlmap"] = false
+	} else {
+		updates["sqlmap_status"] = "none"
+	}
+	db.Model(&models.TaskFinding{}).Where("id = ?", finding.ID).Updates(updates)
+	finding.SqlmapAgentID = 0
+	finding.SqlmapTaskID = ""
+	finding.SqlmapAgentURL = ""
+	finding.SqlmapStatus = fmt.Sprintf("%v", updates["sqlmap_status"])
 }
 
 func pickBalancedAWVSServer(db *gorm.DB, servers []models.AWVSServer) (models.AWVSServer, bool) {
