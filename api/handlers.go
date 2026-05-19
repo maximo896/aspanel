@@ -424,14 +424,14 @@ func (api *API) UpdateServer(c *gin.Context) {
 	if err != nil {
 		c.JSON(200, gin.H{
 			"message": "AWVS updated but connectivity check failed",
-			"server":  maskAWVSServerSecrets(server),
+			"server":  server,
 			"error":   err.Error(),
 		})
 		return
 	}
 
 	c.JSON(200, gin.H{
-		"server": maskAWVSServerSecrets(server),
+		"server": server,
 		"info":   info,
 	})
 }
@@ -445,10 +445,10 @@ func (api *API) RefreshAWVSServerStatus(c *gin.Context) {
 
 	info, err := api.refreshAWVSServerRecord(&server)
 	if err != nil {
-		c.JSON(200, gin.H{"server": maskAWVSServerSecrets(server), "error": err.Error()})
+		c.JSON(200, gin.H{"server": server, "error": err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"server": maskAWVSServerSecrets(server), "info": info})
+	c.JSON(200, gin.H{"server": server, "info": info})
 }
 
 func (api *API) TestAWVSServer(c *gin.Context) {
