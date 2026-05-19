@@ -175,11 +175,11 @@ func loadGlobalAWVSAutoRestartOnAPI500(db *gorm.DB) bool {
 	return settings.AWVSAutoRestartOnAPI500
 }
 
-func shouldAutoRestartAWVSOnAPI500(db *gorm.DB, server *models.AWVSServer, err error) bool {
+func shouldAutoRestartAWVSOffline(db *gorm.DB, server *models.AWVSServer) bool {
 	if server == nil || !server.AutoRestartOnAPI500 || !loadGlobalAWVSAutoRestartOnAPI500(db) {
 		return false
 	}
-	if awvs.StatusCode(err) != http.StatusInternalServerError {
+	if server.IsActive {
 		return false
 	}
 	if strings.TrimSpace(server.ManagerURL) == "" || strings.TrimSpace(server.ManagerToken) == "" {
@@ -189,14 +189,14 @@ func shouldAutoRestartAWVSOnAPI500(db *gorm.DB, server *models.AWVSServer, err e
 	return server.LastAutoRestartAt <= 0 || now-server.LastAutoRestartAt >= int64(awvsAutoRestartCooldown/time.Second)
 }
 
-func (api *API) triggerAWVSAutoRestartOnAPI500(server *models.AWVSServer, err error, source string) bool {
-	if !shouldAutoRestartAWVSOnAPI500(api.DB, server, err) {
+func (api *API) triggerAWVSAutoRestartOnOffline(server *models.AWVSServer, err error, source string) bool {
+	if !shouldAutoRestartAWVSOffline(api.DB, server) {
 		return false
 	}
 	now := time.Now().Unix()
 	if restartErr := api.callNodeManagerForNode(server.ManagerURL, server.ManagerToken, server.URL, "restart"); restartErr != nil {
 		server.LastCheckedAt = now
-		server.LastError = fmt.Sprintf("%v | awvs api 500 auto restart failed: %v", err, restartErr)
+		server.LastError = fmt.Sprintf("%v | awvs offline auto restart failed: %v", err, restartErr)
 		api.DB.Save(server)
 		return false
 	}
@@ -204,9 +204,9 @@ func (api *API) triggerAWVSAutoRestartOnAPI500(server *models.AWVSServer, err er
 	server.CurrentRunning = 0
 	server.LastCheckedAt = now
 	server.LastAutoRestartAt = now
-	server.LastError = fmt.Sprintf("%v | awvs api 500 detected (%s), docker restart requested", err, source)
+	server.LastError = fmt.Sprintf("%v | awvs offline detected (%s), docker restart requested", err, source)
 	api.DB.Save(server)
-	log.Printf("[awvs][auto-restart] docker restart requested id=%d name=%s source=%s", server.ID, server.Name, source)
+	log.Printf("[awvs][offline-restart] docker restart requested id=%d name=%s source=%s", server.ID, server.Name, source)
 	return true
 }
 
@@ -225,7 +225,7 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 		server.IsActive = false
 		server.CurrentRunning = 0
 		server.LastError = err.Error()
-		if api.triggerAWVSAutoRestartOnAPI500(server, err, "test_connection") {
+		if api.triggerAWVSAutoRestartOnOffline(server, err, "test_connection") {
 			return nil, fmt.Errorf("%v; docker restart requested", err)
 		}
 		api.DB.Save(server)
@@ -239,7 +239,6 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 	if countErr != nil {
 		server.CurrentRunning = 0
 		server.LastError = fmt.Sprintf("count active scans failed: %v", countErr)
-		api.triggerAWVSAutoRestartOnAPI500(server, countErr, "count_active_scans")
 		api.DB.Save(server)
 		return info, countErr
 	} else {
@@ -2190,13 +2189,13 @@ func (api *API) BatchProbeTaskOsshell(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{
-		"message":               "batch osshell probe queued",
-		"task_count":            len(req.IDs),
-		"succeeded_task_count":  succeededTasks,
-		"failed_task_count":     failedTasks,
-		"queued_finding_count":  queuedFindings,
-		"failed_finding_count":  failedFindings,
-		"failed_tasks":          failedDetails,
+		"message":              "batch osshell probe queued",
+		"task_count":           len(req.IDs),
+		"succeeded_task_count": succeededTasks,
+		"failed_task_count":    failedTasks,
+		"queued_finding_count": queuedFindings,
+		"failed_finding_count": failedFindings,
+		"failed_tasks":         failedDetails,
 	})
 }
 

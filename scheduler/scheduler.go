@@ -77,11 +77,11 @@ func loadGlobalAWVSAutoRestartOnAPI500(db *gorm.DB) bool {
 	return settings.AWVSAutoRestartOnAPI500
 }
 
-func shouldAutoRestartAWVSOnAPI500(db *gorm.DB, server *models.AWVSServer, err error) bool {
-	if server == nil || !loadGlobalAWVSAutoRestartOnAPI500(db) {
+func shouldAutoRestartAWVSOffline(db *gorm.DB, server *models.AWVSServer) bool {
+	if server == nil || !server.AutoRestartOnAPI500 || !loadGlobalAWVSAutoRestartOnAPI500(db) {
 		return false
 	}
-	if awvs.StatusCode(err) != http.StatusInternalServerError {
+	if server.IsActive {
 		return false
 	}
 	if strings.TrimSpace(server.ManagerURL) == "" || strings.TrimSpace(server.ManagerToken) == "" {
@@ -128,14 +128,14 @@ func callNodeManager(managerURL, managerToken, action string) error {
 	return nil
 }
 
-func triggerAWVSAutoRestartOnAPI500(db *gorm.DB, server *models.AWVSServer, err error, source string) bool {
-	if !shouldAutoRestartAWVSOnAPI500(db, server, err) {
+func triggerAWVSAutoRestartOnOffline(db *gorm.DB, server *models.AWVSServer, err error, source string) bool {
+	if !shouldAutoRestartAWVSOffline(db, server) {
 		return false
 	}
 	now := time.Now().Unix()
 	if restartErr := callNodeManager(server.ManagerURL, server.ManagerToken, "restart"); restartErr != nil {
 		server.LastCheckedAt = now
-		server.LastError = fmt.Sprintf("%v | awvs api 500 auto restart failed: %v", err, restartErr)
+		server.LastError = fmt.Sprintf("%v | awvs offline auto restart failed: %v", err, restartErr)
 		db.Save(server)
 		return false
 	}
@@ -143,9 +143,9 @@ func triggerAWVSAutoRestartOnAPI500(db *gorm.DB, server *models.AWVSServer, err 
 	server.CurrentRunning = 0
 	server.LastCheckedAt = now
 	server.LastAutoRestartAt = now
-	server.LastError = fmt.Sprintf("%v | awvs api 500 detected (%s), docker restart requested", err, source)
+	server.LastError = fmt.Sprintf("%v | awvs offline detected (%s), docker restart requested", err, source)
 	db.Save(server)
-	log.Printf("[awvs][auto-restart] docker restart requested id=%d name=%s source=%s", server.ID, server.Name, source)
+	log.Printf("[awvs][offline-restart] docker restart requested id=%d name=%s source=%s", server.ID, server.Name, source)
 	return true
 }
 
@@ -235,7 +235,7 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 				if wasActive {
 					log.Printf("[awvs][heartbeat] node went OFFLINE id=%d name=%s url=%s err=%v", server.ID, server.Name, server.URL, err)
 				}
-				if triggerAWVSAutoRestartOnAPI500(db, &server, err, "heartbeat_test_connection") {
+				if triggerAWVSAutoRestartOnOffline(db, &server, err, "heartbeat_test_connection") {
 					continue
 				}
 				db.Save(&server)
@@ -254,7 +254,6 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 			if countErr != nil {
 				server.CurrentRunning = 0
 				server.LastError = fmt.Sprintf("count active scans failed: %v", countErr)
-				triggerAWVSAutoRestartOnAPI500(db, &server, countErr, "heartbeat_count_active_scans")
 			} else {
 				server.CurrentRunning = activeScans
 				server.LastError = ""
@@ -384,7 +383,7 @@ func checkAWVSStatus(db *gorm.DB) {
 				srv.IsActive = false
 				srv.LastCheckedAt = time.Now().Unix()
 				srv.LastError = err.Error()
-				if triggerAWVSAutoRestartOnAPI500(db, &srv, err, "scan_status") {
+				if triggerAWVSAutoRestartOnOffline(db, &srv, err, "scan_status") {
 					continue
 				}
 				db.Save(&srv)
@@ -2676,13 +2675,13 @@ func requeuePathAgentTasks(db *gorm.DB, agentID uint, reason string) {
 		lastError = "requeued: " + strings.TrimSpace(reason)
 	}
 	db.Model(&models.TaskPathScan{}).Where("path_agent_id = ? AND path_status IN ?", agentID, []string{"running", "queued"}).Updates(map[string]interface{}{
-		"path_agent_id":       0,
-		"path_agent_url":      "",
-		"path_task_id":        "",
-		"path_status":         "none",
-		"agent_version":       "",
-		"last_error":          lastError,
-		"last_dispatched_at":  time.Now().Unix(),
+		"path_agent_id":      0,
+		"path_agent_url":     "",
+		"path_task_id":       "",
+		"path_status":        "none",
+		"agent_version":      "",
+		"last_error":         lastError,
+		"last_dispatched_at": time.Now().Unix(),
 	})
 }
 
