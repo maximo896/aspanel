@@ -49,6 +49,8 @@ export default function TasksPage() {
   const qc = useQueryClient()
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
+  const [remarkSearchInput, setRemarkSearchInput] = useState('')
+  const [remarkSearch, setRemarkSearch] = useState('')
   const [filter, setFilter] = useState('all')
   const [selected, setSelected] = useState<number[]>([])
   const [addUrlsText, setAddUrlsText] = useState('')
@@ -56,6 +58,7 @@ export default function TasksPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [remarkDrafts, setRemarkDrafts] = useState<Record<number, string>>({})
+  const [tableFilters, setTableFilters] = useState<Record<string, string[] | null>>({})
 
   const tasksQuery = useQuery({
     queryKey: ['tasks'],
@@ -143,6 +146,18 @@ export default function TasksPage() {
     onError: (e) => message.error(extractError(e)),
   })
 
+  const awvsStatusOptions = useMemo(() => (
+    Array.from(new Set(tasks.map(task => task.status || 'none')))
+      .sort((a, b) => a.localeCompare(b))
+      .map(value => ({ text: value, value }))
+  ), [tasks])
+
+  const sqlmapStatusOptions = useMemo(() => (
+    Array.from(new Set(tasks.map(task => task.sqlmap_status || 'none')))
+      .sort((a, b) => a.localeCompare(b))
+      .map(value => ({ text: value, value }))
+  ), [tasks])
+
   const filtered = useMemo(() => (
     tasks
       .filter(t => {
@@ -169,7 +184,34 @@ export default function TasksPage() {
         ].join(' ').toLowerCase()
         return haystack.includes(needle)
       })
-  ), [tasks, filter, search])
+      .filter(t => {
+        const needle = remarkSearch.trim().toLowerCase()
+        if (!needle) return true
+        return String(t.remark || '').toLowerCase().includes(needle)
+      })
+      .filter(t => {
+        const selectedStatuses = tableFilters.status ?? []
+        if (!selectedStatuses.length) return true
+        return selectedStatuses.includes(t.status || 'none')
+      })
+      .filter(t => {
+        const selectedStatuses = tableFilters.sqlmap_status ?? []
+        if (!selectedStatuses.length) return true
+        return selectedStatuses.includes(t.sqlmap_status || 'none')
+      })
+      .filter(t => {
+        const selectedResults = tableFilters.results ?? []
+        if (!selectedResults.length) return true
+        return selectedResults.some(value => {
+          if (value === 'has_data') return hasAnySqlmapDataTag(t)
+          if (value === 'has_shell') return t.has_shell
+          if (value === 'has_injection') return t.has_injection
+          if (value === 'has_finding') return t.has_finding
+          if (value === 'has_path_scan') return t.has_path_scan
+          return false
+        })
+      })
+  ), [tasks, filter, search, remarkSearch, tableFilters])
 
   useEffect(() => {
     setSelected(prev => {
@@ -281,18 +323,32 @@ export default function TasksPage() {
       title: 'AWVS',
       dataIndex: 'status',
       width: 90,
+      filters: awvsStatusOptions,
+      filteredValue: tableFilters.status || null,
+      filterSearch: true,
       render: (s: string) => <Badge status={statusColor[s] || 'default'} text={<Text style={{ fontSize: 11 }}>{s || 'none'}</Text>} />,
     },
     {
       title: 'Sqlmap',
       dataIndex: 'sqlmap_status',
       width: 90,
+      filters: sqlmapStatusOptions,
+      filteredValue: tableFilters.sqlmap_status || null,
+      filterSearch: true,
       render: (s: string) => <Text style={{ fontSize: 11 }}>{s || 'none'}</Text>,
     },
     {
       title: '结果',
       key: 'results',
       width: 160,
+      filters: [
+        { text: '数据', value: 'has_data' },
+        { text: 'Shell', value: 'has_shell' },
+        { text: '注入', value: 'has_injection' },
+        { text: '漏洞', value: 'has_finding' },
+        { text: '路径', value: 'has_path_scan' },
+      ],
+      filteredValue: tableFilters.results || null,
       render: (_: unknown, row: Task) => (
         <Space size={2} wrap>
           <SqlmapDataTags item={row} compact />
@@ -370,7 +426,7 @@ export default function TasksPage() {
             <Input
               size="small"
               prefix={<SearchOutlined />}
-              placeholder="搜索URL..."
+              placeholder="搜索任务..."
               value={searchInput}
               onChange={e => {
                 const value = e.target.value
@@ -383,7 +439,24 @@ export default function TasksPage() {
               allowClear
               style={{ width: 180 }}
             />
+            <Input
+              size="small"
+              prefix={<SearchOutlined />}
+              placeholder="搜索备注..."
+              value={remarkSearchInput}
+              onChange={e => {
+                const value = e.target.value
+                setRemarkSearchInput(value)
+                if (!value) {
+                  setRemarkSearch('')
+                }
+              }}
+              onPressEnter={() => setRemarkSearch(remarkSearchInput.trim())}
+              allowClear
+              style={{ width: 180 }}
+            />
             <Button size="small" icon={<SearchOutlined />} onClick={() => setSearch(searchInput.trim())}>搜索</Button>
+            <Button size="small" icon={<SearchOutlined />} onClick={() => setRemarkSearch(remarkSearchInput.trim())}>搜索备注</Button>
             <Select size="small" value={filter} onChange={setFilter} options={filterOptions} style={{ width: 100 }} />
             {selected.length > 0 && (
               <>
@@ -427,9 +500,14 @@ export default function TasksPage() {
           size="small"
           pagination={{ current: currentPage, pageSize, showSizeChanger: true, showQuickJumper: true }}
           scroll={{ x: 1120 }}
-          onChange={pagination => {
+          onChange={(pagination, filters) => {
             setCurrentPage(pagination.current || 1)
             setPageSize(pagination.pageSize || 20)
+            setTableFilters({
+              status: (filters.status as string[] | null) ?? null,
+              sqlmap_status: (filters.sqlmap_status as string[] | null) ?? null,
+              results: (filters.results as string[] | null) ?? null,
+            })
           }}
           onRow={record => ({
             onClick: () => setSelectedTask(record),
