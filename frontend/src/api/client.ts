@@ -59,6 +59,9 @@ export const updatePathAgent = (id: number, data: Partial<PathAgent>) => api.put
 export const deletePathAgent = (id: number) => api.delete(`/api/path/agents/${id}`).then(r => r.data)
 export const cleanupOfflinePath = () => api.post<{ message: string; deleted_count: number }>('/api/path/agents/cleanup-offline').then(r => r.data)
 export const restartPathDocker = (ids: number[]) => api.post('/api/path/agents/restart-docker', { ids }).then(r => r.data)
+export const refreshPathAgent = (id: number) => api.post<{ agent?: PathAgent; error?: string } | PathAgent>(`/api/path/agents/${id}/refresh`).then(r => r.data)
+export const updatePathAgentVersion = (id: number) => api.post(`/api/path/agents/${id}/update`).then(r => r.data)
+export const getPathManualUpdateCommand = (id: number) => api.get<{ command: string; name: string; type: string; warning?: string }>(`/api/path/agents/${id}/manual-update-command`).then(r => r.data)
 
 // Tasks
 export const getTasks = () => api.get<Task[]>('/api/tasks').then(r => r.data)

@@ -1471,9 +1471,9 @@ func (api *API) CleanupTasks(c *gin.Context) {
 
 func (api *API) CleanupAWVSNoVulnTasks(c *gin.Context) {
 	var tasks []models.Task
-	// Find tasks where AWVS scan finished but 0 vulnerabilities were found
+	// Find tasks where AWVS scan ended but 0 vulnerabilities were found
 	// If a task has findings in TaskFinding, it means vulnerabilities were found
-	api.DB.Where("status IN ? AND id NOT IN (SELECT task_id FROM task_findings)", []string{"completed", "done"}).Find(&tasks)
+	api.DB.Where("status IN ? AND id NOT IN (SELECT task_id FROM task_findings)", []string{"completed", "done", "failed"}).Find(&tasks)
 
 	deletedCount := 0
 	for _, task := range tasks {

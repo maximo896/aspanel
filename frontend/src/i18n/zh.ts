@@ -185,6 +185,7 @@ Object.assign(zh, {
   confirm_restart_awvs_docker: '确认重启该 AWVS 节点的 Docker？',
   confirm_batch_restart_awvs_docker: '确认重启已选的 {count} 个 AWVS 节点的 Docker？',
   confirm_update_sqlmap_agent: '确认更新该 Sqlmap 代理？',
+  confirm_update_path_agent: '确认更新该路径代理？',
   confirm_update_awvs_agent: '确认更新该 AWVS 节点？',
   refresh_failed: '刷新失败',
   registered_but_refresh_failed: '注册成功，但刷新失败',

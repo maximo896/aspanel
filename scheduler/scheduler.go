@@ -2859,7 +2859,7 @@ func cleanupAWVSNoVulnTasksPeriodically(db *gorm.DB) {
 	for {
 		time.Sleep(5 * time.Minute)
 		var tasks []models.Task
-		if err := db.Where("status IN ? AND id NOT IN (SELECT task_id FROM task_findings)", []string{"completed", "done"}).Find(&tasks).Error; err != nil || len(tasks) == 0 {
+		if err := db.Where("status IN ? AND id NOT IN (SELECT task_id FROM task_findings)", []string{"completed", "done", "failed"}).Find(&tasks).Error; err != nil || len(tasks) == 0 {
 			continue
 		}
 

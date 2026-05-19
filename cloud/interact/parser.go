@@ -28,7 +28,7 @@ func ParseSignals(output string) []Signal {
 			continue
 		}
 		proto := strings.TrimSpace(parts[1])
-		if !strings.HasPrefix(proto, "awvsagent://") && !strings.HasPrefix(proto, "sqlmapagent://") {
+		if !strings.HasPrefix(proto, "awvsagent://") && !strings.HasPrefix(proto, "sqlmapagent://") && !strings.HasPrefix(proto, "pathagent://") {
 			continue
 		}
 		out = append(out, Signal{

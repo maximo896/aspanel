@@ -18,10 +18,12 @@ import {
 } from 'antd'
 import {
   CloudDownloadOutlined,
+  CopyOutlined,
   DeleteOutlined,
   EditOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  SyncOutlined,
   UploadOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -32,11 +34,14 @@ import {
   deletePathAgent,
   extractError,
   getCloudSettings,
+  getPathManualUpdateCommand,
   getPathAgents,
+  refreshPathAgent,
   registerPathAgentFromLink,
   restartPathDocker,
   updateCloudSettings,
   updatePathAgent,
+  updatePathAgentVersion,
 } from '../api/client'
 import { t } from '../i18n'
 
@@ -73,6 +78,7 @@ export default function PathAgentV2Page() {
   const [form] = Form.useForm()
   const [installForm] = Form.useForm()
   const [registerForm] = Form.useForm()
+  const [refreshingId, setRefreshingId] = useState<number | null>(null)
 
   const { data: agents = [], error: agentsError, isLoading, refetch } = useQuery({
     queryKey: ['path-agents'],
@@ -140,6 +146,33 @@ export default function PathAgentV2Page() {
     onError: error => message.error(extractError(error)),
   })
 
+  const refreshMut = useMutation({
+    mutationFn: (id: number) => refreshPathAgent(id),
+    onMutate: id => {
+      setRefreshingId(id)
+    },
+    onSuccess: (data: { agent?: PathAgent; error?: string } | PathAgent) => {
+      qc.invalidateQueries({ queryKey: ['path-agents'] })
+      const payload = data && 'agent' in data ? data : null
+      if (payload?.error) {
+        message.warning(`${t('registered_but_refresh_failed')}: ${payload.error}`)
+        return
+      }
+      message.success(t('node_status_refreshed'))
+    },
+    onError: error => message.error(extractError(error)),
+    onSettled: () => setRefreshingId(null),
+  })
+
+  const updateVersionMut = useMutation({
+    mutationFn: (id: number) => updatePathAgentVersion(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['path-agents'] })
+      message.success(t('update_command_sent'))
+    },
+    onError: error => message.error(extractError(error)),
+  })
+
   const syncDefaultPathsMut = useMutation({
     mutationFn: () => updateCloudSettings({ path_default_custom_paths: defaultCustomPaths }),
     onSuccess: () => {
@@ -174,6 +207,24 @@ export default function PathAgentV2Page() {
     },
     onError: error => message.error(extractError(error)),
   })
+
+  const handleCopyUpdateCommand = async (agent: PathAgent) => {
+    try {
+      const data = await getPathManualUpdateCommand(agent.ID)
+      if (!data.command) {
+        message.warning(t('nothing_to_copy'))
+        return
+      }
+      await navigator.clipboard.writeText(data.command)
+      if (data.warning) {
+        message.warning(data.warning)
+      } else {
+        message.success(t('update_command_copied'))
+      }
+    } catch (error) {
+      message.error(extractError(error))
+    }
+  }
 
   const openEdit = (agent: PathAgent) => {
     setEditingAgent(agent)
@@ -262,7 +313,10 @@ export default function PathAgentV2Page() {
       title: t('status'),
       key: 'status',
       width: 90,
-      render: (_, agent) => <Tag color={agent.is_active ? 'success' : 'default'}>{agent.is_active ? t('online') : t('offline')}</Tag>,
+      render: (_, agent) => {
+        if (agent.updating) return <Tag color="warning">{t('updating')}</Tag>
+        return <Tag color={agent.is_active ? 'success' : 'default'}>{agent.is_active ? t('online') : t('offline')}</Tag>
+      },
     },
     {
       title: t('last_checked'),
@@ -273,10 +327,24 @@ export default function PathAgentV2Page() {
     {
       title: t('action'),
       key: 'actions',
-      width: 190,
+      width: 420,
       render: (_, agent) => (
-        <Space size={4}>
+        <Space size={4} wrap>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(agent)}>{t('edit')}</Button>
+          <Button
+            size="small"
+            icon={<SyncOutlined />}
+            onClick={() => refreshMut.mutate(agent.ID)}
+            loading={refreshingId === agent.ID && refreshMut.isPending}
+          >
+            {t('sync')}
+          </Button>
+          <Popconfirm title={t('confirm_update_path_agent')} onConfirm={() => updateVersionMut.mutate(agent.ID)}>
+            <Button size="small" disabled={!String(agent.manager_url || '').trim()}>{t('update')}</Button>
+          </Popconfirm>
+          <Button size="small" icon={<CopyOutlined />} onClick={() => handleCopyUpdateCommand(agent)}>
+            {t('copy_update_command')}
+          </Button>
           <Popconfirm title={t('confirm_restart_path_docker')} onConfirm={() => restartMut.mutate([agent.ID])}>
             <Button size="small" icon={<PlayCircleOutlined />}>{t('restart_docker')}</Button>
           </Popconfirm>
