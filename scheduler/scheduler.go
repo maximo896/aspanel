@@ -61,7 +61,7 @@ const (
 	bootstrapCallbackTimeoutSec = 480
 	bootstrapProtocolTimeoutSec = 1800
 	agentHeartbeatIntervalSec   = 60
-	agentHeartbeatTimeoutSec    = 1200
+	agentHeartbeatTimeoutSec    = 600
 	estimatedPublicTrafficUSD   = 0.02
 	awvsAutoRestartCooldownSec  = 600
 )

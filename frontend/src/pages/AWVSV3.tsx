@@ -298,6 +298,27 @@ export default function AWVSV3Page() {
       render: (url: string) => <Text style={{ fontSize: 12 }}>{url}</Text>,
     },
     {
+      title: 'API Key',
+      dataIndex: 'api_key',
+      width: 220,
+      ellipsis: true,
+      render: (value: string) => <Text copyable style={{ fontSize: 12 }}>{value || '-'}</Text>,
+    },
+    {
+      title: 'AWVS Password',
+      dataIndex: 'awvs_password',
+      width: 180,
+      ellipsis: true,
+      render: (value: string) => <Text copyable style={{ fontSize: 12 }}>{value || '-'}</Text>,
+    },
+    {
+      title: 'Manager Token',
+      dataIndex: 'manager_token',
+      width: 220,
+      ellipsis: true,
+      render: (value: string) => <Text copyable style={{ fontSize: 12 }}>{value || '-'}</Text>,
+    },
+    {
       title: `${t('running')} / ${t('limit')}`,
       key: 'running',
       width: 150,
@@ -320,10 +341,23 @@ export default function AWVSV3Page() {
       render: (_, server) => <Tag color={server.is_active ? 'success' : 'default'}>{server.is_active ? t('online') : t('offline')}</Tag>,
     },
     {
+      title: 'Last Auto Restart',
+      dataIndex: 'last_auto_restart_at',
+      width: 170,
+      render: (ts: number) => <Text style={{ fontSize: 12 }}>{formatTime(ts)}</Text>,
+    },
+    {
       title: t('last_checked'),
       dataIndex: 'last_checked_at',
       width: 170,
       render: (ts: number) => <Text style={{ fontSize: 12 }}>{formatTime(ts)}</Text>,
+    },
+    {
+      title: 'Last Error',
+      dataIndex: 'last_error',
+      width: 280,
+      ellipsis: true,
+      render: (value: string) => <Text style={{ fontSize: 12 }}>{value || '-'}</Text>,
     },
     {
       title: t('action'),

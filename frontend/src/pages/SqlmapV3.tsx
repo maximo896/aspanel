@@ -299,6 +299,20 @@ export default function SqlmapV3Page() {
       render: (url: string) => <Text style={{ fontSize: 12 }}>{url}</Text>,
     },
     {
+      title: 'API Key',
+      dataIndex: 'api_key',
+      width: 220,
+      ellipsis: true,
+      render: (value: string) => <Text copyable style={{ fontSize: 12 }}>{value || '-'}</Text>,
+    },
+    {
+      title: 'Manager Token',
+      dataIndex: 'manager_token',
+      width: 220,
+      ellipsis: true,
+      render: (value: string) => <Text copyable style={{ fontSize: 12 }}>{value || '-'}</Text>,
+    },
+    {
       title: `${t('running')} / ${t('queued')} / ${t('limit')}`,
       key: 'running',
       width: 180,

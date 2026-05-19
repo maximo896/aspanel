@@ -10,7 +10,7 @@ type AWVSServer struct {
 	URL                 string `json:"url"`
 	APIKey              string `json:"api_key"`
 	ManagerURL          string `json:"manager_url"`
-	ManagerToken        string `json:"-"`
+	ManagerToken        string `json:"manager_token"`
 	AWVSUsername        string `json:"awvs_username"`
 	AWVSPassword        string `json:"awvs_password"`
 	MaxConcurrency      int    `json:"max_concurrency"`
@@ -34,7 +34,7 @@ type SqlmapAgent struct {
 	URL             string `json:"url"`
 	APIKey          string `json:"api_key"`
 	ManagerURL      string `json:"manager_url"`
-	ManagerToken    string `json:"-"`
+	ManagerToken    string `json:"manager_token"`
 	AgentVersion    string `json:"agent_version"`
 	MaxConcurrency  int    `json:"max_concurrency"`
 	DefaultUseProxy bool   `json:"default_use_proxy" gorm:"default:false"`
@@ -59,7 +59,7 @@ type PathAgent struct {
 	URL             string `json:"url"`
 	APIKey          string `json:"api_key"`
 	ManagerURL      string `json:"manager_url"`
-	ManagerToken    string `json:"-"`
+	ManagerToken    string `json:"manager_token"`
 	AgentVersion    string `json:"agent_version"`
 	MaxConcurrency  int    `json:"max_concurrency"`
 	IsActive        bool   `json:"is_active" gorm:"default:true"`

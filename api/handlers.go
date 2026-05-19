@@ -175,13 +175,6 @@ func loadGlobalAWVSAutoRestartOnAPI500(db *gorm.DB) bool {
 	return settings.AWVSAutoRestartOnAPI500
 }
 
-func maskAWVSServerSecrets(server models.AWVSServer) models.AWVSServer {
-	server.APIKey = ""
-	server.ManagerToken = ""
-	server.AWVSPassword = ""
-	return server
-}
-
 func shouldAutoRestartAWVSOnAPI500(db *gorm.DB, server *models.AWVSServer, err error) bool {
 	if server == nil || !server.AutoRestartOnAPI500 || !loadGlobalAWVSAutoRestartOnAPI500(db) {
 		return false
@@ -264,7 +257,6 @@ func (api *API) GetServers(c *gin.Context) {
 		// Keep list responses fast by reading cached sqlite state only.
 		// Manual refresh is handled by RefreshAWVSServerStatus.
 		servers[i].PanelRunning = api.countAWVSBoundRunningTasks(servers[i].ID)
-		servers[i] = maskAWVSServerSecrets(servers[i])
 	}
 	c.JSON(200, servers)
 }
