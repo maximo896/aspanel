@@ -98,6 +98,14 @@ export interface Task {
   requeue_reason: string
 }
 
+export interface AddTasksResponse {
+  message: string
+  requested_count: number
+  accepted_count: number
+  inserted_count: number
+  max_tasks_per_batch: number
+}
+
 export interface TaskFinding {
   ID: number
   task_id: number

@@ -40,6 +40,8 @@ const (
 	sqlmapAgentTagsAPI              = "https://api.github.com/repos/maximo896/as/tags?per_page=1"
 	sqlmapAgentVersionCacheTTL      = 10 * time.Minute
 	awvsAutoRestartCooldown         = 10 * time.Minute
+	maxTasksPerRequest              = 500
+	taskInsertBatchSize             = 200
 )
 
 var sqlmapAgentLatestVersionCache = struct {
@@ -1265,7 +1267,10 @@ func aggregateSQLMapStatus(taskStatus string, findingStatuses []string) string {
 
 func (api *API) GetTasks(c *gin.Context) {
 	var tasks []models.Task
-	api.DB.Order("id desc").Find(&tasks)
+	if err := api.DB.Order("id desc").Find(&tasks).Error; err != nil {
+		c.JSON(500, gin.H{"error": fmt.Sprintf("failed to load tasks: %v", err)})
+		return
+	}
 	taskIDs := make([]uint, 0, len(tasks))
 	for _, task := range tasks {
 		taskIDs = append(taskIDs, task.ID)
@@ -1324,7 +1329,9 @@ func (api *API) GetTasks(c *gin.Context) {
 	}
 
 	var pathScans []models.TaskPathScan
-	api.DB.Select("task_id", "path_status").Order("id desc").Find(&pathScans)
+	if len(taskIDs) > 0 {
+		api.DB.Select("task_id", "path_status").Where("task_id IN ?", taskIDs).Order("id desc").Find(&pathScans)
+	}
 	pathStatusMap := make(map[uint]string, len(pathScans))
 	for _, scan := range pathScans {
 		if _, exists := pathStatusMap[scan.TaskID]; exists {
@@ -1374,16 +1381,51 @@ func (api *API) AddTasks(c *gin.Context) {
 		return
 	}
 
-	var tasks []models.Task
-	for _, u := range req.URLs {
-		tasks = append(tasks, models.Task{URL: u, Status: "pending"})
+	normalized := make([]string, 0, len(req.URLs))
+	for _, rawURL := range req.URLs {
+		urlValue := strings.TrimSpace(rawURL)
+		if urlValue == "" {
+			continue
+		}
+		normalized = append(normalized, urlValue)
 	}
 
-	if len(tasks) > 0 {
-		api.DB.Create(&tasks)
+	if len(normalized) == 0 {
+		c.JSON(400, gin.H{"error": "no valid urls provided"})
+		return
 	}
 
-	c.JSON(200, gin.H{"message": "Tasks added", "count": len(tasks)})
+	if len(normalized) > maxTasksPerRequest {
+		c.JSON(400, gin.H{
+			"error":               fmt.Sprintf("too many urls in a single request: got %d, max %d", len(normalized), maxTasksPerRequest),
+			"max_tasks_per_batch": maxTasksPerRequest,
+		})
+		return
+	}
+
+	tasks := make([]models.Task, 0, len(normalized))
+	for _, urlValue := range normalized {
+		tasks = append(tasks, models.Task{URL: urlValue, Status: "pending"})
+	}
+
+	if err := api.DB.Transaction(func(tx *gorm.DB) error {
+		return tx.CreateInBatches(tasks, taskInsertBatchSize).Error
+	}); err != nil {
+		c.JSON(500, gin.H{
+			"error":           fmt.Sprintf("failed to insert tasks: %v", err),
+			"requested_count": len(req.URLs),
+			"accepted_count":  len(tasks),
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"message":             "Tasks added",
+		"requested_count":     len(req.URLs),
+		"accepted_count":      len(tasks),
+		"inserted_count":      len(tasks),
+		"max_tasks_per_batch": maxTasksPerRequest,
+	})
 }
 
 func normalizeTaskRemark(raw string) string {

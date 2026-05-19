@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { AWVSServer, SqlmapAgent, PathAgent, Task, TaskFinding, ProxyAgent, CloudSettings, CloudCredentialsStatus, CloudInstance } from '../types'
+import type { AWVSServer, SqlmapAgent, PathAgent, Task, TaskFinding, ProxyAgent, CloudSettings, CloudCredentialsStatus, CloudInstance, AddTasksResponse } from '../types'
 
 const api = axios.create({ baseURL: '/', withCredentials: true })
 
@@ -65,7 +65,7 @@ export const getPathManualUpdateCommand = (id: number) => api.get<{ command: str
 
 // Tasks
 export const getTasks = () => api.get<Task[]>('/api/tasks').then(r => r.data)
-export const addTasks = (urls: string[]) => api.post('/api/tasks', { urls }).then(r => r.data)
+export const addTasks = (urls: string[]) => api.post<AddTasksResponse>('/api/tasks', { urls }).then(r => r.data)
 export const updateTaskRemark = (taskId: number, remark: string) => api.put<{ message: string; task: Task }>(`/api/tasks/${taskId}/remark`, { remark }).then(r => r.data)
 export const batchDeleteTasks = (ids: number[]) => api.post('/api/tasks/batch-delete', { ids }).then(r => r.data)
 export const batchRetryPush = (ids: number[]) => api.post('/api/tasks/batch-retry-push', { ids }).then(r => r.data)

@@ -19,6 +19,7 @@ import SqlmapDataTags from '../components/SqlmapDataTags'
 
 const { Text } = Typography
 const EMPTY_TASKS: Task[] = []
+const TASK_ADD_CHUNK_SIZE = 500
 
 const filterOptions = [
   { label: '全部', value: 'all' },
@@ -45,6 +46,14 @@ function hasAnySqlmapDataTag(task: Task) {
   return task.has_db_names || task.has_table_names || task.has_column_names || task.has_row_data || task.has_data
 }
 
+function chunkItems<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
+}
+
 export default function TasksPage() {
   const qc = useQueryClient()
   const [searchInput, setSearchInput] = useState('')
@@ -59,6 +68,7 @@ export default function TasksPage() {
   const [pageSize, setPageSize] = useState(20)
   const [remarkDrafts, setRemarkDrafts] = useState<Record<number, string>>({})
   const [tableFilters, setTableFilters] = useState<Record<string, string[] | null>>({})
+  const [addProgress, setAddProgress] = useState<{ totalCount: number; insertedCount: number; completedBatches: number; totalBatches: number } | null>(null)
 
   const tasksQuery = useQuery({
     queryKey: ['tasks'],
@@ -120,9 +130,53 @@ export default function TasksPage() {
   })
 
   const addMut = useMutation({
-    mutationFn: (urls: string[]) => addTasks(urls),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['tasks'] }); setAddUrlsText(''); message.success('添加成功') },
-    onError: (e) => message.error(extractError(e)),
+    mutationFn: async (urls: string[]) => {
+      const normalized = urls.map(url => url.trim()).filter(Boolean)
+      if (!normalized.length) {
+        throw new Error('No valid URLs provided')
+      }
+
+      const chunks = chunkItems(normalized, TASK_ADD_CHUNK_SIZE)
+      let insertedCount = 0
+
+      setAddProgress({
+        totalCount: normalized.length,
+        insertedCount: 0,
+        completedBatches: 0,
+        totalBatches: chunks.length,
+      })
+
+      for (let index = 0; index < chunks.length; index += 1) {
+        try {
+          const result = await addTasks(chunks[index])
+          insertedCount += result.inserted_count || 0
+          setAddProgress({
+            totalCount: normalized.length,
+            insertedCount,
+            completedBatches: index + 1,
+            totalBatches: chunks.length,
+          })
+        } catch (error) {
+          throw new Error(`Batch ${index + 1}/${chunks.length} failed after inserting ${insertedCount} tasks: ${extractError(error)}`)
+        }
+      }
+
+      return {
+        totalCount: normalized.length,
+        insertedCount,
+        batchCount: chunks.length,
+      }
+    },
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      setAddUrlsText('')
+      setAddProgress(null)
+      message.success(`Added ${result.insertedCount}/${result.totalCount} tasks in ${result.batchCount} batches`)
+    },
+    onError: (e) => {
+      setAddProgress(null)
+      message.error(extractError(e))
+    },
   })
 
   const updateRemarkMut = useMutation({
@@ -417,6 +471,14 @@ export default function TasksPage() {
           onChange={e => setAddUrlsText(e.target.value)}
           placeholder="每行一个URL"
         />
+        {addProgress && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginTop: 12 }}
+            message={`Adding ${addProgress.totalCount} tasks: ${addProgress.insertedCount} inserted, batch ${addProgress.completedBatches}/${addProgress.totalBatches}`}
+          />
+        )}
       </Card>
 
       <Card
