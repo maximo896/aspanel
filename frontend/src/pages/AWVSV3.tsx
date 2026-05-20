@@ -325,17 +325,19 @@ export default function AWVSV3Page() {
     {
       title: `${t('running')} / ${t('limit')}`,
       key: 'running',
-      width: 150,
+      width: 220,
       render: (_, server) => {
         const syncCountError = isAWVSSyncCountError(server.last_error)
         return (
           <Space>
-            <Text type="warning">{server.panel_running}</Text>
+            <Tooltip title={syncCountError ? server.last_error : `AWVS active scans: ${server.current_running}`}>
+              <Text type={syncCountError ? 'danger' : 'warning'}>{server.current_running}</Text>
+            </Tooltip>
             <Text type="secondary">/ {server.max_concurrency}</Text>
-            {(syncCountError || server.current_running !== server.panel_running) && (
-              <Tooltip title={syncCountError ? server.last_error : `AWVS: ${server.current_running}`}>
-                <Tag color={syncCountError ? 'red' : 'orange'} style={{ fontSize: 11 }}>
-                  {syncCountError ? `SyncErr:${server.current_running}` : `${t('sync')}:${server.current_running}`}
+            {(syncCountError || server.panel_running !== server.current_running) && (
+              <Tooltip title={`Panel bound tasks: ${server.panel_running}`}>
+                <Tag color={syncCountError ? 'red' : 'blue'} style={{ fontSize: 11 }}>
+                  {syncCountError ? `Panel:${server.panel_running}` : `Panel:${server.panel_running}`}
                 </Tag>
               </Tooltip>
             )}
