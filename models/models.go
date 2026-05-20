@@ -78,13 +78,13 @@ type Task struct {
 	gorm.Model
 	URL              string `json:"url"`
 	Remark           string `json:"remark" gorm:"type:text"`
-	Status           string `json:"status" gorm:"default:'pending'"`
-	AWVSServerID     uint   `json:"awvs_server_id"`
-	SqlmapAgentID    uint   `json:"sqlmap_agent_id"`
-	TargetID         string `json:"target_id"`
-	ScanSessionID    string `json:"scan_session_id"`
-	SqlmapTaskID     string `json:"sqlmap_task_id"`
-	SqlmapStatus     string `json:"sqlmap_status" gorm:"default:'none'"`
+	Status           string `json:"status" gorm:"default:'pending';index;index:idx_task_awvs_status"`
+	AWVSServerID     uint   `json:"awvs_server_id" gorm:"index:idx_task_awvs_status"`
+	SqlmapAgentID    uint   `json:"sqlmap_agent_id" gorm:"index:idx_task_sqlmap_agent_status"`
+	TargetID         string `json:"target_id" gorm:"index"`
+	ScanSessionID    string `json:"scan_session_id" gorm:"index"`
+	SqlmapTaskID     string `json:"sqlmap_task_id" gorm:"index"`
+	SqlmapStatus     string `json:"sqlmap_status" gorm:"default:'none';index;index:idx_task_sqlmap_agent_status"`
 	SqlmapAgentURL   string `json:"sqlmap_agent_url"`
 	SqlmapResultJSON string `json:"sqlmap_result_json" gorm:"type:text"`
 	SqlmapCachedAt   int64  `json:"sqlmap_cached_at"`
@@ -108,10 +108,10 @@ type TaskPathScan struct {
 	ScopeDomain      string `json:"scope_domain" gorm:"index:idx_task_path_scope,unique"`
 	ForceSSL         bool   `json:"force_ssl" gorm:"index:idx_task_path_scope,unique"`
 	TargetURL        string `json:"target_url"`
-	PathAgentID      uint   `json:"path_agent_id"`
+	PathAgentID      uint   `json:"path_agent_id" gorm:"index:idx_task_path_agent_status"`
 	PathAgentURL     string `json:"path_agent_url"`
-	PathTaskID       string `json:"path_task_id"`
-	PathStatus       string `json:"path_status" gorm:"default:'none'"`
+	PathTaskID       string `json:"path_task_id" gorm:"index"`
+	PathStatus       string `json:"path_status" gorm:"default:'none';index;index:idx_task_path_agent_status"`
 	AgentVersion     string `json:"agent_version"`
 	PathsCount       int    `json:"paths_count"`
 	FormsCount       int    `json:"forms_count"`
@@ -131,9 +131,9 @@ type TaskFinding struct {
 	AWVSStatus       string `json:"awvs_status"`
 	IsSQLi           bool   `json:"is_sqli"`
 	SentToSqlmap     bool   `json:"sent_to_sqlmap"`
-	SqlmapTaskID     string `json:"sqlmap_task_id"`
-	SqlmapAgentID    uint   `json:"sqlmap_agent_id"`
-	SqlmapStatus     string `json:"sqlmap_status"`
+	SqlmapTaskID     string `json:"sqlmap_task_id" gorm:"index"`
+	SqlmapAgentID    uint   `json:"sqlmap_agent_id" gorm:"index:idx_finding_sqlmap_agent_status"`
+	SqlmapStatus     string `json:"sqlmap_status" gorm:"index;index:idx_finding_sqlmap_agent_status"`
 	SqlmapAgentURL   string `json:"sqlmap_agent_url"`
 	SqlmapTechniques string `json:"sqlmap_techniques"`
 	SqlmapResultJSON string `json:"sqlmap_result_json" gorm:"type:text"`

@@ -8,7 +8,7 @@ import {
   SearchOutlined, ReloadOutlined, DeleteOutlined, SendOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import type { Task } from '../types'
+import type { Task, TaskListResponse } from '../types'
 import {
   getTasks, batchDeleteTasks, batchRetryPush, cleanupTasks, cleanupNoVulnTasks,
   addTasks, batchRetryPathScan, batchProbeTaskOsshell, extractError,
@@ -19,7 +19,12 @@ import SqlmapDataTags from '../components/SqlmapDataTags'
 
 const { Text } = Typography
 const EMPTY_TASKS: Task[] = []
+const EMPTY_TASKS_RESPONSE: TaskListResponse = { items: EMPTY_TASKS, total: 0, page: 1, page_size: 20 }
 const TASK_ADD_CHUNK_SIZE = 500
+const awvsStatusOptions = ['pending', 'scanning', 'running', 'completed', 'done', 'failed', 'aborted', 'error', 'none']
+  .map(value => ({ text: value, value }))
+const sqlmapStatusOptions = ['none', 'queued', 'running', 'completed', 'failed', 'aborted', 'error', 'exit']
+  .map(value => ({ text: value, value }))
 
 const filterOptions = [
   { label: '全部', value: 'all' },
@@ -40,10 +45,6 @@ const statusColor: Record<string, 'default' | 'processing' | 'success' | 'error'
   aborted: 'warning',
   exit: 'warning',
   error: 'error',
-}
-
-function hasAnySqlmapDataTag(task: Task) {
-  return task.has_db_names || task.has_table_names || task.has_column_names || task.has_row_data || task.has_data
 }
 
 function chunkItems<T>(items: T[], size: number): T[][] {
@@ -71,10 +72,22 @@ export default function TasksPage() {
   const [addProgress, setAddProgress] = useState<{ totalCount: number; insertedCount: number; completedBatches: number; totalBatches: number } | null>(null)
 
   const tasksQuery = useQuery({
-    queryKey: ['tasks'],
-    queryFn: getTasks,
+    queryKey: ['tasks', currentPage, pageSize, search, remarkSearch, filter, tableFilters],
+    queryFn: () => getTasks({
+      page: currentPage,
+      page_size: pageSize,
+      search,
+      remark: remarkSearch,
+      quick_filter: filter,
+      status: tableFilters.status ?? [],
+      sqlmap_status: tableFilters.sqlmap_status ?? [],
+      results: tableFilters.results ?? [],
+    }),
+    placeholderData: previousData => previousData,
   })
-  const tasks = tasksQuery.data ?? EMPTY_TASKS
+  const tasksResponse = tasksQuery.data ?? EMPTY_TASKS_RESPONSE
+  const tasks = tasksResponse.items ?? EMPTY_TASKS
+  const total = tasksResponse.total ?? 0
   const { isLoading, error: tasksError, refetch } = tasksQuery
 
   const { data: sqlmapAgents = [] } = useQuery({
@@ -182,9 +195,14 @@ export default function TasksPage() {
   const updateRemarkMut = useMutation({
     mutationFn: ({ taskId, remark }: { taskId: number; remark: string }) => updateTaskRemark(taskId, remark),
     onSuccess: (data, variables) => {
-      qc.setQueryData<Task[]>(['tasks'], prev => (
-        Array.isArray(prev)
-          ? prev.map(task => (task.ID === variables.taskId ? { ...task, remark: data.task.remark } : task))
+      qc.setQueriesData<TaskListResponse>({ queryKey: ['tasks'] }, prev => (
+        prev
+          ? {
+              ...prev,
+              items: Array.isArray(prev.items)
+                ? prev.items.map(task => (task.ID === variables.taskId ? { ...task, remark: data.task.remark } : task))
+                : prev.items,
+            }
           : prev
       ))
       setRemarkDrafts(prev => {
@@ -200,89 +218,16 @@ export default function TasksPage() {
     onError: (e) => message.error(extractError(e)),
   })
 
-  const awvsStatusOptions = useMemo(() => (
-    Array.from(new Set(tasks.map(task => task.status || 'none')))
-      .sort((a, b) => a.localeCompare(b))
-      .map(value => ({ text: value, value }))
-  ), [tasks])
-
-  const sqlmapStatusOptions = useMemo(() => (
-    Array.from(new Set(tasks.map(task => task.sqlmap_status || 'none')))
-      .sort((a, b) => a.localeCompare(b))
-      .map(value => ({ text: value, value }))
-  ), [tasks])
-
-  const filtered = useMemo(() => (
-    tasks
-      .filter(t => {
-        if (filter === 'has_data') return hasAnySqlmapDataTag(t)
-        if (filter === 'has_shell') return t.has_shell
-        if (filter === 'has_injection') return t.has_injection
-        if (filter === 'has_finding') return t.has_finding
-        return true
-      })
-      .filter(t => {
-        const needle = search.trim().toLowerCase()
-        if (!needle) return true
-        const haystack = [
-          t.url,
-          String(t.ID),
-          t.status,
-          t.sqlmap_status,
-          t.path_scan_status,
-          t.sqlmap_task_id,
-          t.target_id,
-          t.scan_session_id,
-          t.requeue_reason,
-          t.remark,
-        ].join(' ').toLowerCase()
-        return haystack.includes(needle)
-      })
-      .filter(t => {
-        const needle = remarkSearch.trim().toLowerCase()
-        if (!needle) return true
-        return String(t.remark || '').toLowerCase().includes(needle)
-      })
-      .filter(t => {
-        const selectedStatuses = tableFilters.status ?? []
-        if (!selectedStatuses.length) return true
-        return selectedStatuses.includes(t.status || 'none')
-      })
-      .filter(t => {
-        const selectedStatuses = tableFilters.sqlmap_status ?? []
-        if (!selectedStatuses.length) return true
-        return selectedStatuses.includes(t.sqlmap_status || 'none')
-      })
-      .filter(t => {
-        const selectedResults = tableFilters.results ?? []
-        if (!selectedResults.length) return true
-        return selectedResults.some(value => {
-          if (value === 'has_data') return hasAnySqlmapDataTag(t)
-          if (value === 'has_shell') return t.has_shell
-          if (value === 'has_injection') return t.has_injection
-          if (value === 'has_finding') return t.has_finding
-          if (value === 'has_path_scan') return t.has_path_scan
-          return false
-        })
-      })
-  ), [tasks, filter, search, remarkSearch, tableFilters])
-
   useEffect(() => {
-    setSelected(prev => {
-      const next = prev.filter(id => filtered.some(task => task.ID === id))
-      if (next.length === prev.length && next.every((id, index) => id === prev[index])) {
-        return prev
-      }
-      return next
-    })
-  }, [filtered])
-
-  useEffect(() => {
-    const maxPage = Math.max(1, Math.ceil(filtered.length / pageSize))
+    const maxPage = Math.max(1, Math.ceil(total / pageSize))
     if (currentPage > maxPage) {
       setCurrentPage(maxPage)
     }
-  }, [filtered.length, pageSize, currentPage])
+  }, [total, pageSize, currentPage])
+
+  useEffect(() => {
+    setSelected([])
+  }, [search, remarkSearch, filter, tableFilters.status, tableFilters.sqlmap_status, tableFilters.results])
 
   useEffect(() => {
     setRemarkDrafts(prev => {
@@ -314,10 +259,7 @@ export default function TasksPage() {
     updateRemarkMut.mutate({ taskId: task.ID, remark: nextRemark })
   }
 
-  const currentPageTaskIds = useMemo(() => {
-    const start = (currentPage - 1) * pageSize
-    return filtered.slice(start, start + pageSize).map(task => task.ID)
-  }, [filtered, currentPage, pageSize])
+  const currentPageTaskIds = useMemo(() => tasks.map(task => task.ID), [tasks])
 
   const allCurrentPageSelected = currentPageTaskIds.length > 0 && currentPageTaskIds.every(id => selected.includes(id))
   const someCurrentPageSelected = currentPageTaskIds.some(id => selected.includes(id)) && !allCurrentPageSelected
@@ -394,15 +336,21 @@ export default function TasksPage() {
     {
       title: '结果',
       key: 'results',
-      width: 160,
+      width: 220,
       filters: [
-        { text: '数据', value: 'has_data' },
-        { text: 'Shell', value: 'has_shell' },
-        { text: '注入', value: 'has_injection' },
-        { text: '漏洞', value: 'has_finding' },
-        { text: '路径', value: 'has_path_scan' },
+        { text: '有数据', value: 'has_data' },
+        { text: '无数据', value: 'no_data' },
+        { text: '有 Shell', value: 'has_shell' },
+        { text: '无 Shell', value: 'no_shell' },
+        { text: '有注入', value: 'has_injection' },
+        { text: '无注入', value: 'no_injection' },
+        { text: '有漏洞', value: 'has_finding' },
+        { text: '无漏洞', value: 'no_finding' },
+        { text: '有路径', value: 'has_path_scan' },
+        { text: '无路径', value: 'no_path_scan' },
       ],
       filteredValue: tableFilters.results || null,
+      filterSearch: true,
       render: (_: unknown, row: Task) => (
         <Space size={2} wrap>
           <SqlmapDataTags item={row} compact />
@@ -482,7 +430,7 @@ export default function TasksPage() {
       </Card>
 
       <Card
-        title={<Space><span>任务列表</span><Text type="secondary" style={{ fontSize: 12 }}>共 {filtered.length} 条</Text></Space>}
+        title={<Space><span>任务列表</span><Text type="secondary" style={{ fontSize: 12 }}>共 {total} 条</Text></Space>}
         extra={
           <Space wrap size={4}>
             <Input
@@ -494,10 +442,14 @@ export default function TasksPage() {
                 const value = e.target.value
                 setSearchInput(value)
                 if (!value) {
+                  setCurrentPage(1)
                   setSearch('')
                 }
               }}
-              onPressEnter={() => setSearch(searchInput.trim())}
+              onPressEnter={() => {
+                setCurrentPage(1)
+                setSearch(searchInput.trim())
+              }}
               allowClear
               style={{ width: 180 }}
             />
@@ -510,16 +462,30 @@ export default function TasksPage() {
                 const value = e.target.value
                 setRemarkSearchInput(value)
                 if (!value) {
+                  setCurrentPage(1)
                   setRemarkSearch('')
                 }
               }}
-              onPressEnter={() => setRemarkSearch(remarkSearchInput.trim())}
+              onPressEnter={() => {
+                setCurrentPage(1)
+                setRemarkSearch(remarkSearchInput.trim())
+              }}
               allowClear
               style={{ width: 180 }}
             />
-            <Button size="small" icon={<SearchOutlined />} onClick={() => setSearch(searchInput.trim())}>搜索</Button>
-            <Button size="small" icon={<SearchOutlined />} onClick={() => setRemarkSearch(remarkSearchInput.trim())}>搜索备注</Button>
-            <Select size="small" value={filter} onChange={setFilter} options={filterOptions} style={{ width: 100 }} />
+            <Button size="small" icon={<SearchOutlined />} onClick={() => {
+              setCurrentPage(1)
+              setSearch(searchInput.trim())
+            }}>搜索</Button>
+            <Button size="small" icon={<SearchOutlined />} onClick={() => {
+              setCurrentPage(1)
+              setRemarkSearch(remarkSearchInput.trim())
+            }}>搜索备注</Button>
+            <Select size="small" value={filter} onChange={value => {
+              setCurrentPage(1)
+              setFilter(value)
+            }} options={filterOptions} style={{ width: 100 }} />
+            <Text type="secondary" style={{ fontSize: 12 }}>结果筛选可组合，例如有注入 + 无数据</Text>
             {selected.length > 0 && (
               <>
                 <Popconfirm title={`删除 ${selected.length} 个?`} onConfirm={() => deleteMut.mutate(selected)}>
@@ -555,12 +521,12 @@ export default function TasksPage() {
           />
         )}
         <Table
-          dataSource={filtered}
+          dataSource={tasks}
           columns={columns}
           rowKey="ID"
           loading={isLoading}
           size="small"
-          pagination={{ current: currentPage, pageSize, showSizeChanger: true, showQuickJumper: true }}
+          pagination={{ current: currentPage, pageSize, total, showSizeChanger: true, showQuickJumper: true }}
           scroll={{ x: 1120 }}
           onChange={(pagination, filters) => {
             setCurrentPage(pagination.current || 1)

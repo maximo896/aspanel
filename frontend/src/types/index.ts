@@ -106,6 +106,24 @@ export interface AddTasksResponse {
   max_tasks_per_batch: number
 }
 
+export interface TaskListParams {
+  page?: number
+  page_size?: number
+  search?: string
+  remark?: string
+  quick_filter?: string
+  status?: string[]
+  sqlmap_status?: string[]
+  results?: string[]
+}
+
+export interface TaskListResponse {
+  items: Task[]
+  total: number
+  page: number
+  page_size: number
+}
+
 export interface TaskFinding {
   ID: number
   task_id: number

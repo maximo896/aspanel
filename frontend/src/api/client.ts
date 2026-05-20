@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { AWVSServer, SqlmapAgent, PathAgent, Task, TaskFinding, ProxyAgent, CloudSettings, CloudCredentialsStatus, CloudInstance, AddTasksResponse } from '../types'
+import type { AWVSServer, SqlmapAgent, PathAgent, Task, TaskFinding, ProxyAgent, CloudSettings, CloudCredentialsStatus, CloudInstance, AddTasksResponse, TaskListParams, TaskListResponse } from '../types'
 
 const api = axios.create({ baseURL: '/', withCredentials: true })
 
@@ -64,7 +64,18 @@ export const updatePathAgentVersion = (id: number) => api.post(`/api/path/agents
 export const getPathManualUpdateCommand = (id: number) => api.get<{ command: string; name: string; type: string; warning?: string }>(`/api/path/agents/${id}/manual-update-command`).then(r => r.data)
 
 // Tasks
-export const getTasks = () => api.get<Task[]>('/api/tasks').then(r => r.data)
+export const getTasks = (params: TaskListParams = {}) => api.get<TaskListResponse>('/api/tasks', {
+  params: {
+    page: params.page || 1,
+    page_size: params.page_size || 20,
+    search: params.search || '',
+    remark: params.remark || '',
+    quick_filter: params.quick_filter || '',
+    status: (params.status || []).join(','),
+    sqlmap_status: (params.sqlmap_status || []).join(','),
+    results: (params.results || []).join(','),
+  },
+}).then(r => r.data)
 export const addTasks = (urls: string[]) => api.post<AddTasksResponse>('/api/tasks', { urls }).then(r => r.data)
 export const updateTaskRemark = (taskId: number, remark: string) => api.put<{ message: string; task: Task }>(`/api/tasks/${taskId}/remark`, { remark }).then(r => r.data)
 export const batchDeleteTasks = (ids: number[]) => api.post('/api/tasks/batch-delete', { ids }).then(r => r.data)

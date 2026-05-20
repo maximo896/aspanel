@@ -42,6 +42,8 @@ const (
 	awvsAutoRestartCooldown         = 10 * time.Minute
 	maxTasksPerRequest              = 500
 	taskInsertBatchSize             = 200
+	defaultTaskListPageSize         = 20
+	maxTaskListPageSize             = 100
 )
 
 var sqlmapAgentLatestVersionCache = struct {
@@ -1264,9 +1266,119 @@ func aggregateSQLMapStatus(taskStatus string, findingStatuses []string) string {
 	}
 }
 
+func parsePositiveQueryInt(raw string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func splitCSVQueryParam(raw string) []string {
+	parts := strings.Split(strings.TrimSpace(raw), ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		result = append(result, value)
+	}
+	return result
+}
+
+func taskResultFilterClause(value string) (string, bool) {
+	switch strings.TrimSpace(value) {
+	case "has_data":
+		return "(tasks.has_data = 1 OR tasks.id IN (SELECT task_id FROM task_findings WHERE has_data = 1))", true
+	case "no_data":
+		return "(tasks.has_data = 0 AND tasks.id NOT IN (SELECT task_id FROM task_findings WHERE has_data = 1))", true
+	case "has_shell":
+		return "(tasks.has_shell = 1 OR tasks.id IN (SELECT task_id FROM task_findings WHERE has_shell = 1))", true
+	case "no_shell":
+		return "(tasks.has_shell = 0 AND tasks.id NOT IN (SELECT task_id FROM task_findings WHERE has_shell = 1))", true
+	case "has_injection":
+		return "(tasks.has_injection = 1 OR tasks.id IN (SELECT task_id FROM task_findings WHERE has_injection = 1))", true
+	case "no_injection":
+		return "(tasks.has_injection = 0 AND tasks.id NOT IN (SELECT task_id FROM task_findings WHERE has_injection = 1))", true
+	case "has_finding":
+		return "tasks.id IN (SELECT task_id FROM task_findings)", true
+	case "no_finding":
+		return "tasks.id NOT IN (SELECT task_id FROM task_findings)", true
+	case "has_path_scan":
+		return "tasks.id IN (SELECT task_id FROM task_path_scans)", true
+	case "no_path_scan":
+		return "tasks.id NOT IN (SELECT task_id FROM task_path_scans)", true
+	default:
+		return "", false
+	}
+}
+
+func applyTaskResultFilter(query *gorm.DB, value string) *gorm.DB {
+	clause, ok := taskResultFilterClause(value)
+	if !ok {
+		return query
+	}
+	return query.Where(clause)
+}
+
+func applyTaskResultsAllFilter(query *gorm.DB, values []string) *gorm.DB {
+	for _, value := range values {
+		clause, ok := taskResultFilterClause(value)
+		if !ok {
+			continue
+		}
+		query = query.Where(clause)
+	}
+	return query
+}
+
 func (api *API) GetTasks(c *gin.Context) {
+	page := parsePositiveQueryInt(c.DefaultQuery("page", "1"), 1)
+	pageSize := parsePositiveQueryInt(c.DefaultQuery("page_size", strconv.Itoa(defaultTaskListPageSize)), defaultTaskListPageSize)
+	if pageSize > maxTaskListPageSize {
+		pageSize = maxTaskListPageSize
+	}
+	search := strings.TrimSpace(c.DefaultQuery("search", ""))
+	remark := strings.TrimSpace(c.DefaultQuery("remark", ""))
+	quickFilter := strings.TrimSpace(c.DefaultQuery("quick_filter", ""))
+	statuses := splitCSVQueryParam(c.DefaultQuery("status", ""))
+	sqlmapStatuses := splitCSVQueryParam(c.DefaultQuery("sqlmap_status", ""))
+	resultFilters := splitCSVQueryParam(c.DefaultQuery("results", ""))
+
+	query := api.DB.Model(&models.Task{})
+	if search != "" {
+		needle := "%" + search + "%"
+		query = query.Where(
+			"(tasks.url LIKE ? OR CAST(tasks.id AS TEXT) LIKE ? OR tasks.status LIKE ? OR tasks.sqlmap_status LIKE ? OR tasks.sqlmap_task_id LIKE ? OR tasks.target_id LIKE ? OR tasks.scan_session_id LIKE ? OR tasks.requeue_reason LIKE ? OR tasks.remark LIKE ?)",
+			needle, needle, needle, needle, needle, needle, needle, needle, needle,
+		)
+	}
+	if remark != "" {
+		query = query.Where("tasks.remark LIKE ?", "%"+remark+"%")
+	}
+	if len(statuses) > 0 {
+		query = query.Where("tasks.status IN ?", statuses)
+	}
+	if len(sqlmapStatuses) > 0 {
+		query = query.Where("tasks.sqlmap_status IN ?", sqlmapStatuses)
+	}
+	if quickFilter != "" && quickFilter != "all" {
+		query = applyTaskResultFilter(query, quickFilter)
+	}
+	if len(resultFilters) > 0 {
+		query = applyTaskResultsAllFilter(query, resultFilters)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(500, gin.H{"error": fmt.Sprintf("failed to count tasks: %v", err)})
+		return
+	}
+
 	var tasks []models.Task
-	if err := api.DB.Order("id desc").Find(&tasks).Error; err != nil {
+	offset := (page - 1) * pageSize
+	if err := query.Order("tasks.id desc").Offset(offset).Limit(pageSize).Find(&tasks).Error; err != nil {
 		c.JSON(500, gin.H{"error": fmt.Sprintf("failed to load tasks: %v", err)})
 		return
 	}
@@ -1274,9 +1386,19 @@ func (api *API) GetTasks(c *gin.Context) {
 	for _, task := range tasks {
 		taskIDs = append(taskIDs, task.ID)
 	}
+	if len(taskIDs) == 0 {
+		c.JSON(200, gin.H{
+			"items":     []models.Task{},
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+		})
+		return
+	}
 
 	var injectedTaskIDs []uint
 	api.DB.Model(&models.TaskFinding{}).
+		Where("task_id IN ?", taskIDs).
 		Where("has_injection = ?", true).
 		Distinct("task_id").
 		Pluck("task_id", &injectedTaskIDs)
@@ -1287,6 +1409,7 @@ func (api *API) GetTasks(c *gin.Context) {
 
 	var dataTaskIDs []uint
 	api.DB.Model(&models.TaskFinding{}).
+		Where("task_id IN ?", taskIDs).
 		Where("has_data = ?", true).
 		Distinct("task_id").
 		Pluck("task_id", &dataTaskIDs)
@@ -1297,6 +1420,7 @@ func (api *API) GetTasks(c *gin.Context) {
 
 	var shellTaskIDs []uint
 	api.DB.Model(&models.TaskFinding{}).
+		Where("task_id IN ?", taskIDs).
 		Where("has_shell = ?", true).
 		Distinct("task_id").
 		Pluck("task_id", &shellTaskIDs)
@@ -1307,6 +1431,7 @@ func (api *API) GetTasks(c *gin.Context) {
 
 	var findingTaskIDs []uint
 	api.DB.Model(&models.TaskFinding{}).
+		Where("task_id IN ?", taskIDs).
 		Distinct("task_id").
 		Pluck("task_id", &findingTaskIDs)
 	findingMap := make(map[uint]struct{}, len(findingTaskIDs))
@@ -1338,13 +1463,26 @@ func (api *API) GetTasks(c *gin.Context) {
 		}
 		pathStatusMap[scan.TaskID] = strings.TrimSpace(scan.PathStatus)
 	}
+	domainFlagsCache := make(map[string]sqlmapDataFlags, len(tasks))
+	loadCachedDomainFlags := func(rawURL string) sqlmapDataFlags {
+		rawURL = strings.TrimSpace(rawURL)
+		if rawURL == "" {
+			return sqlmapDataFlags{}
+		}
+		if flags, ok := domainFlagsCache[rawURL]; ok {
+			return flags
+		}
+		flags := loadDomainSnapshotSQLMapDataFlags(api.DB, rawURL)
+		domainFlagsCache[rawURL] = flags
+		return flags
+	}
 	for i := range tasks {
 		_, hasFinding := findingMap[tasks[i].ID]
 		tasks[i].HasFinding = hasFinding
 		_, tasks[i].HasInjection = injectionMap[tasks[i].ID]
 		flags := rawSnapshotSQLMapDataFlags(tasks[i].SqlmapResultJSON)
 		mergeSQLMapDataFlags(&flags, taskFlagsMap[tasks[i].ID])
-		mergeSQLMapDataFlags(&flags, loadDomainSnapshotSQLMapDataFlags(api.DB, tasks[i].URL))
+		mergeSQLMapDataFlags(&flags, loadCachedDomainFlags(tasks[i].URL))
 		tasks[i].HasDBNames = flags.HasDBNames
 		tasks[i].HasTableNames = flags.HasTableNames
 		tasks[i].HasColumnNames = flags.HasColumnNames
@@ -1368,7 +1506,12 @@ func (api *API) GetTasks(c *gin.Context) {
 		}
 	}
 
-	c.JSON(200, tasks)
+	c.JSON(200, gin.H{
+		"items":     tasks,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	})
 }
 
 func (api *API) AddTasks(c *gin.Context) {
