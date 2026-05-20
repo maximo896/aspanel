@@ -208,6 +208,7 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
           {(scan.session?.dbms || scan.dbms) && <Tag color="blue">DBMS: {scan.session?.dbms || scan.dbms}</Tag>}
           {scan.current_user && <Tag color="purple">用户: {scan.current_user}</Tag>}
           {currentDb && <Tag color="cyan">当前库: {currentDb}</Tag>}
+          {scan.content?.is_dba === true && <Tag color="magenta">DBA</Tag>}
           {scan.hostname && <Tag>主机: {scan.hostname}</Tag>}
           {scan.session?.session_file && (
             <Tooltip title={scan.session.session_file}>

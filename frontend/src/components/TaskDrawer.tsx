@@ -293,6 +293,7 @@ function FindingRow({ finding, sqlmapAgents, awvsStatus }: { finding: TaskFindin
           </Button>
           {finding.has_injection && <Tag color="orange">注入</Tag>}
           <SqlmapDataTags item={finding} />
+          {finding.has_dba && <Tag color="magenta">DBA</Tag>}
           {finding.has_shell && <Tag color="red">Shell</Tag>}
           {compactTechniqueText && <Tag color="geekblue">Tech {compactTechniqueText}</Tag>}
           <Tag color={['done', 'completed'].includes(liveSqlmapStatus) ? 'success' : ['running', 'queued'].includes(liveSqlmapStatus) ? 'processing' : 'default'}>
@@ -331,6 +332,7 @@ function FindingRow({ finding, sqlmapAgents, awvsStatus }: { finding: TaskFindin
                 { key: 'task', label: '任务ID', children: scan?.current_sqlmap_task_id || finding.sqlmap_task_id || '-' },
                 { key: 'status', label: '状态', children: displaySqlmapStatus || '-' },
                 { key: 'phase', label: '阶段', children: scan?.phase || '-' },
+                { key: 'isdba', label: 'Is DBA', children: scan?.content?.is_dba === true ? 'Yes' : scan?.content?.is_dba === false ? 'No' : (finding.has_dba ? 'Yes' : '-') },
                 { key: 'currentdb', label: '当前数据库', children: scan?.content?.current_db || scan?.current_db || '-' },
                 { key: 'request', label: '请求文件', children: scan?.request_file || '-' },
                 { key: 'proxycfg', label: '代理配置', children: scan?.runtime_proxy_file || '-' },

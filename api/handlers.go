@@ -812,6 +812,7 @@ func (api *API) DeleteSqlmapAgent(c *gin.Context) {
 		"sqlmap_techniques": "",
 		"has_data":          false,
 		"has_shell":         false,
+		"has_dba":           false,
 		"has_injection":     false,
 	})
 	// Reset tasks
@@ -822,6 +823,7 @@ func (api *API) DeleteSqlmapAgent(c *gin.Context) {
 		"sqlmap_agent_url": "",
 		"has_data":         false,
 		"has_shell":        false,
+		"has_dba":          false,
 		"has_injection":    false,
 	})
 	api.DB.Delete(&models.SqlmapAgent{}, id)
@@ -853,6 +855,7 @@ func (api *API) CleanupOfflineSqlmapAgents(c *gin.Context) {
 		"sqlmap_techniques": "",
 		"has_data":          false,
 		"has_shell":         false,
+		"has_dba":           false,
 		"has_injection":     false,
 	})
 	api.DB.Model(&models.Task{}).Where("sqlmap_agent_id IN ? AND sqlmap_status IN ?", ids, []string{"running", "queued"}).Updates(map[string]interface{}{
@@ -862,6 +865,7 @@ func (api *API) CleanupOfflineSqlmapAgents(c *gin.Context) {
 		"sqlmap_agent_url": "",
 		"has_data":         false,
 		"has_shell":        false,
+		"has_dba":          false,
 		"has_injection":    false,
 	})
 	api.DB.Where("id IN ?", ids).Delete(&models.SqlmapAgent{})
@@ -1176,6 +1180,36 @@ func rawSnapshotSQLMapDataFlags(raw string) sqlmapDataFlags {
 	return sqlmapDataFlagsFromSnapshot(snapshot)
 }
 
+func rawSnapshotHasDBA(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return false
+	}
+	content, _ := snapshot["content"].(map[string]interface{})
+	if content == nil {
+		content = snapshot
+	}
+	switch value := content["is_dba"].(type) {
+	case bool:
+		return value
+	case string:
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "1", "true", "yes", "y":
+			return true
+		default:
+			return false
+		}
+	case float64:
+		return value != 0
+	default:
+		return false
+	}
+}
+
 func loadDomainSnapshotSQLMapDataFlags(db *gorm.DB, rawURL string) sqlmapDataFlags {
 	rawURL = strings.TrimSpace(rawURL)
 	if db == nil || rawURL == "" {
@@ -1297,6 +1331,10 @@ func taskResultFilterClause(value string) (string, bool) {
 		return "(tasks.has_shell = 1 OR tasks.id IN (SELECT task_id FROM task_findings WHERE has_shell = 1))", true
 	case "no_shell":
 		return "(tasks.has_shell = 0 AND tasks.id NOT IN (SELECT task_id FROM task_findings WHERE has_shell = 1))", true
+	case "has_dba":
+		return "(tasks.has_dba = 1 OR tasks.id IN (SELECT task_id FROM task_findings WHERE has_dba = 1))", true
+	case "no_dba":
+		return "(tasks.has_dba = 0 AND tasks.id NOT IN (SELECT task_id FROM task_findings WHERE has_dba = 1))", true
 	case "has_injection":
 		return "(tasks.has_injection = 1 OR tasks.id IN (SELECT task_id FROM task_findings WHERE has_injection = 1))", true
 	case "no_injection":
@@ -1429,6 +1467,17 @@ func (api *API) GetTasks(c *gin.Context) {
 		shellMap[taskID] = struct{}{}
 	}
 
+	var dbaTaskIDs []uint
+	api.DB.Model(&models.TaskFinding{}).
+		Where("task_id IN ?", taskIDs).
+		Where("has_dba = ?", true).
+		Distinct("task_id").
+		Pluck("task_id", &dbaTaskIDs)
+	dbaMap := make(map[uint]struct{}, len(dbaTaskIDs))
+	for _, taskID := range dbaTaskIDs {
+		dbaMap[taskID] = struct{}{}
+	}
+
 	var findingTaskIDs []uint
 	api.DB.Model(&models.TaskFinding{}).
 		Where("task_id IN ?", taskIDs).
@@ -1480,6 +1529,13 @@ func (api *API) GetTasks(c *gin.Context) {
 		}
 		tasks[i].SqlmapStatus = aggregateSQLMapStatus(tasks[i].SqlmapStatus, taskSQLMapStatusMap[tasks[i].ID])
 		_, tasks[i].HasShell = shellMap[tasks[i].ID]
+		if !tasks[i].HasDBA && rawSnapshotHasDBA(tasks[i].SqlmapResultJSON) {
+			tasks[i].HasDBA = true
+			api.DB.Model(&models.Task{}).Where("id = ? AND has_dba = ?", tasks[i].ID, false).Update("has_dba", true)
+		}
+		if _, ok := dbaMap[tasks[i].ID]; ok {
+			tasks[i].HasDBA = true
+		}
 		if status, ok := pathStatusMap[tasks[i].ID]; ok {
 			tasks[i].HasPathScan = true
 			if status == "" {
@@ -1777,6 +1833,10 @@ func (api *API) GetTaskFindings(c *gin.Context) {
 		task.HasData = true
 		api.DB.Model(&models.Task{}).Where("id = ?", task.ID).Update("has_data", true)
 	}
+	if !task.HasDBA && rawSnapshotHasDBA(task.SqlmapResultJSON) {
+		task.HasDBA = true
+		api.DB.Model(&models.Task{}).Where("id = ? AND has_dba = ?", task.ID, false).Update("has_dba", true)
+	}
 	for i := range findings {
 		findings[i].AWVSStatus = task.Status
 		flags := rawSnapshotSQLMapDataFlags(findings[i].SqlmapResultJSON)
@@ -1789,6 +1849,11 @@ func (api *API) GetTaskFindings(c *gin.Context) {
 			api.DB.Model(&models.TaskFinding{}).Where("id = ?", findings[i].ID).Update("has_data", true)
 			task.HasData = true
 		}
+		if !findings[i].HasDBA && rawSnapshotHasDBA(findings[i].SqlmapResultJSON) {
+			findings[i].HasDBA = true
+			api.DB.Model(&models.TaskFinding{}).Where("id = ? AND has_dba = ?", findings[i].ID, false).Update("has_dba", true)
+			task.HasDBA = true
+		}
 		mergeSQLMapDataFlags(&taskFlags, flags)
 	}
 	task.HasDBNames = taskFlags.HasDBNames
@@ -1797,6 +1862,9 @@ func (api *API) GetTaskFindings(c *gin.Context) {
 	task.HasRowData = taskFlags.HasRowData
 	if task.HasData {
 		api.DB.Model(&models.Task{}).Where("id = ? AND has_data = ?", task.ID, false).Update("has_data", true)
+	}
+	if task.HasDBA {
+		api.DB.Model(&models.Task{}).Where("id = ? AND has_dba = ?", task.ID, false).Update("has_dba", true)
 	}
 	c.JSON(200, gin.H{"task": task, "findings": findings})
 }
@@ -2187,6 +2255,7 @@ func (api *API) UpdateFindingSqlmapRequest(c *gin.Context) {
 				"sqlmap_techniques":  "",
 				"has_data":           false,
 				"has_shell":          false,
+				"has_dba":            false,
 				"has_injection":      false,
 			})
 		}
@@ -4432,6 +4501,7 @@ func (api *API) cleanupCloudBoundRecords(inst models.CloudInstance, reason strin
 			"sqlmap_task_id":   "",
 			"sqlmap_status":    "none",
 			"sqlmap_agent_url": "",
+			"has_dba":          false,
 			"has_injection":    false,
 		})
 		api.DB.Delete(&models.SqlmapAgent{}, inst.SqlmapAgentID)
@@ -4488,6 +4558,7 @@ func (api *API) cleanupCloudBoundRecords(inst models.CloudInstance, reason strin
 				"sqlmap_task_id":   "",
 				"sqlmap_status":    "none",
 				"sqlmap_agent_url": "",
+				"has_dba":          false,
 				"has_injection":    false,
 			})
 			api.DB.Delete(&node)

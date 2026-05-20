@@ -29,6 +29,7 @@ const sqlmapStatusOptions = ['none', 'queued', 'running', 'completed', 'failed',
 const filterOptions = [
   { label: '全部', value: 'all' },
   { label: '有数据', value: 'has_data' },
+  { label: 'DBA', value: 'has_dba' },
   { label: '有Shell', value: 'has_shell' },
   { label: '有注入', value: 'has_injection' },
   { label: '有发现', value: 'has_finding' },
@@ -340,6 +341,8 @@ export default function TasksPage() {
       filters: [
         { text: '有数据', value: 'has_data' },
         { text: '无数据', value: 'no_data' },
+        { text: 'Has DBA', value: 'has_dba' },
+        { text: 'No DBA', value: 'no_dba' },
         { text: '有 Shell', value: 'has_shell' },
         { text: '无 Shell', value: 'no_shell' },
         { text: '有注入', value: 'has_injection' },
@@ -354,6 +357,7 @@ export default function TasksPage() {
       render: (_: unknown, row: Task) => (
         <Space size={2} wrap>
           <SqlmapDataTags item={row} compact />
+          {row.has_dba && <Tag color="magenta" style={{ fontSize: 10, margin: 1 }}>DBA</Tag>}
           {row.has_shell && <Tag color="red" style={{ fontSize: 10, margin: 1 }}>Shell</Tag>}
           {row.has_injection && <Tag color="orange" style={{ fontSize: 10, margin: 1 }}>注入</Tag>}
           {row.has_finding && <Tag color="green" style={{ fontSize: 10, margin: 1 }}>漏洞</Tag>}

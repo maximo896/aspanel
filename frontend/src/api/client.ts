@@ -149,6 +149,7 @@ export interface SqlmapScan {
   runtime_proxy?: string
   runtime_proxy_file?: string
   content?: {
+    is_dba?: boolean
     current_db?: string
     dbs?: string[]
     tables?: Record<string, string[]>

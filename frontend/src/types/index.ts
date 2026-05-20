@@ -90,6 +90,7 @@ export interface Task {
   has_column_names: boolean
   has_row_data: boolean
   has_shell: boolean
+  has_dba: boolean
   has_finding: boolean
   has_injection: boolean
   has_path_scan: boolean
@@ -146,6 +147,7 @@ export interface TaskFinding {
   has_column_names: boolean
   has_row_data: boolean
   has_shell: boolean
+  has_dba: boolean
   has_injection: boolean
   use_proxy: boolean
   sqlmap_options: string

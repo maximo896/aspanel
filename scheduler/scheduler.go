@@ -929,6 +929,7 @@ func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, 
 		if sent {
 			finding.HasData = false
 			finding.HasShell = false
+			finding.HasDBA = false
 			finding.HasInjection = false
 			clearFindingSQLMapSnapshot(&finding)
 		}
@@ -1144,6 +1145,10 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 					task.HasInjection = hasInjection
 					changed = true
 				}
+				if hasDBA, ok := parseNullableBool(detail.Content["is_dba"]); ok && task.HasDBA != hasDBA {
+					task.HasDBA = hasDBA
+					changed = true
+				}
 
 				// Strict mode: "Has Shell" means confirmed os-shell capability only.
 				hasShell := detail.ShellProbe.OK || strings.EqualFold(detail.ShellProbe.Status, "available")
@@ -1236,6 +1241,10 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 			hasInjection := hasIdentifiedInjection(detail.Content["techniques"])
 			if finding.HasInjection != hasInjection {
 				finding.HasInjection = hasInjection
+				changed = true
+			}
+			if hasDBA, ok := parseNullableBool(detail.Content["is_dba"]); ok && finding.HasDBA != hasDBA {
+				finding.HasDBA = hasDBA
 				changed = true
 			}
 			techniques := summarizeTechniques(detail.Content["techniques"])
@@ -2694,6 +2703,7 @@ func requeueSqlmapAgentTasks(db *gorm.DB, agentID uint, reason string) {
 		"sqlmap_agent_url": "",
 		"has_data":         false,
 		"has_shell":        false,
+		"has_dba":          false,
 		"has_injection":    false,
 		"last_requeued_at": now,
 		"requeue_reason":   reason,
@@ -2709,6 +2719,7 @@ func requeueSqlmapAgentTasks(db *gorm.DB, agentID uint, reason string) {
 		"sqlmap_agent_url":  "",
 		"has_data":          false,
 		"has_shell":         false,
+		"has_dba":           false,
 		"has_injection":     false,
 		"sqlmap_techniques": "",
 	})
@@ -2777,6 +2788,49 @@ func hasIdentifiedInjection(raw interface{}) bool {
 	default:
 		return false
 	}
+}
+
+func parseNullableBool(raw interface{}) (bool, bool) {
+	if raw == nil {
+		return false, false
+	}
+	switch value := raw.(type) {
+	case bool:
+		return value, true
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		switch normalized {
+		case "1", "true", "yes", "y":
+			return true, true
+		case "0", "false", "no", "n":
+			return false, true
+		default:
+			return false, false
+		}
+	case float64:
+		return value != 0, true
+	case int:
+		return value != 0, true
+	case int64:
+		return value != 0, true
+	case uint:
+		return value != 0, true
+	case uint64:
+		return value != 0, true
+	case []interface{}:
+		for _, item := range value {
+			if parsed, ok := parseNullableBool(item); ok {
+				return parsed, true
+			}
+		}
+	case map[string]interface{}:
+		for _, item := range value {
+			if parsed, ok := parseNullableBool(item); ok {
+				return parsed, true
+			}
+		}
+	}
+	return false, false
 }
 
 func summarizeTechniques(raw interface{}) string {

@@ -94,6 +94,7 @@ type Task struct {
 	HasColumnNames   bool   `json:"has_column_names" gorm:"-"`
 	HasRowData       bool   `json:"has_row_data" gorm:"-"`
 	HasShell         bool   `json:"has_shell"`
+	HasDBA           bool   `json:"has_dba"`
 	HasFinding       bool   `json:"has_finding"`
 	HasInjection     bool   `json:"has_injection"`
 	HasPathScan      bool   `json:"has_path_scan" gorm:"-"`
@@ -144,6 +145,7 @@ type TaskFinding struct {
 	HasColumnNames   bool   `json:"has_column_names" gorm:"-"`
 	HasRowData       bool   `json:"has_row_data" gorm:"-"`
 	HasShell         bool   `json:"has_shell"`
+	HasDBA           bool   `json:"has_dba"`
 	HasInjection     bool   `json:"has_injection"`
 	UseProxy         bool   `json:"use_proxy" gorm:"default:false"`
 	SqlmapOptions    string `json:"sqlmap_options" gorm:"type:text"`
