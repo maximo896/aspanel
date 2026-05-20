@@ -71,6 +71,10 @@ function tr(key: string, vars?: Record<string, string | number>) {
   return text
 }
 
+function isAWVSSyncCountError(message: string) {
+  return String(message || '').toLowerCase().includes('count active scans failed')
+}
+
 export default function AWVSV3Page() {
   const qc = useQueryClient()
   const [showInactive, setShowInactive] = useState(true)
@@ -322,17 +326,22 @@ export default function AWVSV3Page() {
       title: `${t('running')} / ${t('limit')}`,
       key: 'running',
       width: 150,
-      render: (_, server) => (
-        <Space>
-          <Text type="warning">{server.panel_running}</Text>
-          <Text type="secondary">/ {server.max_concurrency}</Text>
-          {server.current_running !== server.panel_running && (
-            <Tooltip title={`AWVS: ${server.current_running}`}>
-              <Tag color="orange" style={{ fontSize: 11 }}>{`${t('sync')}:${server.current_running}`}</Tag>
-            </Tooltip>
-          )}
-        </Space>
-      ),
+      render: (_, server) => {
+        const syncCountError = isAWVSSyncCountError(server.last_error)
+        return (
+          <Space>
+            <Text type="warning">{server.panel_running}</Text>
+            <Text type="secondary">/ {server.max_concurrency}</Text>
+            {(syncCountError || server.current_running !== server.panel_running) && (
+              <Tooltip title={syncCountError ? server.last_error : `AWVS: ${server.current_running}`}>
+                <Tag color={syncCountError ? 'red' : 'orange'} style={{ fontSize: 11 }}>
+                  {syncCountError ? `SyncErr:${server.current_running}` : `${t('sync')}:${server.current_running}`}
+                </Tag>
+              </Tooltip>
+            )}
+          </Space>
+        )
+      },
     },
     {
       title: t('status'),

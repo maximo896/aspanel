@@ -252,8 +252,7 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 			server.IsActive = true
 			activeScans, countErr := client.CountActiveScans()
 			if countErr != nil {
-				server.CurrentRunning = 0
-				server.LastError = fmt.Sprintf("count active scans failed: %v", countErr)
+				server.LastError = fmt.Sprintf("count active scans failed; keeping last synced value %d: %v", server.CurrentRunning, countErr)
 			} else {
 				server.CurrentRunning = activeScans
 				server.LastError = ""
@@ -335,17 +334,21 @@ func dispatchAWVSTasks(db *gorm.DB) {
 			targetID, err := client.CreateTarget(task.URL)
 			if err != nil {
 				log.Printf("Failed to create target for %s: %v", task.URL, err)
+				recordAWVSDispatchFailure(db, task.ID, "awvs_create_target_failed", err)
 				continue
 			}
 			scanID, err := client.StartScan(targetID)
 			if err != nil {
 				log.Printf("Failed to start scan for %s: %v", task.URL, err)
+				_ = client.DeleteTarget(targetID)
+				recordAWVSDispatchFailure(db, task.ID, "awvs_start_scan_failed", err)
 				continue
 			}
 			task.TargetID = targetID
 			task.ScanSessionID = scanID
 			task.AWVSServerID = selected.ID
 			task.Status = "scanning"
+			task.RequeueReason = ""
 			db.Save(&task)
 		}
 	}
@@ -1329,6 +1332,23 @@ func pickBalancedAWVSServer(db *gorm.DB, servers []models.AWVSServer) (models.AW
 		}
 	}
 	return best[rand.Intn(len(best))], true
+}
+
+func recordAWVSDispatchFailure(db *gorm.DB, taskID uint, reason string, err error) {
+	if db == nil || taskID == 0 {
+		return
+	}
+	message := strings.TrimSpace(reason)
+	if err != nil {
+		message = fmt.Sprintf("%s: %s", reason, strings.TrimSpace(err.Error()))
+	}
+	if len(message) > 240 {
+		message = message[:240]
+	}
+	db.Model(&models.Task{}).Where("id = ? AND status = ?", taskID, "pending").Updates(map[string]interface{}{
+		"last_requeued_at": time.Now().Unix(),
+		"requeue_reason":   message,
+	})
 }
 
 func syncScanningTaskVulnerabilities(db *gorm.DB) {

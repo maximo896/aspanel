@@ -239,8 +239,7 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 	server.LastError = ""
 	activeScans, countErr := getAWVSActiveScanCount(server.URL, server.APIKey)
 	if countErr != nil {
-		server.CurrentRunning = 0
-		server.LastError = fmt.Sprintf("count active scans failed: %v", countErr)
+		server.LastError = fmt.Sprintf("count active scans failed; keeping last synced value %d: %v", server.CurrentRunning, countErr)
 		api.DB.Save(server)
 		return info, countErr
 	} else {
