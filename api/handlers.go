@@ -1463,26 +1463,12 @@ func (api *API) GetTasks(c *gin.Context) {
 		}
 		pathStatusMap[scan.TaskID] = strings.TrimSpace(scan.PathStatus)
 	}
-	domainFlagsCache := make(map[string]sqlmapDataFlags, len(tasks))
-	loadCachedDomainFlags := func(rawURL string) sqlmapDataFlags {
-		rawURL = strings.TrimSpace(rawURL)
-		if rawURL == "" {
-			return sqlmapDataFlags{}
-		}
-		if flags, ok := domainFlagsCache[rawURL]; ok {
-			return flags
-		}
-		flags := loadDomainSnapshotSQLMapDataFlags(api.DB, rawURL)
-		domainFlagsCache[rawURL] = flags
-		return flags
-	}
 	for i := range tasks {
 		_, hasFinding := findingMap[tasks[i].ID]
 		tasks[i].HasFinding = hasFinding
 		_, tasks[i].HasInjection = injectionMap[tasks[i].ID]
 		flags := rawSnapshotSQLMapDataFlags(tasks[i].SqlmapResultJSON)
 		mergeSQLMapDataFlags(&flags, taskFlagsMap[tasks[i].ID])
-		mergeSQLMapDataFlags(&flags, loadCachedDomainFlags(tasks[i].URL))
 		tasks[i].HasDBNames = flags.HasDBNames
 		tasks[i].HasTableNames = flags.HasTableNames
 		tasks[i].HasColumnNames = flags.HasColumnNames
@@ -1783,7 +1769,6 @@ func (api *API) GetTaskFindings(c *gin.Context) {
 	var findings []models.TaskFinding
 	api.DB.Where("task_id = ?", task.ID).Order("id desc").Find(&findings)
 	taskFlags := rawSnapshotSQLMapDataFlags(task.SqlmapResultJSON)
-	mergeSQLMapDataFlags(&taskFlags, loadDomainSnapshotSQLMapDataFlags(api.DB, task.URL))
 	task.HasDBNames = taskFlags.HasDBNames
 	task.HasTableNames = taskFlags.HasTableNames
 	task.HasColumnNames = taskFlags.HasColumnNames
@@ -1795,11 +1780,6 @@ func (api *API) GetTaskFindings(c *gin.Context) {
 	for i := range findings {
 		findings[i].AWVSStatus = task.Status
 		flags := rawSnapshotSQLMapDataFlags(findings[i].SqlmapResultJSON)
-		fallbackURL := findings[i].AffectsURL
-		if strings.TrimSpace(fallbackURL) == "" {
-			fallbackURL = task.URL
-		}
-		mergeSQLMapDataFlags(&flags, loadDomainSnapshotSQLMapDataFlags(api.DB, fallbackURL))
 		findings[i].HasDBNames = flags.HasDBNames
 		findings[i].HasTableNames = flags.HasTableNames
 		findings[i].HasColumnNames = flags.HasColumnNames
