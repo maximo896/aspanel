@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -64,6 +63,10 @@ const (
 	agentHeartbeatTimeoutSec    = 600
 	estimatedPublicTrafficUSD   = 0.02
 	awvsAutoRestartCooldownSec  = 600
+	awvsDispatchBatchSize       = 50
+	awvsStatusBatchSize         = 200
+	sqlmapSyncBatchSize         = 200
+	scanningVulnBatchSize       = 100
 )
 
 func loadGlobalAWVSAutoRestartOnAPI500(db *gorm.DB) bool {
@@ -316,7 +319,7 @@ func dispatchAWVSTasks(db *gorm.DB) {
 		time.Sleep(5 * time.Second)
 
 		var pendingTasks []models.Task
-		if err := db.Where("status = ?", "pending").Find(&pendingTasks).Error; err != nil || len(pendingTasks) == 0 {
+		if err := db.Where("status = ?", "pending").Order("id asc").Limit(awvsDispatchBatchSize).Find(&pendingTasks).Error; err != nil || len(pendingTasks) == 0 {
 			continue
 		}
 
@@ -359,24 +362,28 @@ func checkAWVSStatus(db *gorm.DB) {
 		time.Sleep(10 * time.Second)
 
 		var scanningTasks []models.Task
-		if err := db.Where("status = ?", "scanning").Find(&scanningTasks).Error; err != nil || len(scanningTasks) == 0 {
+		if err := db.Where("status = ?", "scanning").Order("id asc").Limit(awvsStatusBatchSize).Find(&scanningTasks).Error; err != nil || len(scanningTasks) == 0 {
 			continue
 		}
 
+		serverIDs := make([]uint, 0, len(scanningTasks))
 		for _, task := range scanningTasks {
-			var srv models.AWVSServer
-			if err := db.First(&srv, task.AWVSServerID).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					task.Status = "pending"
-					task.AWVSServerID = 0
-					task.TargetID = ""
-					task.ScanSessionID = ""
-					task.LastRequeuedAt = time.Now().Unix()
-					task.RequeueReason = "awvs_server_not_found"
-					db.Save(&task)
-					continue
-				}
-				log.Printf("[awvs][status] load server failed task_id=%d awvs_server_id=%d err=%v", task.ID, task.AWVSServerID, err)
+			if task.AWVSServerID != 0 {
+				serverIDs = append(serverIDs, task.AWVSServerID)
+			}
+		}
+		serverMap := loadAWVSServerMap(db, serverIDs)
+
+		for _, task := range scanningTasks {
+			srv, ok := serverMap[task.AWVSServerID]
+			if !ok {
+				task.Status = "pending"
+				task.AWVSServerID = 0
+				task.TargetID = ""
+				task.ScanSessionID = ""
+				task.LastRequeuedAt = time.Now().Unix()
+				task.RequeueReason = "awvs_server_not_found"
+				db.Save(&task)
 				continue
 			}
 
@@ -1064,19 +1071,17 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 		time.Sleep(10 * time.Second)
 
 		var tasks []models.Task
-		if err := db.Where("sqlmap_task_id <> ''").Find(&tasks).Error; err != nil || len(tasks) == 0 {
+		if err := db.Where("sqlmap_task_id <> '' AND sqlmap_agent_id <> 0 AND sqlmap_status IN ?", []string{"running", "queued"}).
+			Order("id asc").Limit(sqlmapSyncBatchSize).Find(&tasks).Error; err != nil || len(tasks) == 0 {
 		} else {
+			agentIDs := make([]uint, 0, len(tasks))
 			for _, task := range tasks {
-				if task.SqlmapAgentID == 0 {
-					continue
-				}
-
-				var agent models.SqlmapAgent
-				agentLookup := db.Where("id = ?", task.SqlmapAgentID).Find(&agent)
-				if agentLookup.Error != nil {
-					continue
-				}
-				if agentLookup.RowsAffected == 0 {
+				agentIDs = append(agentIDs, task.SqlmapAgentID)
+			}
+			agentMap := loadSqlmapAgentMap(db, agentIDs)
+			for _, task := range tasks {
+				agent, ok := agentMap[task.SqlmapAgentID]
+				if !ok {
 					clearStaleTaskSqlmapBinding(db, &task, "stale_sqlmap_agent_binding")
 					continue
 				}
@@ -1157,21 +1162,20 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 		}
 
 		var findings []models.TaskFinding
-		if err := db.Where("sqlmap_task_id <> ''").Find(&findings).Error; err != nil || len(findings) == 0 {
+		if err := db.Where("sqlmap_task_id <> '' AND sqlmap_agent_id <> 0 AND sqlmap_status IN ?", []string{"running", "queued"}).
+			Order("id asc").Limit(sqlmapSyncBatchSize).Find(&findings).Error; err != nil || len(findings) == 0 {
 			continue
 		}
 
+		agentIDs := make([]uint, 0, len(findings))
 		for _, finding := range findings {
-			if finding.SqlmapAgentID == 0 {
-				continue
-			}
+			agentIDs = append(agentIDs, finding.SqlmapAgentID)
+		}
+		agentMap := loadSqlmapAgentMap(db, agentIDs)
 
-			var agent models.SqlmapAgent
-			agentLookup := db.Where("id = ?", finding.SqlmapAgentID).Find(&agent)
-			if agentLookup.Error != nil {
-				continue
-			}
-			if agentLookup.RowsAffected == 0 {
+		for _, finding := range findings {
+			agent, ok := agentMap[finding.SqlmapAgentID]
+			if !ok {
 				clearStaleFindingSqlmapBinding(db, &finding, "stale_sqlmap_agent_binding")
 				continue
 			}
@@ -1351,19 +1355,75 @@ func recordAWVSDispatchFailure(db *gorm.DB, taskID uint, reason string, err erro
 	})
 }
 
+func uniqueUintIDs(ids []uint) []uint {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[uint]struct{}, len(ids))
+	result := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	return result
+}
+
+func loadAWVSServerMap(db *gorm.DB, ids []uint) map[uint]models.AWVSServer {
+	result := map[uint]models.AWVSServer{}
+	uniqueIDs := uniqueUintIDs(ids)
+	if len(uniqueIDs) == 0 {
+		return result
+	}
+	var servers []models.AWVSServer
+	if err := db.Where("id IN ?", uniqueIDs).Find(&servers).Error; err != nil {
+		return result
+	}
+	for _, server := range servers {
+		result[server.ID] = server
+	}
+	return result
+}
+
+func loadSqlmapAgentMap(db *gorm.DB, ids []uint) map[uint]models.SqlmapAgent {
+	result := map[uint]models.SqlmapAgent{}
+	uniqueIDs := uniqueUintIDs(ids)
+	if len(uniqueIDs) == 0 {
+		return result
+	}
+	var agents []models.SqlmapAgent
+	if err := db.Where("id IN ?", uniqueIDs).Find(&agents).Error; err != nil {
+		return result
+	}
+	for _, agent := range agents {
+		result[agent.ID] = agent
+	}
+	return result
+}
+
 func syncScanningTaskVulnerabilities(db *gorm.DB) {
 	for {
 		time.Sleep(60 * time.Second)
 		var tasks []models.Task
-		if err := db.Where("status = ?", "scanning").Find(&tasks).Error; err != nil || len(tasks) == 0 {
+		if err := db.Where("status = ?", "scanning").Order("id asc").Limit(scanningVulnBatchSize).Find(&tasks).Error; err != nil || len(tasks) == 0 {
 			continue
 		}
+		serverIDs := make([]uint, 0, len(tasks))
+		for _, task := range tasks {
+			serverIDs = append(serverIDs, task.AWVSServerID)
+		}
+		serverMap := loadAWVSServerMap(db, serverIDs)
 		for _, task := range tasks {
 			if task.AWVSServerID == 0 || task.TargetID == "" {
 				continue
 			}
-			var srv models.AWVSServer
-			if err := db.First(&srv, task.AWVSServerID).Error; err != nil || !srv.IsActive {
+			srv, ok := serverMap[task.AWVSServerID]
+			if !ok || !srv.IsActive {
 				continue
 			}
 			client := awvs.NewClient(srv.URL, srv.APIKey)

@@ -38,6 +38,8 @@ type pathScanStatusResponse struct {
 	CompletedAt int64                  `json:"completed_at"`
 }
 
+const pathStatusSyncBatchSize = 200
+
 func normalizeKatanaSeedMode(mode string) string {
 	normalized := strings.TrimSpace(strings.ToLower(mode))
 	switch normalized {
@@ -150,9 +152,15 @@ func syncTaskPathScanStatus(db *gorm.DB) {
 	for {
 		time.Sleep(15 * time.Second)
 		var scans []models.TaskPathScan
-		if err := db.Where("path_task_id <> '' AND path_agent_id <> 0").Find(&scans).Error; err != nil || len(scans) == 0 {
+		if err := db.Where("path_task_id <> '' AND path_agent_id <> 0 AND path_status IN ?", []string{"running", "queued"}).
+			Order("id asc").Limit(pathStatusSyncBatchSize).Find(&scans).Error; err != nil || len(scans) == 0 {
 			continue
 		}
+		agentIDs := make([]uint, 0, len(scans))
+		for _, scan := range scans {
+			agentIDs = append(agentIDs, scan.PathAgentID)
+		}
+		agentMap := loadPathAgentMap(db, agentIDs)
 		for _, scan := range scans {
 			saveFailed := func(message string) {
 				scan.PathStatus = "failed"
@@ -162,8 +170,8 @@ func syncTaskPathScanStatus(db *gorm.DB) {
 				}
 				db.Save(&scan)
 			}
-			var agent models.PathAgent
-			if err := db.First(&agent, scan.PathAgentID).Error; err != nil {
+			agent, ok := agentMap[scan.PathAgentID]
+			if !ok {
 				saveFailed("path agent not found")
 				continue
 			}
@@ -236,6 +244,22 @@ func syncTaskPathScanStatus(db *gorm.DB) {
 			db.Save(&scan)
 		}
 	}
+}
+
+func loadPathAgentMap(db *gorm.DB, ids []uint) map[uint]models.PathAgent {
+	result := map[uint]models.PathAgent{}
+	uniqueIDs := uniqueUintIDs(ids)
+	if len(uniqueIDs) == 0 {
+		return result
+	}
+	var agents []models.PathAgent
+	if err := db.Where("id IN ?", uniqueIDs).Find(&agents).Error; err != nil {
+		return result
+	}
+	for _, agent := range agents {
+		result[agent.ID] = agent
+	}
+	return result
 }
 
 func RetryTaskPathScanToAgent(db *gorm.DB, taskID uint, preferredPathAgentID uint, katanaSeedMode string, customPaths []string) error {
