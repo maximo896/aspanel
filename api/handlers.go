@@ -569,7 +569,7 @@ func (api *API) CleanupFinishedAWVSScans(c *gin.Context) {
 		return
 	}
 	client := awvs.NewClient(server.URL, server.APIKey)
-	targetIDs, err := client.ListTargetIDsByScanStatuses([]string{"completed", "failed", "aborted"})
+	targetIDs, err := client.ListTargetIDsByScanStatuses([]string{"completed", "failed", "aborted", "done"})
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
