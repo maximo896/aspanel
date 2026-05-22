@@ -239,24 +239,10 @@ func (c *Client) GetLatestScanID(targetID string) (string, error) {
 }
 
 func (c *Client) CountActiveScans() (int, error) {
-	statusCandidates := map[string][]string{
-		"processing": {
-			"/api/v1/scans?l=20&q=status:processing;",
-			"/api/v1/scans?l=1000&q=status:processing;",
-			"/api/v1/scans?l=20&q=status:processing",
-			"/api/v1/scans?l=1000&q=status:processing",
-		},
-		"starting": {
-			"/api/v1/scans?l=20&q=status:starting;",
-			"/api/v1/scans?l=1000&q=status:starting;",
-			"/api/v1/scans?l=20&q=status:starting",
-			"/api/v1/scans?l=1000&q=status:starting",
-		},
-	}
 	total := 0
 	successCount := 0
 	for _, status := range []string{"processing", "starting"} {
-		count, err := c.countActiveScansByStatus(statusCandidates[status])
+		count, err := c.countActiveScansByStatus(scanListQueryCandidates(status))
 		if err != nil {
 			continue
 		}
@@ -360,17 +346,12 @@ func (c *Client) ListTargetIDsByScanStatuses(statuses []string) ([]string, error
 		if status == "" {
 			continue
 		}
-		res, err := c.doReq("GET", fmt.Sprintf("/api/v1/scans?l=1000&q=status:%s", status), nil)
+		ids, err := c.listTargetIDsByStatus(status)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		successCount++
-		ids, err := extractTargetIDsFromScanList(res)
-		if err != nil {
-			lastErr = err
-			continue
-		}
 		for _, targetID := range ids {
 			if _, ok := seen[targetID]; ok {
 				continue
@@ -383,6 +364,46 @@ func (c *Client) ListTargetIDsByScanStatuses(statuses []string) ([]string, error
 		return nil, lastErr
 	}
 	return targetIDs, nil
+}
+
+func scanListQueryCandidates(status string) []string {
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status == "" {
+		return nil
+	}
+	candidates := make([]string, 0, 10)
+	for _, limit := range []int{100, 50, 20, 10} {
+		candidates = append(candidates,
+			fmt.Sprintf("/api/v1/scans?l=%d&q=status:%s;", limit, status),
+			fmt.Sprintf("/api/v1/scans?l=%d&q=status:%s", limit, status),
+		)
+	}
+	candidates = append(candidates,
+		fmt.Sprintf("/api/v1/scans?q=status:%s;", status),
+		fmt.Sprintf("/api/v1/scans?q=status:%s", status),
+	)
+	return candidates
+}
+
+func (c *Client) listTargetIDsByStatus(status string) ([]string, error) {
+	var lastErr error
+	for _, query := range scanListQueryCandidates(status) {
+		res, err := c.doReq("GET", query, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		ids, err := extractTargetIDsFromScanList(res)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return ids, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("all scan list queries failed for status %s", status)
+	}
+	return nil, lastErr
 }
 
 func extractTargetIDsFromScanList(raw []byte) ([]string, error) {
