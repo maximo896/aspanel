@@ -60,6 +60,7 @@ const zh: Record<string, string> = {
   awvs_auto_restart_global: '离线自动重启(全局)',
   awvs_auto_cleanup_synced_tasks: '自动清理已同步任务(全局)',
   cleanup_finished_awvs: '清理已完成扫描',
+  cleanup_running_awvs: '后台清理中',
   no_awvs_nodes: '暂无AWVS节点',
 
   // Sqlmap
@@ -180,6 +181,7 @@ Object.assign(zh, {
   global_api_500_restart_updated: '全局离线自动重启设置已更新',
   global_awvs_cleanup_synced_tasks_updated: '全局 AWVS 自动清理设置已更新',
   awvs_finished_cleanup_done: 'AWVS 已结束扫描清理完成',
+  awvs_background_cleanup_started: 'AWVS 后台清理已启动',
   node_status_refreshed: '节点状态已刷新',
   confirm_delete_awvs_node: '确认删除该 AWVS 节点？',
   confirm_delete_sqlmap_agent: '确认删除该 Sqlmap 代理？',

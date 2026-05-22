@@ -95,6 +95,8 @@ export default function AWVSV3Page() {
   const { data: servers = [], error: serversError, isLoading, refetch } = useQuery({
     queryKey: ['servers'],
     queryFn: getServers,
+    refetchInterval: query =>
+      ((query.state.data as AWVSServer[] | undefined) || []).some(server => server.cleanup_running) ? 3000 : false,
   })
   const { data: cloudSettings } = useQuery({
     queryKey: ['cloud-settings'],
@@ -168,6 +170,10 @@ export default function AWVSV3Page() {
     },
     onSuccess: data => {
       qc.invalidateQueries({ queryKey: ['servers'] })
+      if (data.running) {
+        message.success(t('awvs_background_cleanup_started'))
+        return
+      }
       message.success(`${t('awvs_finished_cleanup_done')}: ${data.deleted_count}/${data.target_count}`)
     },
     onError: error => message.error(extractError(error)),
@@ -421,9 +427,9 @@ export default function AWVSV3Page() {
           <Popconfirm title={t('confirm_cleanup_finished_awvs')} onConfirm={() => cleanupFinishedMut.mutate(server.ID)}>
             <Button
               size="small"
-              loading={cleaningFinishedId === server.ID && cleanupFinishedMut.isPending}
+              loading={server.cleanup_running || (cleaningFinishedId === server.ID && cleanupFinishedMut.isPending)}
             >
-              {t('cleanup_finished_awvs')}
+              {server.cleanup_running ? t('cleanup_running_awvs') : t('cleanup_finished_awvs')}
             </Button>
           </Popconfirm>
           <Popconfirm title={t('confirm_delete_awvs_node')} onConfirm={() => deleteMut.mutate(server.ID)}>

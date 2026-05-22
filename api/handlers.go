@@ -52,6 +52,34 @@ var sqlmapAgentLatestVersionCache = struct {
 	fetchedAt time.Time
 }{}
 
+type awvsCleanupState struct {
+	Running      bool
+	Message      string
+	DeletedCount int
+	StartedAt    int64
+	FinishedAt   int64
+	LastError    string
+}
+
+var awvsCleanupStateStore = struct {
+	mu    sync.RWMutex
+	items map[uint]awvsCleanupState
+}{
+	items: map[uint]awvsCleanupState{},
+}
+
+func getAWVSCleanupState(serverID uint) awvsCleanupState {
+	awvsCleanupStateStore.mu.RLock()
+	defer awvsCleanupStateStore.mu.RUnlock()
+	return awvsCleanupStateStore.items[serverID]
+}
+
+func setAWVSCleanupState(serverID uint, state awvsCleanupState) {
+	awvsCleanupStateStore.mu.Lock()
+	awvsCleanupStateStore.items[serverID] = state
+	awvsCleanupStateStore.mu.Unlock()
+}
+
 func (api *API) getFinding(c *gin.Context) (*models.TaskFinding, error) {
 	var finding models.TaskFinding
 	if err := api.DB.First(&finding, c.Param("findingId")).Error; err != nil {
@@ -259,6 +287,10 @@ func (api *API) GetServers(c *gin.Context) {
 		// Keep list responses fast by reading cached sqlite state only.
 		// Manual refresh is handled by RefreshAWVSServerStatus.
 		servers[i].PanelRunning = api.countAWVSBoundRunningTasks(servers[i].ID)
+		cleanupState := getAWVSCleanupState(servers[i].ID)
+		servers[i].CleanupRunning = cleanupState.Running
+		servers[i].CleanupMessage = cleanupState.Message
+		servers[i].CleanupDeletedCount = cleanupState.DeletedCount
 	}
 	c.JSON(200, servers)
 }
@@ -568,52 +600,100 @@ func (api *API) CleanupFinishedAWVSScans(c *gin.Context) {
 		c.JSON(404, gin.H{"error": "awvs server not found"})
 		return
 	}
-	client := awvs.NewClient(server.URL, server.APIKey)
-	targetIDs, err := client.ListTargetIDsByScanStatuses([]string{"completed", "failed", "aborted", "done"})
-	if err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	if len(targetIDs) == 0 {
+	currentState := getAWVSCleanupState(server.ID)
+	if currentState.Running {
 		c.JSON(200, gin.H{
-			"message":        "no finished awvs scans found",
-			"target_count":   0,
-			"deleted_count":  0,
-			"failed_count":   0,
+			"message":        "awvs cleanup is already running in background",
 			"server_id":      server.ID,
 			"server_name":    server.Name,
-			"cleaned_target": []string{},
+			"running":        true,
+			"deleted_count":  currentState.DeletedCount,
+			"target_count":   0,
+			"failed_count":   0,
+			"cleanup_status": currentState.Message,
 		})
 		return
 	}
-
-	cleanedTargetIDs := make([]string, 0, len(targetIDs))
-	failedTargetIDs := make([]string, 0)
-	for _, targetID := range targetIDs {
-		if err := client.DeleteTarget(targetID); err != nil {
-			failedTargetIDs = append(failedTargetIDs, targetID)
-			continue
-		}
-		cleanedTargetIDs = append(cleanedTargetIDs, targetID)
-	}
-
-	if len(cleanedTargetIDs) > 0 {
-		cleanedAt := time.Now().Unix()
-		api.DB.Model(&models.Task{}).
-			Where("awvs_server_id = ? AND target_id IN ?", server.ID, cleanedTargetIDs).
-			Update("awvs_target_cleaned_at", cleanedAt)
-	}
-
+	startedAt := time.Now().Unix()
+	setAWVSCleanupState(server.ID, awvsCleanupState{
+		Running:   true,
+		Message:   "background cleanup started",
+		StartedAt: startedAt,
+	})
+	go api.runFinishedAWVSScansCleanup(server)
 	c.JSON(200, gin.H{
-		"message":        fmt.Sprintf("cleaned %d finished awvs targets", len(cleanedTargetIDs)),
-		"target_count":   len(targetIDs),
-		"deleted_count":  len(cleanedTargetIDs),
-		"failed_count":   len(failedTargetIDs),
+		"message":        "awvs background cleanup started",
 		"server_id":      server.ID,
 		"server_name":    server.Name,
-		"cleaned_target": cleanedTargetIDs,
-		"failed_target":  failedTargetIDs,
+		"running":        true,
+		"deleted_count":  0,
+		"target_count":   0,
+		"failed_count":   0,
+		"cleanup_status": "background cleanup started",
 	})
+}
+
+func (api *API) runFinishedAWVSScansCleanup(server models.AWVSServer) {
+	client := awvs.NewClient(server.URL, server.APIKey)
+	totalDeleted := 0
+	pass := 0
+	for {
+		pass++
+		targetIDs, err := client.ListTargetIDsByScanStatuses([]string{"completed", "failed", "aborted", "done"})
+		if err != nil {
+			setAWVSCleanupState(server.ID, awvsCleanupState{
+				Running:      false,
+				Message:      fmt.Sprintf("background cleanup failed: %v", err),
+				DeletedCount: totalDeleted,
+				FinishedAt:   time.Now().Unix(),
+				LastError:    err.Error(),
+			})
+			return
+		}
+		if len(targetIDs) == 0 {
+			setAWVSCleanupState(server.ID, awvsCleanupState{
+				Running:      false,
+				Message:      fmt.Sprintf("background cleanup finished, cleaned %d targets", totalDeleted),
+				DeletedCount: totalDeleted,
+				FinishedAt:   time.Now().Unix(),
+			})
+			return
+		}
+
+		cleanedTargetIDs := make([]string, 0, len(targetIDs))
+		failedCount := 0
+		for _, targetID := range targetIDs {
+			if err := client.DeleteTarget(targetID); err != nil {
+				failedCount++
+				continue
+			}
+			cleanedTargetIDs = append(cleanedTargetIDs, targetID)
+		}
+		if len(cleanedTargetIDs) > 0 {
+			cleanedAt := time.Now().Unix()
+			api.DB.Model(&models.Task{}).
+				Where("awvs_server_id = ? AND target_id IN ?", server.ID, cleanedTargetIDs).
+				Update("awvs_target_cleaned_at", cleanedAt)
+			totalDeleted += len(cleanedTargetIDs)
+		}
+		if len(cleanedTargetIDs) == 0 {
+			setAWVSCleanupState(server.ID, awvsCleanupState{
+				Running:      false,
+				Message:      fmt.Sprintf("background cleanup stopped after %d targets; %d targets could not be deleted in pass %d", totalDeleted, failedCount, pass),
+				DeletedCount: totalDeleted,
+				FinishedAt:   time.Now().Unix(),
+				LastError:    "no progress in cleanup pass",
+			})
+			return
+		}
+		setAWVSCleanupState(server.ID, awvsCleanupState{
+			Running:      true,
+			Message:      fmt.Sprintf("background cleanup running: cleaned %d targets, continuing", totalDeleted),
+			DeletedCount: totalDeleted,
+			StartedAt:    time.Now().Unix(),
+		})
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 func (api *API) GetSqlmapAgents(c *gin.Context) {

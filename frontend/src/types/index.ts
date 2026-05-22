@@ -21,6 +21,9 @@ export interface AWVSServer {
   instance_id: string
   region: string
   zone: string
+  cleanup_running: boolean
+  cleanup_message: string
+  cleanup_deleted_count: number
 }
 
 export interface SqlmapAgent {

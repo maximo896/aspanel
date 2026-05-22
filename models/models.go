@@ -26,6 +26,9 @@ type AWVSServer struct {
 	InstanceID          string `json:"instance_id"`
 	Region              string `json:"region"`
 	Zone                string `json:"zone"`
+	CleanupRunning      bool   `json:"cleanup_running" gorm:"-"`
+	CleanupMessage      string `json:"cleanup_message" gorm:"-"`
+	CleanupDeletedCount int    `json:"cleanup_deleted_count" gorm:"-"`
 }
 
 type SqlmapAgent struct {
