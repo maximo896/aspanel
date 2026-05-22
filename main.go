@@ -142,6 +142,7 @@ func main() {
 	r.PUT("/api/servers/:id", h.UpdateServer)
 	r.DELETE("/api/servers/:id", h.DeleteServer)
 	r.POST("/api/servers/cleanup-offline", h.CleanupOfflineAWVSServers)
+	r.POST("/api/servers/:id/cleanup-finished", h.CleanupFinishedAWVSScans)
 	r.POST("/api/servers/:id/refresh", h.RefreshAWVSServerStatus)
 	r.POST("/api/servers/:id/update", h.UpdateAWVSServerVersion)
 	r.GET("/api/servers/:id/manual-update-command", h.GetAWVSManualUpdateCommand)

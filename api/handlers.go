@@ -562,6 +562,60 @@ func (api *API) CleanupOfflineAWVSServers(c *gin.Context) {
 	c.JSON(200, gin.H{"message": "offline awvs nodes cleaned", "deleted_count": len(ids)})
 }
 
+func (api *API) CleanupFinishedAWVSScans(c *gin.Context) {
+	var server models.AWVSServer
+	if err := api.DB.First(&server, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "awvs server not found"})
+		return
+	}
+	client := awvs.NewClient(server.URL, server.APIKey)
+	targetIDs, err := client.ListTargetIDsByScanStatuses([]string{"completed", "failed", "aborted"})
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if len(targetIDs) == 0 {
+		c.JSON(200, gin.H{
+			"message":        "no finished awvs scans found",
+			"target_count":   0,
+			"deleted_count":  0,
+			"failed_count":   0,
+			"server_id":      server.ID,
+			"server_name":    server.Name,
+			"cleaned_target": []string{},
+		})
+		return
+	}
+
+	cleanedTargetIDs := make([]string, 0, len(targetIDs))
+	failedTargetIDs := make([]string, 0)
+	for _, targetID := range targetIDs {
+		if err := client.DeleteTarget(targetID); err != nil {
+			failedTargetIDs = append(failedTargetIDs, targetID)
+			continue
+		}
+		cleanedTargetIDs = append(cleanedTargetIDs, targetID)
+	}
+
+	if len(cleanedTargetIDs) > 0 {
+		cleanedAt := time.Now().Unix()
+		api.DB.Model(&models.Task{}).
+			Where("awvs_server_id = ? AND target_id IN ?", server.ID, cleanedTargetIDs).
+			Update("awvs_target_cleaned_at", cleanedAt)
+	}
+
+	c.JSON(200, gin.H{
+		"message":        fmt.Sprintf("cleaned %d finished awvs targets", len(cleanedTargetIDs)),
+		"target_count":   len(targetIDs),
+		"deleted_count":  len(cleanedTargetIDs),
+		"failed_count":   len(failedTargetIDs),
+		"server_id":      server.ID,
+		"server_name":    server.Name,
+		"cleaned_target": cleanedTargetIDs,
+		"failed_target":  failedTargetIDs,
+	})
+}
+
 func (api *API) GetSqlmapAgents(c *gin.Context) {
 	var agents []models.SqlmapAgent
 	api.DB.Order("id desc").Find(&agents)

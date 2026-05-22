@@ -31,6 +31,7 @@ export const updateServer = (id: number, data: Partial<AWVSServer>) => api.put(`
 export const deleteServer = (id: number) => api.delete(`/api/servers/${id}`).then(r => r.data)
 export const refreshServer = (id: number) => api.post(`/api/servers/${id}/refresh`).then(r => r.data)
 export const cleanupOfflineAWVS = () => api.post<{ message: string; deleted_count: number }>('/api/servers/cleanup-offline').then(r => r.data)
+export const cleanupFinishedAWVSScans = (id: number) => api.post<{ message: string; deleted_count: number; target_count: number; failed_count: number }>(`/api/servers/${id}/cleanup-finished`).then(r => r.data)
 export const restartAWVSDocker = (ids: number[]) => api.post('/api/servers/restart-docker', { ids }).then(r => r.data)
 export const createAWVSConfig = (data: { name: string; max_concurrency: number }) => api.post<{ docker_cmd: string }>('/api/awvs/config', data).then(r => r.data)
 export const registerAWVSFromLink = (data: { protocol_link: string }) => api.post('/api/awvs/register', data).then(r => r.data)

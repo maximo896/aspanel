@@ -33,6 +33,7 @@ import type { ColumnsType } from 'antd/es/table'
 import type { AWVSServer } from '../types'
 import {
   addServer,
+  cleanupFinishedAWVSScans,
   cleanupOfflineAWVS,
   createAWVSConfig,
   deleteServer,
@@ -81,6 +82,7 @@ export default function AWVSV3Page() {
   const [selected, setSelected] = useState<number[]>([])
   const [editingServer, setEditingServer] = useState<AWVSServer | null>(null)
   const [refreshingId, setRefreshingId] = useState<number | null>(null)
+  const [cleaningFinishedId, setCleaningFinishedId] = useState<number | null>(null)
   const [installOpen, setInstallOpen] = useState(false)
   const [registerOpen, setRegisterOpen] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
@@ -157,6 +159,19 @@ export default function AWVSV3Page() {
       message.success(`${data.message} (${data.deleted_count})`)
     },
     onError: error => message.error(extractError(error)),
+  })
+
+  const cleanupFinishedMut = useMutation({
+    mutationFn: async (id: number) => {
+      setCleaningFinishedId(id)
+      return cleanupFinishedAWVSScans(id)
+    },
+    onSuccess: data => {
+      qc.invalidateQueries({ queryKey: ['servers'] })
+      message.success(`${t('awvs_finished_cleanup_done')}: ${data.deleted_count}/${data.target_count}`)
+    },
+    onError: error => message.error(extractError(error)),
+    onSettled: () => setCleaningFinishedId(null),
   })
 
   const restartMut = useMutation({
@@ -382,7 +397,7 @@ export default function AWVSV3Page() {
     {
       title: t('action'),
       key: 'actions',
-      width: 430,
+      width: 550,
       render: (_, server) => (
         <Space size={4} wrap>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(server)}>{t('edit')}</Button>
@@ -402,6 +417,14 @@ export default function AWVSV3Page() {
           </Button>
           <Popconfirm title={t('confirm_restart_awvs_docker')} onConfirm={() => restartMut.mutate([server.ID])}>
             <Button size="small" icon={<PlayCircleOutlined />}>{t('restart_docker')}</Button>
+          </Popconfirm>
+          <Popconfirm title={t('confirm_cleanup_finished_awvs')} onConfirm={() => cleanupFinishedMut.mutate(server.ID)}>
+            <Button
+              size="small"
+              loading={cleaningFinishedId === server.ID && cleanupFinishedMut.isPending}
+            >
+              {t('cleanup_finished_awvs')}
+            </Button>
           </Popconfirm>
           <Popconfirm title={t('confirm_delete_awvs_node')} onConfirm={() => deleteMut.mutate(server.ID)}>
             <Button size="small" danger icon={<DeleteOutlined />} />

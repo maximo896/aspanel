@@ -98,7 +98,8 @@ func shouldAutoCleanupAWVSTask(db *gorm.DB, task *models.Task) bool {
 	if !loadGlobalAWVSAutoCleanupSyncedTasks(db) {
 		return false
 	}
-	if strings.ToLower(strings.TrimSpace(task.Status)) != "completed" {
+	status := strings.ToLower(strings.TrimSpace(task.Status))
+	if status != "completed" && status != "failed" && status != "aborted" && status != "done" {
 		return false
 	}
 	if task.AWVSServerID == 0 || strings.TrimSpace(task.TargetID) == "" {

@@ -349,3 +349,99 @@ func (c *Client) DeleteTarget(targetID string) error {
 	_, err := c.doReq("DELETE", "/api/v1/targets/"+targetID, nil)
 	return err
 }
+
+func (c *Client) ListTargetIDsByScanStatuses(statuses []string) ([]string, error) {
+	seen := map[string]struct{}{}
+	targetIDs := make([]string, 0)
+	successCount := 0
+	var lastErr error
+	for _, status := range statuses {
+		status = strings.ToLower(strings.TrimSpace(status))
+		if status == "" {
+			continue
+		}
+		res, err := c.doReq("GET", fmt.Sprintf("/api/v1/scans?l=1000&q=status:%s", status), nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		successCount++
+		ids, err := extractTargetIDsFromScanList(res)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		for _, targetID := range ids {
+			if _, ok := seen[targetID]; ok {
+				continue
+			}
+			seen[targetID] = struct{}{}
+			targetIDs = append(targetIDs, targetID)
+		}
+	}
+	if successCount == 0 && lastErr != nil {
+		return nil, lastErr
+	}
+	return targetIDs, nil
+}
+
+func extractTargetIDsFromScanList(raw []byte) ([]string, error) {
+	var payload map[string]interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	items, _ := payload["scans"].([]interface{})
+	targetIDs := make([]string, 0, len(items))
+	seen := map[string]struct{}{}
+	for _, item := range items {
+		scan, _ := item.(map[string]interface{})
+		if len(scan) == 0 {
+			continue
+		}
+		targetID := firstNonEmptyString(
+			scan["target_id"],
+			nestedMapString(scan, "target", "target_id"),
+			nestedMapString(scan, "target", "id"),
+		)
+		if targetID == "" {
+			continue
+		}
+		if _, ok := seen[targetID]; ok {
+			continue
+		}
+		seen[targetID] = struct{}{}
+		targetIDs = append(targetIDs, targetID)
+	}
+	return targetIDs, nil
+}
+
+func nestedMapString(root map[string]interface{}, keys ...string) string {
+	current := root
+	for idx, key := range keys {
+		value, ok := current[key]
+		if !ok {
+			return ""
+		}
+		if idx == len(keys)-1 {
+			if text, ok := value.(string); ok {
+				return strings.TrimSpace(text)
+			}
+			return ""
+		}
+		next, ok := value.(map[string]interface{})
+		if !ok {
+			return ""
+		}
+		current = next
+	}
+	return ""
+}
+
+func firstNonEmptyString(values ...interface{}) string {
+	for _, value := range values {
+		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+			return strings.TrimSpace(text)
+		}
+	}
+	return ""
+}

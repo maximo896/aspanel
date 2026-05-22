@@ -59,6 +59,7 @@ const zh: Record<string, string> = {
   batch_restart_docker: '批量重启Docker',
   awvs_auto_restart_global: '离线自动重启(全局)',
   awvs_auto_cleanup_synced_tasks: '自动清理已同步任务(全局)',
+  cleanup_finished_awvs: '清理已完成扫描',
   no_awvs_nodes: '暂无AWVS节点',
 
   // Sqlmap
@@ -178,6 +179,7 @@ Object.assign(zh, {
   defaults_saved: '默认设置已保存',
   global_api_500_restart_updated: '全局离线自动重启设置已更新',
   global_awvs_cleanup_synced_tasks_updated: '全局 AWVS 自动清理设置已更新',
+  awvs_finished_cleanup_done: 'AWVS 已结束扫描清理完成',
   node_status_refreshed: '节点状态已刷新',
   confirm_delete_awvs_node: '确认删除该 AWVS 节点？',
   confirm_delete_sqlmap_agent: '确认删除该 Sqlmap 代理？',
@@ -186,6 +188,7 @@ Object.assign(zh, {
   confirm_batch_restart_sqlmap_docker: '确认重启已选的 {count} 个 Sqlmap 代理的 Docker？',
   confirm_restart_awvs_docker: '确认重启该 AWVS 节点的 Docker？',
   confirm_batch_restart_awvs_docker: '确认重启已选的 {count} 个 AWVS 节点的 Docker？',
+  confirm_cleanup_finished_awvs: '确认清理该 AWVS 节点上所有已结束的扫描和目标？',
   confirm_update_sqlmap_agent: '确认更新该 Sqlmap 代理？',
   confirm_update_path_agent: '确认更新该路径代理？',
   confirm_update_awvs_agent: '确认更新该 AWVS 节点？',
