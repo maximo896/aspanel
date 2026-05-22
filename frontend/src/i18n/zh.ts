@@ -58,6 +58,7 @@ const zh: Record<string, string> = {
   copy_update_command: '复制更新命令',
   batch_restart_docker: '批量重启Docker',
   awvs_auto_restart_global: '离线自动重启(全局)',
+  awvs_auto_cleanup_synced_tasks: '自动清理已同步任务(全局)',
   no_awvs_nodes: '暂无AWVS节点',
 
   // Sqlmap
@@ -176,6 +177,7 @@ Object.assign(zh, {
   proxy_agent_deleted: '代理节点已删除',
   defaults_saved: '默认设置已保存',
   global_api_500_restart_updated: '全局离线自动重启设置已更新',
+  global_awvs_cleanup_synced_tasks_updated: '全局 AWVS 自动清理设置已更新',
   node_status_refreshed: '节点状态已刷新',
   confirm_delete_awvs_node: '确认删除该 AWVS 节点？',
   confirm_delete_sqlmap_agent: '确认删除该 Sqlmap 代理？',
@@ -191,6 +193,7 @@ Object.assign(zh, {
   registered_but_refresh_failed: '注册成功，但刷新失败',
   saved_but_connectivity_failed: '保存成功，但连通性检查失败',
   awvs_auto_restart_global_hint: '仅在节点离线时自动触发 Docker 重启。需要同时配置全局开关、节点开关和 Manager URL/Token。',
+  awvs_auto_cleanup_synced_tasks_hint: '启用后，任务在 AWVS 完成且结果已同步到 sqlite 后，会自动从 AWVS 删除对应 target/scan 记录以节省存储空间。',
   import_vless_link: '导入 VLESS 链接',
   protocol_link: '协议链接',
   vless_link: 'VLESS 链接',

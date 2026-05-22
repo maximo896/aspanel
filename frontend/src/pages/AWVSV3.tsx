@@ -178,6 +178,15 @@ export default function AWVSV3Page() {
     onError: error => message.error(extractError(error)),
   })
 
+  const awvsAutoCleanupMut = useMutation({
+    mutationFn: (checked: boolean) => updateCloudSettings({ awvs_auto_cleanup_synced_tasks: checked }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cloud-settings'] })
+      message.success(t('global_awvs_cleanup_synced_tasks_updated'))
+    },
+    onError: error => message.error(extractError(error)),
+  })
+
   const createConfigMut = useMutation({
     mutationFn: (payload: { name: string; max_concurrency: number }) => createAWVSConfig(payload),
     onSuccess: data => {
@@ -429,6 +438,12 @@ export default function AWVSV3Page() {
             >
               {t('awvs_auto_restart_global')}
             </Checkbox>
+            <Checkbox
+              checked={Boolean(cloudSettings?.awvs_auto_cleanup_synced_tasks)}
+              onChange={event => awvsAutoCleanupMut.mutate(event.target.checked)}
+            >
+              {t('awvs_auto_cleanup_synced_tasks')}
+            </Checkbox>
             {selected.length > 0 && (
               <Popconfirm title={tr('confirm_batch_restart_awvs_docker', { count: selected.length })} onConfirm={() => restartMut.mutate(selected)}>
                 <Button size="small" loading={restartMut.isPending}>{`${t('batch_restart_docker')}(${selected.length})`}</Button>
@@ -446,6 +461,12 @@ export default function AWVSV3Page() {
           showIcon
           style={{ marginBottom: 12 }}
           message={t('awvs_auto_restart_global_hint')}
+        />
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={t('awvs_auto_cleanup_synced_tasks_hint')}
         />
         {serversError && (
           <Alert

@@ -81,6 +81,7 @@ export interface Task {
   sqlmap_agent_id: number
   target_id: string
   scan_session_id: string
+  awvs_target_cleaned_at: number
   sqlmap_task_id: string
   sqlmap_status: string
   sqlmap_agent_url: string
@@ -177,6 +178,7 @@ export interface CloudSettings {
   instance_type: string
   awvs_max_concurrency: number
   awvs_auto_restart_on_api_500: boolean
+  awvs_auto_cleanup_synced_tasks: boolean
   sqlmap_max_concurrency: number
   awvs_auto_enabled: boolean
   sqlmap_auto_enabled: boolean

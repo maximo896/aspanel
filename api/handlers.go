@@ -525,10 +525,11 @@ func (api *API) DeleteServer(c *gin.Context) {
 	}
 	// Reset associated tasks to pending so they can be picked up by another node
 	api.DB.Model(&models.Task{}).Where("awvs_server_id = ? AND status IN ?", id, []string{"running", "scanning"}).Updates(map[string]interface{}{
-		"status":          "pending",
-		"awvs_server_id":  0,
-		"target_id":       "",
-		"scan_session_id": "",
+		"status":                 "pending",
+		"awvs_server_id":         0,
+		"target_id":              "",
+		"scan_session_id":        "",
+		"awvs_target_cleaned_at": 0,
 	})
 	api.DB.Delete(&models.AWVSServer{}, id)
 	c.JSON(200, gin.H{"message": "deleted and tasks reset"})
@@ -551,10 +552,11 @@ func (api *API) CleanupOfflineAWVSServers(c *gin.Context) {
 		ids = append(ids, server.ID)
 	}
 	api.DB.Model(&models.Task{}).Where("awvs_server_id IN ? AND status IN ?", ids, []string{"running", "scanning"}).Updates(map[string]interface{}{
-		"status":          "pending",
-		"awvs_server_id":  0,
-		"target_id":       "",
-		"scan_session_id": "",
+		"status":                 "pending",
+		"awvs_server_id":         0,
+		"target_id":              "",
+		"scan_session_id":        "",
+		"awvs_target_cleaned_at": 0,
 	})
 	api.DB.Where("id IN ?", ids).Delete(&models.AWVSServer{})
 	c.JSON(200, gin.H{"message": "offline awvs nodes cleaned", "deleted_count": len(ids)})
@@ -3584,6 +3586,7 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 		"port_min":                       masked.PortMin,
 		"port_max":                       masked.PortMax,
 		"awvs_auto_restart_on_api_500":   masked.AWVSAutoRestartOnAPI500,
+		"awvs_auto_cleanup_synced_tasks": masked.AWVSAutoCleanupSyncedTasks,
 		"autoscale_status":               status,
 		"autoscale_remaining_sec":        remaining,
 		"awvs_auto_enabled":              masked.AWVSAutoEnabled,
@@ -3754,6 +3757,9 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	}
 	if _, ok := present["awvs_auto_restart_on_api_500"]; ok {
 		settings.AWVSAutoRestartOnAPI500 = req.AWVSAutoRestartOnAPI500
+	}
+	if _, ok := present["awvs_auto_cleanup_synced_tasks"]; ok {
+		settings.AWVSAutoCleanupSyncedTasks = req.AWVSAutoCleanupSyncedTasks
 	}
 	if _, ok := present["enabled"]; ok {
 		settings.Enabled = req.Enabled
@@ -4476,12 +4482,13 @@ func (api *API) cleanupCloudBoundRecords(inst models.CloudInstance, reason strin
 	if inst.AWVSServerID != 0 {
 		scheduler.BestEffortDeleteAWVSTargetsForServer(api.DB, inst.AWVSServerID)
 		api.DB.Model(&models.Task{}).Where("awvs_server_id = ? AND status IN ?", inst.AWVSServerID, []string{"running", "scanning"}).Updates(map[string]interface{}{
-			"status":           "pending",
-			"awvs_server_id":   0,
-			"target_id":        "",
-			"scan_session_id":  "",
-			"last_requeued_at": now,
-			"requeue_reason":   reason,
+			"status":                 "pending",
+			"awvs_server_id":         0,
+			"target_id":              "",
+			"scan_session_id":        "",
+			"awvs_target_cleaned_at": 0,
+			"last_requeued_at":       now,
+			"requeue_reason":         reason,
 		})
 		api.DB.Delete(&models.AWVSServer{}, inst.AWVSServerID)
 	}
@@ -4529,12 +4536,13 @@ func (api *API) cleanupCloudBoundRecords(inst models.CloudInstance, reason strin
 		for _, node := range awvsNodes {
 			scheduler.BestEffortDeleteAWVSTargetsForServer(api.DB, node.ID)
 			api.DB.Model(&models.Task{}).Where("awvs_server_id = ? AND status IN ?", node.ID, []string{"running", "scanning"}).Updates(map[string]interface{}{
-				"status":           "pending",
-				"awvs_server_id":   0,
-				"target_id":        "",
-				"scan_session_id":  "",
-				"last_requeued_at": now,
-				"requeue_reason":   reason,
+				"status":                 "pending",
+				"awvs_server_id":         0,
+				"target_id":              "",
+				"scan_session_id":        "",
+				"awvs_target_cleaned_at": 0,
+				"last_requeued_at":       now,
+				"requeue_reason":         reason,
 			})
 			api.DB.Delete(&node)
 		}

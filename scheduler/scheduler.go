@@ -80,6 +80,55 @@ func loadGlobalAWVSAutoRestartOnAPI500(db *gorm.DB) bool {
 	return settings.AWVSAutoRestartOnAPI500
 }
 
+func loadGlobalAWVSAutoCleanupSyncedTasks(db *gorm.DB) bool {
+	if db == nil {
+		return false
+	}
+	var settings models.CloudSettings
+	if err := db.Order("id desc").Select("awvs_auto_cleanup_synced_tasks").First(&settings).Error; err != nil {
+		return false
+	}
+	return settings.AWVSAutoCleanupSyncedTasks
+}
+
+func shouldAutoCleanupAWVSTask(db *gorm.DB, task *models.Task) bool {
+	if task == nil || db == nil {
+		return false
+	}
+	if !loadGlobalAWVSAutoCleanupSyncedTasks(db) {
+		return false
+	}
+	if strings.ToLower(strings.TrimSpace(task.Status)) != "completed" {
+		return false
+	}
+	if task.AWVSServerID == 0 || strings.TrimSpace(task.TargetID) == "" {
+		return false
+	}
+	return task.AWVSTargetCleanedAt == 0
+}
+
+func cleanupCompletedAWVSTaskRemoteData(db *gorm.DB, task *models.Task) {
+	if !shouldAutoCleanupAWVSTask(db, task) {
+		return
+	}
+	var server models.AWVSServer
+	if err := db.First(&server, task.AWVSServerID).Error; err != nil {
+		log.Printf("[awvs][auto-cleanup] task=%d server=%d load server failed: %v", task.ID, task.AWVSServerID, err)
+		return
+	}
+	client := awvs.NewClient(server.URL, server.APIKey)
+	if err := client.DeleteTarget(task.TargetID); err != nil {
+		log.Printf("[awvs][auto-cleanup] task=%d server=%d target=%s delete failed: %v", task.ID, task.AWVSServerID, task.TargetID, err)
+		return
+	}
+	cleanedAt := time.Now().Unix()
+	task.AWVSTargetCleanedAt = cleanedAt
+	db.Model(&models.Task{}).Where("id = ?", task.ID).Updates(map[string]interface{}{
+		"awvs_target_cleaned_at": cleanedAt,
+	})
+	log.Printf("[awvs][auto-cleanup] task=%d server=%d target=%s deleted after sqlite sync", task.ID, task.AWVSServerID, task.TargetID)
+}
+
 func shouldAutoRestartAWVSOffline(db *gorm.DB, server *models.AWVSServer) bool {
 	if server == nil || !server.AutoRestartOnAPI500 || !loadGlobalAWVSAutoRestartOnAPI500(db) {
 		return false
@@ -349,6 +398,7 @@ func dispatchAWVSTasks(db *gorm.DB) {
 			}
 			task.TargetID = targetID
 			task.ScanSessionID = scanID
+			task.AWVSTargetCleanedAt = 0
 			task.AWVSServerID = selected.ID
 			task.Status = "scanning"
 			task.RequeueReason = ""
@@ -381,6 +431,7 @@ func checkAWVSStatus(db *gorm.DB) {
 				task.AWVSServerID = 0
 				task.TargetID = ""
 				task.ScanSessionID = ""
+				task.AWVSTargetCleanedAt = 0
 				task.LastRequeuedAt = time.Now().Unix()
 				task.RequeueReason = "awvs_server_not_found"
 				db.Save(&task)
@@ -414,7 +465,9 @@ func checkAWVSStatus(db *gorm.DB) {
 			if status == "completed" || status == "aborted" || status == "failed" {
 				task.Status = status
 				db.Save(&task)
-				processVulnerabilities(client, task, db, false, 0)
+				if processVulnerabilities(client, &task, db, false, 0) {
+					cleanupCompletedAWVSTaskRemoteData(db, &task)
+				}
 			}
 		}
 	}
@@ -772,7 +825,7 @@ func RetryTaskVulnerabilitiesToAgent(db *gorm.DB, taskID uint, sqlmapAgentID uin
 	}
 
 	client := awvs.NewClient(srv.URL, srv.APIKey)
-	processVulnerabilities(client, task, db, true, sqlmapAgentID)
+	processVulnerabilities(client, &task, db, true, sqlmapAgentID)
 	return nil
 }
 
@@ -800,12 +853,15 @@ func RetryTaskFindingsFromLocal(db *gorm.DB, taskID uint, sqlmapAgentID uint) (i
 	return succeeded, failed, nil
 }
 
-func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, forceRetry bool, preferredSqlmapAgentID uint) {
+func processVulnerabilities(client *awvs.Client, task *models.Task, db *gorm.DB, forceRetry bool, preferredSqlmapAgentID uint) bool {
+	if task == nil {
+		return false
+	}
 	log.Printf("task=%d status=%s target_id=%s scan_session_id=%s retry=%t starting vulnerability collection", task.ID, task.Status, task.TargetID, task.ScanSessionID, forceRetry)
 	vulns, err := client.GetVulnerabilities(task.TargetID)
 	if err != nil {
 		log.Printf("Failed to get vulns for task %d: %v", task.ID, err)
-		return
+		return false
 	}
 
 	log.Printf("task=%d fetched %d vulnerabilities from AWVS", task.ID, len(vulns))
@@ -819,7 +875,7 @@ func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, 
 
 	globalOptions := loadGlobalSqlmapOptions(db)
 	for _, v := range vulns {
-		if !forceRetry && !isRecentVulnerability(task, v) {
+		if !forceRetry && !isRecentVulnerability(*task, v) {
 			recentSkipped++
 			continue
 		}
@@ -897,7 +953,7 @@ func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, 
 		forceSSL := strings.EqualFold(parsedURL.Scheme, "https")
 		scopeKey := strings.ToLower(strings.TrimSpace(domain)) + "|" + strconv.FormatBool(forceSSL)
 		if domain != "" && !triggeredPathScopes[scopeKey] {
-			ensureTaskPathScanForURL(db, task, affectsURL)
+			ensureTaskPathScanForURL(db, *task, affectsURL)
 			triggeredPathScopes[scopeKey] = true
 		}
 		log.Printf("task=%d vuln=%s url=%s matched SQLi and will be sent to sqlmap", task.ID, vulnID, affectsURL)
@@ -909,7 +965,7 @@ func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, 
 		}
 		findingOptions := parseSqlmapOptions(finding.SqlmapOptions)
 		sqlmapTaskID, agentID, agentURL, sqlmapStatus, sent, effectiveUseProxy := sendToSqlmapAgent(
-			task,
+			*task,
 			domain,
 			vulnID,
 			httpRequest,
@@ -943,6 +999,7 @@ func processVulnerabilities(client *awvs.Client, task models.Task, db *gorm.DB, 
 	}
 
 	log.Printf("task=%d vulnerability sync done: fetched=%d sent=%d skipped_recent=%d skipped_non_sqli=%d skipped_confidence=%d skipped_already_sent=%d", task.ID, len(vulns), sentCount, recentSkipped, nonSQLiSkipped, confidenceSkipped, alreadySentSkipped)
+	return true
 }
 
 func isRecentVulnerability(task models.Task, vuln map[string]interface{}) bool {
@@ -1436,7 +1493,7 @@ func syncScanningTaskVulnerabilities(db *gorm.DB) {
 				continue
 			}
 			client := awvs.NewClient(srv.URL, srv.APIKey)
-			processVulnerabilities(client, task, db, false, 0)
+			processVulnerabilities(client, &task, db, false, 0)
 		}
 	}
 }
@@ -2479,17 +2536,18 @@ func requeueAWVSServerTasks(db *gorm.DB, serverID uint, reason string) {
 	BestEffortDeleteAWVSTargetsForServer(db, serverID)
 	now := time.Now().Unix()
 	db.Model(&models.Task{}).Where("awvs_server_id = ? AND status IN ?", serverID, []string{"running", "scanning"}).Updates(map[string]interface{}{
-		"status":           "pending",
-		"awvs_server_id":   0,
-		"target_id":        "",
-		"scan_session_id":  "",
-		"last_requeued_at": now,
-		"requeue_reason":   reason,
+		"status":                 "pending",
+		"awvs_server_id":         0,
+		"target_id":              "",
+		"scan_session_id":        "",
+		"awvs_target_cleaned_at": 0,
+		"last_requeued_at":       now,
+		"requeue_reason":         reason,
 	})
 }
 
 func BestEffortDeleteAWVSTargetForTask(db *gorm.DB, task models.Task) {
-	if db == nil || task.AWVSServerID == 0 || strings.TrimSpace(task.TargetID) == "" {
+	if db == nil || task.AWVSServerID == 0 || strings.TrimSpace(task.TargetID) == "" || task.AWVSTargetCleanedAt > 0 {
 		return
 	}
 	var server models.AWVSServer
@@ -2499,7 +2557,9 @@ func BestEffortDeleteAWVSTargetForTask(db *gorm.DB, task models.Task) {
 	client := awvs.NewClient(server.URL, server.APIKey)
 	if err := client.DeleteTarget(task.TargetID); err != nil {
 		log.Printf("[awvs][cleanup] server=%d target=%s delete failed: %v", task.AWVSServerID, task.TargetID, err)
+		return
 	}
+	db.Model(&models.Task{}).Where("id = ? AND awvs_target_cleaned_at = 0", task.ID).Update("awvs_target_cleaned_at", time.Now().Unix())
 }
 
 func BestEffortDeleteAWVSTargetsForServer(db *gorm.DB, serverID uint) {
@@ -2507,7 +2567,7 @@ func BestEffortDeleteAWVSTargetsForServer(db *gorm.DB, serverID uint) {
 		return
 	}
 	var tasks []models.Task
-	if err := db.Select("id", "awvs_server_id", "target_id").Where("awvs_server_id = ? AND target_id <> ''", serverID).Find(&tasks).Error; err != nil {
+	if err := db.Select("id", "awvs_server_id", "target_id", "awvs_target_cleaned_at").Where("awvs_server_id = ? AND target_id <> '' AND awvs_target_cleaned_at = 0", serverID).Find(&tasks).Error; err != nil {
 		return
 	}
 	seen := map[string]struct{}{}

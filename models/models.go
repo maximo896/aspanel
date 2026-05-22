@@ -76,31 +76,32 @@ type PathAgent struct {
 
 type Task struct {
 	gorm.Model
-	URL              string `json:"url"`
-	Remark           string `json:"remark" gorm:"type:text"`
-	Status           string `json:"status" gorm:"default:'pending';index;index:idx_task_awvs_status"`
-	AWVSServerID     uint   `json:"awvs_server_id" gorm:"index:idx_task_awvs_status"`
-	SqlmapAgentID    uint   `json:"sqlmap_agent_id" gorm:"index:idx_task_sqlmap_agent_status"`
-	TargetID         string `json:"target_id" gorm:"index"`
-	ScanSessionID    string `json:"scan_session_id" gorm:"index"`
-	SqlmapTaskID     string `json:"sqlmap_task_id" gorm:"index"`
-	SqlmapStatus     string `json:"sqlmap_status" gorm:"default:'none';index;index:idx_task_sqlmap_agent_status"`
-	SqlmapAgentURL   string `json:"sqlmap_agent_url"`
-	SqlmapResultJSON string `json:"sqlmap_result_json" gorm:"type:text"`
-	SqlmapCachedAt   int64  `json:"sqlmap_cached_at"`
-	HasData          bool   `json:"has_data"`
-	HasDBNames       bool   `json:"has_db_names" gorm:"-"`
-	HasTableNames    bool   `json:"has_table_names" gorm:"-"`
-	HasColumnNames   bool   `json:"has_column_names" gorm:"-"`
-	HasRowData       bool   `json:"has_row_data" gorm:"-"`
-	HasShell         bool   `json:"has_shell"`
-	HasDBA           bool   `json:"has_dba"`
-	HasFinding       bool   `json:"has_finding"`
-	HasInjection     bool   `json:"has_injection"`
-	HasPathScan      bool   `json:"has_path_scan" gorm:"-"`
-	PathScanStatus   string `json:"path_scan_status" gorm:"-"`
-	LastRequeuedAt   int64  `json:"last_requeued_at"`
-	RequeueReason    string `json:"requeue_reason"`
+	URL                 string `json:"url"`
+	Remark              string `json:"remark" gorm:"type:text"`
+	Status              string `json:"status" gorm:"default:'pending';index;index:idx_task_awvs_status"`
+	AWVSServerID        uint   `json:"awvs_server_id" gorm:"index:idx_task_awvs_status"`
+	SqlmapAgentID       uint   `json:"sqlmap_agent_id" gorm:"index:idx_task_sqlmap_agent_status"`
+	TargetID            string `json:"target_id" gorm:"index"`
+	ScanSessionID       string `json:"scan_session_id" gorm:"index"`
+	AWVSTargetCleanedAt int64  `json:"awvs_target_cleaned_at"`
+	SqlmapTaskID        string `json:"sqlmap_task_id" gorm:"index"`
+	SqlmapStatus        string `json:"sqlmap_status" gorm:"default:'none';index;index:idx_task_sqlmap_agent_status"`
+	SqlmapAgentURL      string `json:"sqlmap_agent_url"`
+	SqlmapResultJSON    string `json:"sqlmap_result_json" gorm:"type:text"`
+	SqlmapCachedAt      int64  `json:"sqlmap_cached_at"`
+	HasData             bool   `json:"has_data"`
+	HasDBNames          bool   `json:"has_db_names" gorm:"-"`
+	HasTableNames       bool   `json:"has_table_names" gorm:"-"`
+	HasColumnNames      bool   `json:"has_column_names" gorm:"-"`
+	HasRowData          bool   `json:"has_row_data" gorm:"-"`
+	HasShell            bool   `json:"has_shell"`
+	HasDBA              bool   `json:"has_dba"`
+	HasFinding          bool   `json:"has_finding"`
+	HasInjection        bool   `json:"has_injection"`
+	HasPathScan         bool   `json:"has_path_scan" gorm:"-"`
+	PathScanStatus      string `json:"path_scan_status" gorm:"-"`
+	LastRequeuedAt      int64  `json:"last_requeued_at"`
+	RequeueReason       string `json:"requeue_reason"`
 }
 
 type TaskPathScan struct {
@@ -200,6 +201,7 @@ type CloudSettings struct {
 	PortMin                    int     `json:"port_min" gorm:"default:30000"`
 	PortMax                    int     `json:"port_max" gorm:"default:40000"`
 	AWVSAutoRestartOnAPI500    bool    `json:"awvs_auto_restart_on_api_500" gorm:"column:awvs_auto_restart_on_api500;default:false"`
+	AWVSAutoCleanupSyncedTasks bool    `json:"awvs_auto_cleanup_synced_tasks" gorm:"default:false"`
 	AWVSAutoEnabled            bool    `json:"awvs_auto_enabled" gorm:"default:false"`
 	AWVSLaunchStartedAt        int64   `json:"awvs_launch_started_at"`
 	AWVSMaxPriceUSDPerHour     float64 `json:"awvs_max_price_usd_per_hour" gorm:"default:0.02"`
