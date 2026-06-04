@@ -35,7 +35,7 @@ type API struct {
 }
 
 const (
-	defaultLatestSQLMapAgentVersion = "2.4.53"
+	defaultLatestSQLMapAgentVersion = "2.4.54"
 	sqlmapAgentReleaseAPI           = "https://api.github.com/repos/maximo896/as/releases/latest"
 	sqlmapAgentTagsAPI              = "https://api.github.com/repos/maximo896/as/tags?per_page=1"
 	sqlmapAgentVersionCacheTTL      = 10 * time.Minute
