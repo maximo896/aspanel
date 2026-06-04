@@ -35,7 +35,7 @@ type API struct {
 }
 
 const (
-	defaultLatestSQLMapAgentVersion = "2.4.34"
+	defaultLatestSQLMapAgentVersion = "2.4.53"
 	sqlmapAgentReleaseAPI           = "https://api.github.com/repos/maximo896/as/releases/latest"
 	sqlmapAgentTagsAPI              = "https://api.github.com/repos/maximo896/as/tags?per_page=1"
 	sqlmapAgentVersionCacheTTL      = 10 * time.Minute
@@ -699,6 +699,9 @@ func (api *API) runFinishedAWVSScansCleanup(server models.AWVSServer) {
 func (api *API) GetSqlmapAgents(c *gin.Context) {
 	var agents []models.SqlmapAgent
 	api.DB.Order("id desc").Find(&agents)
+	for i := range agents {
+		agents[i].ShareByDomain = false
+	}
 	c.JSON(200, agents)
 }
 
@@ -815,7 +818,7 @@ func (api *API) RegisterAgentFromProtocol(c *gin.Context) {
 		AgentVersion:    strings.TrimSpace(statusResp.Version),
 		MaxConcurrency:  cfg.MaxConcurrency,
 		DefaultUseProxy: api.getSqlmapAgentDefaultUseProxy(),
-		ShareByDomain:   true,
+		ShareByDomain:   false,
 		IsActive:        true,
 		CurrentRunning:  statusResp.RunningCount,
 		CurrentQueued:   statusResp.QueuedCount,
@@ -827,7 +830,7 @@ func (api *API) RegisterAgentFromProtocol(c *gin.Context) {
 	var existing models.SqlmapAgent
 	if err := api.DB.Where("url = ?", baseURL).First(&existing).Error; err == nil {
 		agent.DefaultUseProxy = existing.DefaultUseProxy
-		agent.ShareByDomain = existing.ShareByDomain
+		agent.ShareByDomain = false
 		agent.ID = existing.ID
 		api.DB.Model(&existing).Updates(agent)
 		c.JSON(200, gin.H{"message": "Agent updated", "agent": agent})
@@ -883,9 +886,7 @@ func (api *API) UpdateSqlmapAgent(c *gin.Context) {
 	if req.DefaultUseProxy != nil {
 		agent.DefaultUseProxy = *req.DefaultUseProxy
 	}
-	if req.ShareByDomain != nil {
-		agent.ShareByDomain = *req.ShareByDomain
-	}
+	agent.ShareByDomain = false
 	if agent.MaxConcurrency <= 0 {
 		agent.MaxConcurrency = 10
 	}
@@ -1344,6 +1345,70 @@ func rawSnapshotHasDBA(raw string) bool {
 	default:
 		return false
 	}
+}
+
+func boolFromSnapshotValue(raw interface{}) bool {
+	switch value := raw.(type) {
+	case bool:
+		return value
+	case string:
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "1", "true", "yes", "y", "available", "possible":
+			return true
+		}
+	case float64:
+		return value != 0
+	}
+	return false
+}
+
+func scanMapHasShell(snapshot map[string]interface{}) bool {
+	if len(snapshot) == 0 {
+		return false
+	}
+	if shellProbe, ok := snapshot["shell_probe"].(map[string]interface{}); ok {
+		if boolFromSnapshotValue(shellProbe["ok"]) {
+			return true
+		}
+		status := strings.ToLower(strings.TrimSpace(fmt.Sprint(shellProbe["status"])))
+		if status == "available" || status == "possible" {
+			return true
+		}
+	}
+	if session, ok := snapshot["session"].(map[string]interface{}); ok && boolFromSnapshotValue(session["xp_cmdshell_available"]) {
+		return true
+	}
+	content, _ := snapshot["content"].(map[string]interface{})
+	if content == nil {
+		content = snapshot
+	}
+	if value := strings.TrimSpace(fmt.Sprint(content["os_cmd"])); value != "" && value != "<nil>" {
+		return true
+	}
+	return false
+}
+
+func rawSnapshotHasShell(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return false
+	}
+	return scanMapHasShell(snapshot)
+}
+
+func (api *API) markFindingShellIfPresent(finding *models.TaskFinding, scan map[string]interface{}) {
+	if finding == nil || !scanMapHasShell(scan) {
+		return
+	}
+	if !finding.HasShell {
+		finding.HasShell = true
+		api.DB.Model(&models.TaskFinding{}).Where("id = ? AND has_shell = ?", finding.ID, false).Update("has_shell", true)
+	}
+	api.DB.Model(&models.Task{}).Where("id = ? AND has_shell = ?", finding.TaskID, false).Update("has_shell", true)
 }
 
 func loadDomainSnapshotSQLMapDataFlags(db *gorm.DB, rawURL string) sqlmapDataFlags {
@@ -1990,6 +2055,11 @@ func (api *API) GetTaskFindings(c *gin.Context) {
 			api.DB.Model(&models.TaskFinding{}).Where("id = ? AND has_dba = ?", findings[i].ID, false).Update("has_dba", true)
 			task.HasDBA = true
 		}
+		if !findings[i].HasShell && rawSnapshotHasShell(findings[i].SqlmapResultJSON) {
+			findings[i].HasShell = true
+			api.DB.Model(&models.TaskFinding{}).Where("id = ? AND has_shell = ?", findings[i].ID, false).Update("has_shell", true)
+			task.HasShell = true
+		}
 		mergeSQLMapDataFlags(&taskFlags, flags)
 	}
 	task.HasDBNames = taskFlags.HasDBNames
@@ -2001,6 +2071,9 @@ func (api *API) GetTaskFindings(c *gin.Context) {
 	}
 	if task.HasDBA {
 		api.DB.Model(&models.Task{}).Where("id = ? AND has_dba = ?", task.ID, false).Update("has_dba", true)
+	}
+	if task.HasShell {
+		api.DB.Model(&models.Task{}).Where("id = ? AND has_shell = ?", task.ID, false).Update("has_shell", true)
 	}
 	c.JSON(200, gin.H{"task": task, "findings": findings})
 }
@@ -2147,6 +2220,7 @@ func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 				if mergedScan, mergeErr := domaincache.ApplySnapshot(api.DB, cachedScan); mergeErr == nil {
 					cachedScan = mergedScan
 				}
+				api.markFindingShellIfPresent(finding, cachedScan)
 				c.JSON(200, gin.H{
 					"scan":    cachedScan,
 					"finding": finding,
@@ -2169,6 +2243,7 @@ func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 			return false
 		}
 		scan["sqlmap_status"] = finding.SqlmapStatus
+		api.markFindingShellIfPresent(finding, scan)
 		c.JSON(200, gin.H{
 			"scan":    scan,
 			"finding": finding,
@@ -2228,6 +2303,7 @@ func (api *API) GetFindingSqlmapDetail(c *gin.Context) {
 		finding.SqlmapResultJSON = string(cachedBody)
 		finding.SqlmapCachedAt = time.Now().Unix()
 		api.DB.Save(finding)
+		api.markFindingShellIfPresent(finding, scan)
 	}
 
 	c.JSON(200, gin.H{

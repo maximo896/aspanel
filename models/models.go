@@ -41,7 +41,7 @@ type SqlmapAgent struct {
 	AgentVersion    string `json:"agent_version"`
 	MaxConcurrency  int    `json:"max_concurrency"`
 	DefaultUseProxy bool   `json:"default_use_proxy" gorm:"default:false"`
-	ShareByDomain   bool   `json:"share_by_domain" gorm:"default:true"`
+	ShareByDomain   bool   `json:"share_by_domain" gorm:"default:false"`
 	IsActive        bool   `json:"is_active" gorm:"default:true"`
 	Updating        bool   `json:"updating" gorm:"default:false"`
 	CurrentRunning  int    `json:"current_running"`

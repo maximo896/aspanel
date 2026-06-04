@@ -235,9 +235,6 @@ export default function SqlmapPage() {
           <Form.Item name="default_use_proxy" label="默认使用代理" valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Form.Item name="share_by_domain" label="按域名共享任务" valuePropName="checked">
-            <Switch />
-          </Form.Item>
           <Form.Item name="manager_url" label="Manager URL"><Input placeholder="http://ip:port" /></Form.Item>
           <Form.Item name="manager_token" label="Manager Token"><Input.Password placeholder="留空则保持不变" /></Form.Item>
         </Form>

@@ -328,9 +328,6 @@ export default function SqlmapV2Page() {
           <Form.Item name="default_use_proxy" label="Default Use Proxy" valuePropName="checked">
             <Switch />
           </Form.Item>
-          <Form.Item name="share_by_domain" label="Share By Domain" valuePropName="checked">
-            <Switch />
-          </Form.Item>
           <Form.Item name="proxy_agent_id" label="Bound Proxy">
             <Select
               options={[

@@ -479,7 +479,6 @@ func customUrlQuote(s string) string {
 }
 
 func payloadVariants(payload string) []string {
-	payload = strings.TrimSpace(payload)
 	if payload == "" {
 		return nil
 	}
@@ -507,11 +506,10 @@ func payloadVariants(payload string) []string {
 
 func trimEncodedInjectionSuffix(v string) string {
 	re := regexp.MustCompile(`(?i)(%27|%22|%60|%5c|%3b|%29|%28)+$`)
-	return strings.TrimSpace(re.ReplaceAllString(v, ""))
+	return re.ReplaceAllString(v, "")
 }
 
 func trimPlainInjectionSuffix(v string) string {
-	v = strings.TrimSpace(v)
 	for len(v) > 0 {
 		last := v[len(v)-1]
 		if (last >= 'a' && last <= 'z') || (last >= 'A' && last <= 'Z') || (last >= '0' && last <= '9') {
@@ -522,7 +520,7 @@ func trimPlainInjectionSuffix(v string) string {
 		}
 		v = v[:len(v)-1]
 	}
-	return strings.TrimSpace(v)
+	return v
 }
 
 type decodedByteSpan struct {
@@ -579,8 +577,6 @@ func shouldConsumeTrailingCommentSpace(matched string) bool {
 func replacePayloadUsingOriginalValue(rawRequest, payload, originalValue string) string {
 	rawRequest = strings.ReplaceAll(rawRequest, "\r\n", "\n")
 	rawRequest = strings.ReplaceAll(rawRequest, "\r", "\n")
-	payload = strings.TrimSpace(payload)
-	originalValue = strings.TrimSpace(originalValue)
 	if rawRequest == "" || payload == "" || originalValue == "" {
 		return rawRequest
 	}
@@ -636,18 +632,23 @@ func replacePayloadUsingOriginalValue(rawRequest, payload, originalValue string)
 		if replacementBase == "" {
 			replacementBase = encodeReplacementLikeOriginal(originalSegment, originalValue)
 		}
-		return rawRequest[:origStart] + replacementBase + "*" + rawRequest[origEnd:]
+		trimmedEnd := strings.TrimRightFunc(rawRequest[origStart:origEnd], unicode.IsSpace)
+		preservedWhitespace := rawRequest[origStart+len(trimmedEnd) : origEnd]
+		return rawRequest[:origStart] + replacementBase + "*" + preservedWhitespace + rawRequest[origEnd:]
 	}
 	return rawRequest
 }
 
 func payloadReplacement(v string) string {
+	trimmed := strings.TrimRightFunc(v, unicode.IsSpace)
+	preservedWhitespace := v[len(trimmed):]
+	v = trimmed
 	base := trimEncodedInjectionSuffix(v)
 	base = trimPlainInjectionSuffix(base)
 	if base == "" {
-		return "*"
+		return "*" + preservedWhitespace
 	}
-	return base + "*"
+	return base + "*" + preservedWhitespace
 }
 
 func maskPayloadInRawRequest(rawRequest, payload string) string {
@@ -1082,7 +1083,7 @@ func sendToSqlmapAgent(task models.Task, domain, vulnID, requestData string, for
 		"vuln_id":         vulnID,
 		"request_data":    requestData,
 		"force_ssl":       forceSSL,
-		"share_by_domain": selectedAgent.ShareByDomain && !forceFresh,
+		"share_by_domain": false,
 	}
 	if effectiveUseProxy && strings.TrimSpace(selectedAgent.ProxyURL) != "" {
 		payload["proxy"] = strings.TrimSpace(selectedAgent.ProxyURL)
@@ -2193,7 +2194,7 @@ func registerSQLMapFromProto(db *gorm.DB, sig interact.Signal, inst *models.Clou
 		ManagerToken:    strings.TrimSpace(cfg.ManagerToken),
 		MaxConcurrency:  maxInt(1, cfg.MaxConcurrency),
 		DefaultUseProxy: sqlmapAgentDefaultUseProxy(db),
-		ShareByDomain:   true,
+		ShareByDomain:   false,
 		IsActive:        true,
 		LastCheckedAt:   time.Now().Unix(),
 		LastHeartbeatAt: time.Now().Unix(),

@@ -342,12 +342,6 @@ export default function SqlmapV3Page() {
       render: (value: boolean) => <Tag color={value ? 'blue' : 'default'}>{value ? t('yes') : t('no')}</Tag>,
     },
     {
-      title: t('share_by_domain'),
-      dataIndex: 'share_by_domain',
-      width: 120,
-      render: (value: boolean) => <Tag color={value !== false ? 'green' : 'default'}>{value !== false ? t('yes') : t('no')}</Tag>,
-    },
-    {
       title: t('version'),
       dataIndex: 'agent_version',
       width: 100,
@@ -472,9 +466,6 @@ export default function SqlmapV3Page() {
           <Form.Item name="api_key" label="API Key"><Input.Password /></Form.Item>
           <Form.Item name="max_concurrency" label={t('max_concurrency')}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="default_use_proxy" label={t('default_use_proxy')} valuePropName="checked">
-            <Switch />
-          </Form.Item>
-          <Form.Item name="share_by_domain" label={t('share_by_domain')} valuePropName="checked">
             <Switch />
           </Form.Item>
           <Form.Item name="proxy_agent_id" label={t('bound_proxy')}>

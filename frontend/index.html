@@ -1023,7 +1023,6 @@
                         <th>{{ t('running') }} / {{ t('limit') }}</th>
                         <th>{{ t('queued') }}</th>
                         <th>{{ t('default_use_proxy') }}</th>
-                        <th>{{ t('share_by_domain') }}</th>
                         <th>{{ t('status') }}</th>
                         <th>{{ t('action') }}</th>
                     </tr>
@@ -1041,7 +1040,6 @@
                         <td><span class="text-info fw-bold">{{ agent.current_running }}</span> / {{ agent.max_concurrency }}</td>
                         <td><span class="text-warning fw-bold">{{ agent.current_queued }}</span></td>
                         <td><span class="badge" :class="agent.default_use_proxy ? 'bg-success' : 'bg-secondary'">{{ agent.default_use_proxy ? t('yes') : t('no') }}</span></td>
-                        <td><span class="badge" :class="agent.share_by_domain !== false ? 'bg-success' : 'bg-secondary'">{{ agent.share_by_domain !== false ? t('yes') : t('no') }}</span></td>
                         <td>
                             <span class="badge bg-warning text-dark" v-if="agent.updating">{{ t('updating') }}</span>
                             <span class="badge" :class="agent.is_active ? 'bg-success' : 'bg-secondary'" v-else>{{ agent.is_active ? t('online') : t('offline') }}</span>
@@ -1433,12 +1431,6 @@
                             <label class="form-check-label">
                                 <input class="form-check-input me-2" type="checkbox" v-model="agentEdit.default_use_proxy">
                                 {{ t('default_use_proxy') }}
-                            </label>
-                        </div>
-                        <div class="col-md-4 d-flex align-items-center">
-                            <label class="form-check-label">
-                                <input class="form-check-input me-2" type="checkbox" v-model="agentEdit.share_by_domain">
-                                {{ t('share_by_domain') }}
                             </label>
                         </div>
                     </div>
@@ -2283,7 +2275,7 @@ new Vue({
         awvsEditId: null,
         awvsEdit: { name: '', url: '', api_key: '', awvs_username: '', awvs_password: '', max_concurrency: 5 },
         agentEditId: null,
-        agentEdit: { name: '', url: '', api_key: '', max_concurrency: 10, default_use_proxy: true, share_by_domain: true },
+        agentEdit: { name: '', url: '', api_key: '', max_concurrency: 10, default_use_proxy: true },
         selectedTaskId: null,
         selectedTask: null,
         pendingRouteTaskId: null,
@@ -3699,13 +3691,12 @@ new Vue({
                 url: agent.url || '',
                 api_key: agent.api_key || '',
                 max_concurrency: agent.max_concurrency || 10,
-                default_use_proxy: agent.default_use_proxy !== false,
-                share_by_domain: agent.share_by_domain !== false
+                default_use_proxy: agent.default_use_proxy !== false
             };
         },
         cancelEditAgent() {
             this.agentEditId = null;
-            this.agentEdit = { name: '', url: '', api_key: '', max_concurrency: 10, default_use_proxy: true, share_by_domain: true };
+            this.agentEdit = { name: '', url: '', api_key: '', max_concurrency: 10, default_use_proxy: true };
         },
         saveAgent() {
             if (!this.agentEditId) return;
