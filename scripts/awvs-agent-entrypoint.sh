@@ -437,7 +437,7 @@ if [ "${MANAGER_ALLOW_REUSE_PORT:-0}" = "1" ] && $SUDO docker inspect "$CONTAINE
 fi
 
 # Re-allocate a random port only when the requested one is truly occupied.
-while ! check_port_free "$AGENT_PORT"; do
+while [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ] && ! check_port_free "$AGENT_PORT"; do
   echo "[!] Port $AGENT_PORT is already in use. Assigning a new random port..."
   AGENT_PORT="$((30000 + RANDOM % 10001))"
 done

@@ -277,19 +277,33 @@ func (api *API) RefreshPathAgentStatus(c *gin.Context) {
 	req.Header.Set("X-Api-Token", agent.APIKey)
 	resp, err := httpClient().Do(req)
 	if err != nil {
+		if agent.Updating {
+			agent.LastCheckedAt = time.Now().Unix()
+			api.DB.Save(&agent)
+			c.JSON(200, gin.H{"agent": agent, "error": err.Error()})
+			return
+		}
 		agent.CurrentRunning = -1
 		agent.CurrentQueued = -1
 		agent.IsActive = false
+		agent.Updating = false
 		api.DB.Save(&agent)
 		c.JSON(200, gin.H{"agent": agent, "error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		if agent.Updating {
+			agent.LastCheckedAt = time.Now().Unix()
+			api.DB.Save(&agent)
+			c.JSON(200, gin.H{"agent": agent, "error": fmt.Sprintf("status %d", resp.StatusCode)})
+			return
+		}
 		agent.CurrentRunning = -1
 		agent.CurrentQueued = -1
 		agent.AgentVersion = ""
 		agent.IsActive = false
+		agent.Updating = false
 		api.DB.Save(&agent)
 		c.JSON(200, gin.H{"agent": agent, "error": fmt.Sprintf("status %d", resp.StatusCode)})
 		return
@@ -320,10 +334,9 @@ func (api *API) UpdatePathAgentVersion(c *gin.Context) {
 		return
 	}
 	api.DB.Model(&models.PathAgent{}).Where("id = ?", agent.ID).Updates(map[string]interface{}{
-		"is_active":         false,
-		"updating":          true,
-		"last_checked_at":   time.Now().Unix(),
-		"last_heartbeat_at": 0,
+		"is_active":       true,
+		"updating":        true,
+		"last_checked_at": time.Now().Unix(),
 	})
 	c.JSON(200, gin.H{
 		"message":  "path agent update requested",

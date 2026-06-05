@@ -379,7 +379,10 @@ export default function AWVSV3Page() {
       title: t('status'),
       key: 'status',
       width: 90,
-      render: (_, server) => <Tag color={server.is_active ? 'success' : 'default'}>{server.is_active ? t('online') : t('offline')}</Tag>,
+      render: (_, server) => {
+        if (server.updating) return <Tag color="warning">{t('updating')}</Tag>
+        return <Tag color={server.is_active ? 'success' : 'default'}>{server.is_active ? t('online') : t('offline')}</Tag>
+      },
     },
     {
       title: 'Last Auto Restart',

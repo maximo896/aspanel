@@ -6,75 +6,85 @@ import (
 
 type AWVSServer struct {
 	gorm.Model
-	Name                string `json:"name"`
-	URL                 string `json:"url"`
-	APIKey              string `json:"api_key"`
-	ManagerURL          string `json:"manager_url"`
-	ManagerToken        string `json:"manager_token"`
-	AWVSUsername        string `json:"awvs_username"`
-	AWVSPassword        string `json:"awvs_password"`
-	MaxConcurrency      int    `json:"max_concurrency"`
-	CurrentRunning      int    `json:"current_running"`
-	PanelRunning        int    `json:"panel_running" gorm:"-"`
-	AutoRestartOnAPI500 bool   `json:"auto_restart_on_api_500" gorm:"default:false"`
-	LastAutoRestartAt   int64  `json:"last_auto_restart_at"`
-	IsActive            bool   `json:"is_active" gorm:"default:true"`
-	LastCheckedAt       int64  `json:"last_checked_at"`
-	LastHeartbeatAt     int64  `json:"last_heartbeat_at"`
-	LastError           string `json:"last_error"`
-	Provider            string `json:"provider" gorm:"default:'manual'"`
-	InstanceID          string `json:"instance_id"`
-	Region              string `json:"region"`
-	Zone                string `json:"zone"`
-	CleanupRunning      bool   `json:"cleanup_running" gorm:"-"`
-	CleanupMessage      string `json:"cleanup_message" gorm:"-"`
-	CleanupDeletedCount int    `json:"cleanup_deleted_count" gorm:"-"`
+	Name                  string `json:"name"`
+	URL                   string `json:"url"`
+	APIKey                string `json:"api_key"`
+	ManagerURL            string `json:"manager_url"`
+	ManagerToken          string `json:"manager_token"`
+	AWVSUsername          string `json:"awvs_username"`
+	AWVSPassword          string `json:"awvs_password"`
+	MaxConcurrency        int    `json:"max_concurrency"`
+	CurrentRunning        int    `json:"current_running"`
+	PanelRunning          int    `json:"panel_running" gorm:"-"`
+	AutoRestartOnAPI500   bool   `json:"auto_restart_on_api_500" gorm:"default:false"`
+	LastAutoRestartAt     int64  `json:"last_auto_restart_at"`
+	IsActive              bool   `json:"is_active" gorm:"default:true"`
+	Updating              bool   `json:"updating" gorm:"default:false"`
+	LastCheckedAt         int64  `json:"last_checked_at"`
+	LastHeartbeatAt       int64  `json:"last_heartbeat_at"`
+	LastAutoUpdateCheckAt int64  `json:"last_auto_update_check_at"`
+	LastAutoUpdateAt      int64  `json:"last_auto_update_at"`
+	LastAutoUpdateError   string `json:"last_auto_update_error"`
+	LastError             string `json:"last_error"`
+	Provider              string `json:"provider" gorm:"default:'manual'"`
+	InstanceID            string `json:"instance_id"`
+	Region                string `json:"region"`
+	Zone                  string `json:"zone"`
+	CleanupRunning        bool   `json:"cleanup_running" gorm:"-"`
+	CleanupMessage        string `json:"cleanup_message" gorm:"-"`
+	CleanupDeletedCount   int    `json:"cleanup_deleted_count" gorm:"-"`
 }
 
 type SqlmapAgent struct {
 	gorm.Model
-	Name            string `json:"name"`
-	URL             string `json:"url"`
-	APIKey          string `json:"api_key"`
-	ManagerURL      string `json:"manager_url"`
-	ManagerToken    string `json:"manager_token"`
-	AgentVersion    string `json:"agent_version"`
-	MaxConcurrency  int    `json:"max_concurrency"`
-	DefaultUseProxy bool   `json:"default_use_proxy" gorm:"default:false"`
-	ShareByDomain   bool   `json:"share_by_domain" gorm:"default:false"`
-	IsActive        bool   `json:"is_active" gorm:"default:true"`
-	Updating        bool   `json:"updating" gorm:"default:false"`
-	CurrentRunning  int    `json:"current_running"`
-	CurrentQueued   int    `json:"current_queued"`
-	LastCheckedAt   int64  `json:"last_checked_at"`
-	LastHeartbeatAt int64  `json:"last_heartbeat_at"`
-	Provider        string `json:"provider" gorm:"default:'manual'"`
-	InstanceID      string `json:"instance_id"`
-	Region          string `json:"region"`
-	Zone            string `json:"zone"`
-	ProxyAgentID    uint   `json:"proxy_agent_id"`
-	ProxyURL        string `json:"proxy_url"`
+	Name                  string `json:"name"`
+	URL                   string `json:"url"`
+	APIKey                string `json:"api_key"`
+	ManagerURL            string `json:"manager_url"`
+	ManagerToken          string `json:"manager_token"`
+	AgentVersion          string `json:"agent_version"`
+	MaxConcurrency        int    `json:"max_concurrency"`
+	DefaultUseProxy       bool   `json:"default_use_proxy" gorm:"default:false"`
+	ShareByDomain         bool   `json:"share_by_domain" gorm:"default:false"`
+	IsActive              bool   `json:"is_active" gorm:"default:true"`
+	Updating              bool   `json:"updating" gorm:"default:false"`
+	CurrentRunning        int    `json:"current_running"`
+	CurrentQueued         int    `json:"current_queued"`
+	LastCheckedAt         int64  `json:"last_checked_at"`
+	LastHeartbeatAt       int64  `json:"last_heartbeat_at"`
+	LastAutoUpdateCheckAt int64  `json:"last_auto_update_check_at"`
+	LastAutoUpdateAt      int64  `json:"last_auto_update_at"`
+	LastAutoUpdateError   string `json:"last_auto_update_error"`
+	Provider              string `json:"provider" gorm:"default:'manual'"`
+	InstanceID            string `json:"instance_id"`
+	Region                string `json:"region"`
+	Zone                  string `json:"zone"`
+	ProxyAgentID          uint   `json:"proxy_agent_id"`
+	ProxyURL              string `json:"proxy_url"`
 }
 
 type PathAgent struct {
 	gorm.Model
-	Name            string `json:"name"`
-	URL             string `json:"url"`
-	APIKey          string `json:"api_key"`
-	ManagerURL      string `json:"manager_url"`
-	ManagerToken    string `json:"manager_token"`
-	AgentVersion    string `json:"agent_version"`
-	MaxConcurrency  int    `json:"max_concurrency"`
-	IsActive        bool   `json:"is_active" gorm:"default:true"`
-	Updating        bool   `json:"updating" gorm:"default:false"`
-	CurrentRunning  int    `json:"current_running"`
-	CurrentQueued   int    `json:"current_queued"`
-	LastCheckedAt   int64  `json:"last_checked_at"`
-	LastHeartbeatAt int64  `json:"last_heartbeat_at"`
-	Provider        string `json:"provider" gorm:"default:'manual'"`
-	InstanceID      string `json:"instance_id"`
-	Region          string `json:"region"`
-	Zone            string `json:"zone"`
+	Name                  string `json:"name"`
+	URL                   string `json:"url"`
+	APIKey                string `json:"api_key"`
+	ManagerURL            string `json:"manager_url"`
+	ManagerToken          string `json:"manager_token"`
+	AgentVersion          string `json:"agent_version"`
+	MaxConcurrency        int    `json:"max_concurrency"`
+	IsActive              bool   `json:"is_active" gorm:"default:true"`
+	Updating              bool   `json:"updating" gorm:"default:false"`
+	CurrentRunning        int    `json:"current_running"`
+	CurrentQueued         int    `json:"current_queued"`
+	LastCheckedAt         int64  `json:"last_checked_at"`
+	LastHeartbeatAt       int64  `json:"last_heartbeat_at"`
+	LastAutoUpdateCheckAt int64  `json:"last_auto_update_check_at"`
+	LastAutoUpdateAt      int64  `json:"last_auto_update_at"`
+	LastAutoUpdateError   string `json:"last_auto_update_error"`
+	Provider              string `json:"provider" gorm:"default:'manual'"`
+	InstanceID            string `json:"instance_id"`
+	Region                string `json:"region"`
+	Zone                  string `json:"zone"`
 }
 
 type Task struct {

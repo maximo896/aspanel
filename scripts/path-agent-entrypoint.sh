@@ -272,7 +272,7 @@ PUBLIC_HOST="$(detect_public_host)"
 MANAGER_HOST="$(resolve_manager_host)"
 MANAGER_URL="http://${MANAGER_HOST}:${MANAGER_PORT}"
 
-while ! check_port_free "$AGENT_PORT"; do
+while [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ] && ! check_port_free "$AGENT_PORT"; do
   echo "[!] Port $AGENT_PORT is already in use. Assigning a new random port..."
   AGENT_PORT="$((30000 + RANDOM % 10001))"
 done

@@ -254,8 +254,13 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 	info, err := testAWVSConnection(server.URL, server.APIKey)
 	server.LastCheckedAt = time.Now().Unix()
 	if err != nil {
+		if server.Updating {
+			api.DB.Save(server)
+			return nil, err
+		}
 		server.IsActive = false
 		server.CurrentRunning = 0
+		server.Updating = false
 		server.LastError = err.Error()
 		if api.triggerAWVSAutoRestartOnOffline(server, err, "test_connection") {
 			return nil, fmt.Errorf("%v; docker restart requested", err)
@@ -266,6 +271,7 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 
 	server.URL = normalizeBaseURL(server.URL)
 	server.IsActive = true
+	server.Updating = false
 	server.LastError = ""
 	activeScans, countErr := getAWVSActiveScanCount(server.URL, server.APIKey)
 	if countErr != nil {
@@ -538,11 +544,10 @@ func (api *API) UpdateAWVSServerVersion(c *gin.Context) {
 		return
 	}
 	api.DB.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
-		"is_active":         false,
-		"current_running":   0,
-		"last_checked_at":   time.Now().Unix(),
-		"last_heartbeat_at": 0,
-		"last_error":        "manual update requested",
+		"is_active":       true,
+		"updating":        true,
+		"last_checked_at": time.Now().Unix(),
+		"last_error":      "manual update requested",
 	})
 	c.JSON(200, gin.H{
 		"message":   "awvs server update requested",
@@ -1041,19 +1046,33 @@ func (api *API) RefreshSqlmapAgentStatus(c *gin.Context) {
 	req.Header.Set("X-Api-Token", agent.APIKey)
 	resp, err := httpClient().Do(req)
 	if err != nil {
+		if agent.Updating {
+			agent.LastCheckedAt = time.Now().Unix()
+			api.DB.Save(&agent)
+			c.JSON(200, gin.H{"agent": agent, "error": err.Error()})
+			return
+		}
 		agent.CurrentRunning = -1
 		agent.CurrentQueued = -1
 		agent.IsActive = false
+		agent.Updating = false
 		api.DB.Save(&agent)
 		c.JSON(200, gin.H{"agent": agent, "error": err.Error()})
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		if agent.Updating {
+			agent.LastCheckedAt = time.Now().Unix()
+			api.DB.Save(&agent)
+			c.JSON(200, gin.H{"agent": agent, "error": fmt.Sprintf("status %d", resp.StatusCode)})
+			return
+		}
 		agent.CurrentRunning = -1
 		agent.CurrentQueued = -1
 		agent.AgentVersion = ""
 		agent.IsActive = false
+		agent.Updating = false
 		api.DB.Save(&agent)
 		c.JSON(200, gin.H{"agent": agent, "error": fmt.Sprintf("status %d", resp.StatusCode)})
 		return
@@ -1095,10 +1114,9 @@ func (api *API) UpdateSqlmapAgentVersion(c *gin.Context) {
 		return
 	}
 	api.DB.Model(&models.SqlmapAgent{}).Where("id = ?", agent.ID).Updates(map[string]interface{}{
-		"is_active":         false,
-		"updating":          true,
-		"last_checked_at":   time.Now().Unix(),
-		"last_heartbeat_at": 0,
+		"is_active":       true,
+		"updating":        true,
+		"last_checked_at": time.Now().Unix(),
 	})
 	c.JSON(200, gin.H{
 		"message":         "sqlmap agent update requested",

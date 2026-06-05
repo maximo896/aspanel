@@ -14,8 +14,12 @@ export interface AWVSServer {
   auto_restart_on_api_500: boolean
   last_auto_restart_at: number
   is_active: boolean
+  updating: boolean
   last_checked_at: number
   last_heartbeat_at: number
+  last_auto_update_check_at: number
+  last_auto_update_at: number
+  last_auto_update_error: string
   last_error: string
   provider: string
   instance_id: string
@@ -44,6 +48,9 @@ export interface SqlmapAgent {
   current_queued: number
   last_checked_at: number
   last_heartbeat_at: number
+  last_auto_update_check_at: number
+  last_auto_update_at: number
+  last_auto_update_error: string
   provider: string
   instance_id: string
   region: string
@@ -68,6 +75,9 @@ export interface PathAgent {
   current_queued: number
   last_checked_at: number
   last_heartbeat_at: number
+  last_auto_update_check_at: number
+  last_auto_update_at: number
+  last_auto_update_error: string
   provider: string
   instance_id: string
   region: string

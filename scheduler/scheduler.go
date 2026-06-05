@@ -258,6 +258,7 @@ func StartScheduler(db *gorm.DB) {
 	go refreshAWVSServersStatus(db)
 	go refreshSqlmapAgentsStatus(db)
 	go refreshPathAgentsStatus(db)
+	go autoUpdateAgents(db)
 	go syncSqlmapTaskStatus(db)
 	go syncTaskPathScanStatus(db)
 	go cleanupAWVSNoVulnTasksPeriodically(db)
@@ -279,11 +280,17 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 		for _, server := range servers {
 			wasActive := server.IsActive
 			client := awvs.NewClient(server.URL, server.APIKey)
+			checkedAt := time.Now().Unix()
 			_, err := client.TestConnection()
-			server.LastCheckedAt = time.Now().Unix()
 			if err != nil {
+				if server.Updating && updateGraceActive(server.LastAutoUpdateAt, server.LastCheckedAt, checkedAt) {
+					db.Save(&server)
+					continue
+				}
+				server.LastCheckedAt = checkedAt
 				server.IsActive = false
 				server.CurrentRunning = 0
+				server.Updating = false
 				server.LastError = err.Error()
 				if wasActive {
 					log.Printf("[awvs][heartbeat] node went OFFLINE id=%d name=%s url=%s err=%v", server.ID, server.Name, server.URL, err)
@@ -303,6 +310,8 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 				log.Printf("[awvs][heartbeat] node came back ONLINE id=%d name=%s url=%s", server.ID, server.Name, server.URL)
 			}
 			server.IsActive = true
+			server.Updating = false
+			server.LastCheckedAt = checkedAt
 			activeScans, countErr := client.CountActiveScans()
 			if countErr != nil {
 				server.LastError = fmt.Sprintf("count active scans failed; keeping last synced value %d: %v", server.CurrentRunning, countErr)
@@ -331,10 +340,19 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 			client := &http.Client{Timeout: 5 * time.Second, Transport: tr}
 			resp, err := client.Do(req)
 			if err != nil || resp.StatusCode != 200 {
+				if resp != nil && resp.Body != nil {
+					resp.Body.Close()
+				}
+				now := time.Now().Unix()
+				if agent.Updating && updateGraceActive(agent.LastAutoUpdateAt, agent.LastCheckedAt, now) {
+					db.Save(&agent)
+					continue
+				}
 				agent.IsActive = false
+				agent.Updating = false
 				agent.CurrentRunning = 0
 				agent.CurrentQueued = 0
-				agent.LastCheckedAt = time.Now().Unix()
+				agent.LastCheckedAt = now
 				db.Save(&agent)
 				if isServerStale(agent.LastHeartbeatAt) {
 					requeueSqlmapAgentTasks(db, agent.ID, "sqlmap_heartbeat_timeout")

@@ -127,7 +127,16 @@ func refreshPathAgentsStatus(db *gorm.DB) {
 			client := &http.Client{Timeout: 5 * time.Second, Transport: pathAgentTransport()}
 			resp, err := client.Do(req)
 			if err != nil || resp.StatusCode != 200 {
+				if resp != nil && resp.Body != nil {
+					resp.Body.Close()
+				}
+				now := time.Now().Unix()
+				if agent.Updating && updateGraceActive(agent.LastAutoUpdateAt, agent.LastCheckedAt, now) {
+					db.Save(&agent)
+					continue
+				}
 				agent.IsActive = false
+				agent.Updating = false
 				db.Save(&agent)
 				continue
 			}
