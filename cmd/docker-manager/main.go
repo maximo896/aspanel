@@ -23,27 +23,29 @@ type config struct {
 	Containers        []string `json:"containers"`
 	UpdateScript      string   `json:"update_script"`
 	UpdateLog         string   `json:"update_log"`
+	UninstallScript   string   `json:"uninstall_script"`
+	UninstallLog      string   `json:"uninstall_log"`
 	CommandTimeoutSec int      `json:"command_timeout_sec"`
 }
 
 type state struct {
-	Version          string `json:"version"`
-	PID              int    `json:"pid"`
-	StartedAt        int64  `json:"started_at"`
-	LastAction       string `json:"last_action"`
-	LastActionAt     int64  `json:"last_action_at"`
-	LastSuccessAt    int64  `json:"last_success_at"`
-	LastError        string `json:"last_error"`
-	ActionInProgress bool   `json:"action_in_progress"`
-	UpdateRequested  bool   `json:"update_requested"`
-	UpdateRequestedAt int64 `json:"update_requested_at"`
+	Version           string `json:"version"`
+	PID               int    `json:"pid"`
+	StartedAt         int64  `json:"started_at"`
+	LastAction        string `json:"last_action"`
+	LastActionAt      int64  `json:"last_action_at"`
+	LastSuccessAt     int64  `json:"last_success_at"`
+	LastError         string `json:"last_error"`
+	ActionInProgress  bool   `json:"action_in_progress"`
+	UpdateRequested   bool   `json:"update_requested"`
+	UpdateRequestedAt int64  `json:"update_requested_at"`
 }
 
 type manager struct {
-	token     string
+	token      string
 	configPath string
-	statePath string
-	startedAt int64
+	statePath  string
+	startedAt  int64
 
 	actionMu sync.Mutex
 	stateMu  sync.Mutex
@@ -158,6 +160,8 @@ func (m *manager) handleControl(w http.ResponseWriter, r *http.Request) {
 		m.handleDockerAction(w, action, cfg)
 	case "update":
 		m.handleUpdate(w, cfg)
+	case "uninstall":
+		m.handleUninstall(w, cfg)
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "unsupported action"})
 	}
@@ -249,6 +253,49 @@ func (m *manager) handleUpdate(w http.ResponseWriter, cfg config) {
 	})
 }
 
+func (m *manager) handleUninstall(w http.ResponseWriter, cfg config) {
+	uninstallScript := strings.TrimSpace(cfg.UninstallScript)
+	if uninstallScript == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "uninstall script is not configured"})
+		return
+	}
+	info, err := os.Stat(uninstallScript)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "uninstall script not found"})
+		return
+	}
+	if info.IsDir() {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "uninstall script path is a directory"})
+		return
+	}
+
+	logFile, err := openAppendFile(cfg.UninstallLog)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	defer logFile.Close()
+
+	cmd := exec.Command(uninstallScript)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.Env = os.Environ()
+	if err := cmd.Start(); err != nil {
+		m.markActionDone("uninstall", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
+		return
+	}
+
+	m.markActionStart("uninstall")
+	_ = cmd.Process.Release()
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+		"ok":               true,
+		"action":           "uninstall",
+		"message":          "uninstall requested",
+		"uninstall_script": uninstallScript,
+	})
+}
+
 func (m *manager) authorized(r *http.Request) bool {
 	return strings.TrimSpace(r.Header.Get("X-Manager-Token")) == m.token
 }
@@ -337,6 +384,8 @@ func loadConfig(path string) (config, error) {
 	cfg.Containers = out
 	cfg.UpdateScript = strings.TrimSpace(cfg.UpdateScript)
 	cfg.UpdateLog = strings.TrimSpace(cfg.UpdateLog)
+	cfg.UninstallScript = strings.TrimSpace(cfg.UninstallScript)
+	cfg.UninstallLog = strings.TrimSpace(cfg.UninstallLog)
 	return cfg, nil
 }
 

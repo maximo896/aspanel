@@ -533,6 +533,38 @@ func (api *API) GetAWVSManualUpdateCommand(c *gin.Context) {
 	})
 }
 
+func (api *API) GetAWVSManualUninstallCommand(c *gin.Context) {
+	var server models.AWVSServer
+	if err := api.DB.First(&server, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "awvs server not found"})
+		return
+	}
+	command, err := buildAWVSManualUninstallCommand(server)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{
+		"command": command,
+		"name":    server.Name,
+		"type":    "awvs",
+	})
+}
+
+func (api *API) UninstallAWVSServer(c *gin.Context) {
+	var server models.AWVSServer
+	if err := api.DB.First(&server, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "awvs server not found"})
+		return
+	}
+	if err := api.callNodeManagerForNode(server.ManagerURL, server.ManagerToken, server.URL, "uninstall"); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	api.deleteAWVSServerRecord(server.ID)
+	c.JSON(202, gin.H{"message": "awvs uninstall requested", "server_id": server.ID})
+}
+
 func (api *API) UpdateAWVSServerVersion(c *gin.Context) {
 	var server models.AWVSServer
 	if err := api.DB.First(&server, c.Param("id")).Error; err != nil {
@@ -557,9 +589,16 @@ func (api *API) UpdateAWVSServerVersion(c *gin.Context) {
 
 func (api *API) DeleteServer(c *gin.Context) {
 	id := c.Param("id")
-	if idValue, err := strconv.ParseUint(id, 10, 64); err == nil {
-		scheduler.BestEffortDeleteAWVSTargetsForServer(api.DB, uint(idValue))
+	idValue, _ := strconv.ParseUint(id, 10, 64)
+	api.deleteAWVSServerRecord(uint(idValue))
+	c.JSON(200, gin.H{"message": "deleted and tasks reset"})
+}
+
+func (api *API) deleteAWVSServerRecord(id uint) {
+	if id == 0 {
+		return
 	}
+	scheduler.BestEffortDeleteAWVSTargetsForServer(api.DB, id)
 	// Reset associated tasks to pending so they can be picked up by another node
 	api.DB.Model(&models.Task{}).Where("awvs_server_id = ? AND status IN ?", id, []string{"running", "scanning"}).Updates(map[string]interface{}{
 		"status":                 "pending",
@@ -569,7 +608,6 @@ func (api *API) DeleteServer(c *gin.Context) {
 		"awvs_target_cleaned_at": 0,
 	})
 	api.DB.Delete(&models.AWVSServer{}, id)
-	c.JSON(200, gin.H{"message": "deleted and tasks reset"})
 }
 
 func (api *API) CleanupOfflineAWVSServers(c *gin.Context) {
@@ -941,9 +979,16 @@ func (api *API) UpdateSqlmapAgent(c *gin.Context) {
 
 func (api *API) DeleteSqlmapAgent(c *gin.Context) {
 	id := c.Param("id")
-	if idValue, err := strconv.ParseUint(id, 10, 64); err == nil {
-		scheduler.BestEffortCancelSqlmapAgentTasks(api.DB, uint(idValue))
+	idValue, _ := strconv.ParseUint(id, 10, 64)
+	api.deleteSqlmapAgentRecord(uint(idValue))
+	c.JSON(200, gin.H{"message": "deleted and associated sqlmap tasks reset"})
+}
+
+func (api *API) deleteSqlmapAgentRecord(id uint) {
+	if id == 0 {
+		return
 	}
+	scheduler.BestEffortCancelSqlmapAgentTasks(api.DB, id)
 	// Reset associated task findings
 	api.DB.Model(&models.TaskFinding{}).Where("sqlmap_agent_id = ? AND sqlmap_status IN ?", id, []string{"running", "queued"}).Updates(map[string]interface{}{
 		"sent_to_sqlmap":    false,
@@ -969,7 +1014,6 @@ func (api *API) DeleteSqlmapAgent(c *gin.Context) {
 		"has_injection":    false,
 	})
 	api.DB.Delete(&models.SqlmapAgent{}, id)
-	c.JSON(200, gin.H{"message": "deleted and associated sqlmap tasks reset"})
 }
 
 func (api *API) CleanupOfflineSqlmapAgents(c *gin.Context) {
@@ -1153,6 +1197,39 @@ func (api *API) GetSqlmapManualUpdateCommand(c *gin.Context) {
 		response["warning"] = "manager health unavailable, using default data dir fallback"
 	}
 	c.JSON(200, response)
+}
+
+func (api *API) GetSqlmapManualUninstallCommand(c *gin.Context) {
+	var agent models.SqlmapAgent
+	if err := api.DB.First(&agent, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "sqlmap agent not found"})
+		return
+	}
+	cfg, _ := api.fetchManagerConfig(agent.ManagerURL, agent.ManagerToken)
+	command, err := api.buildSqlmapManualUninstallCommand(agent, cfg)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{
+		"command": command,
+		"name":    agent.Name,
+		"type":    "sqlmap",
+	})
+}
+
+func (api *API) UninstallSqlmapAgent(c *gin.Context) {
+	var agent models.SqlmapAgent
+	if err := api.DB.First(&agent, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "sqlmap agent not found"})
+		return
+	}
+	if err := api.callNodeManagerForNode(agent.ManagerURL, agent.ManagerToken, agent.URL, "uninstall"); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	api.deleteSqlmapAgentRecord(agent.ID)
+	c.JSON(202, gin.H{"message": "sqlmap agent uninstall requested", "agent_id": agent.ID})
 }
 
 func (api *API) GetSqlmapAgentLatestVersion(c *gin.Context) {
@@ -3312,6 +3389,8 @@ type managerConfigPayload struct {
 	Containers        []string `json:"containers"`
 	UpdateScript      string   `json:"update_script"`
 	UpdateLog         string   `json:"update_log"`
+	UninstallScript   string   `json:"uninstall_script"`
+	UninstallLog      string   `json:"uninstall_log"`
 	CommandTimeoutSec int      `json:"command_timeout_sec"`
 }
 
@@ -3568,6 +3647,16 @@ func buildAWVSManualUpdatePowerShellCommand(server models.AWVSServer) (string, e
 	), nil
 }
 
+func buildAWVSManualUninstallCommand(server models.AWVSServer) (string, error) {
+	safeName := sanitizeProxyContainerName(server.Name)
+	return buildManualUninstallCommand(
+		[]string{fmt.Sprintf("awvs-agent-%s", safeName)},
+		fmt.Sprintf("aspanel-docker-manager-awvs-%s", safeName),
+		fmt.Sprintf("/etc/systemd/system/aspanel-docker-manager-awvs-%s.service", safeName),
+		fmt.Sprintf("/opt/aspanel/awvs-agent/%s", safeName),
+	), nil
+}
+
 func (api *API) buildSqlmapManualUpdateCommand(agent models.SqlmapAgent, cfg *managerConfigPayload) (string, error) {
 	port, err := parseNodePort(agent.URL)
 	if err != nil {
@@ -3628,6 +3717,26 @@ func (api *API) buildSqlmapManualUpdatePowerShellCommand(agent models.SqlmapAgen
 	return cmd, nil
 }
 
+func (api *API) buildSqlmapManualUninstallCommand(agent models.SqlmapAgent, cfg *managerConfigPayload) (string, error) {
+	safeName := sanitizeProxyContainerName(agent.Name)
+	dataRootBase := "/opt/aspanel/sqlmap-agent"
+	if cfg != nil {
+		if derived := deriveDataRootBase(cfg.UpdateScript); derived != "" {
+			dataRootBase = derived
+		}
+	}
+	containers := []string{fmt.Sprintf("sqlmap-agent-%s", safeName)}
+	if agent.ProxyAgentID != 0 {
+		containers = append(containers, fmt.Sprintf("proxy-gateway-%s", safeName))
+	}
+	return buildManualUninstallCommand(
+		containers,
+		fmt.Sprintf("aspanel-docker-manager-sqlmap-%s", safeName),
+		fmt.Sprintf("/etc/systemd/system/aspanel-docker-manager-sqlmap-%s.service", safeName),
+		filepath.ToSlash(filepath.Join(dataRootBase, safeName)),
+	), nil
+}
+
 func buildPathManualUpdateCommand(agent models.PathAgent, cfg *managerConfigPayload) (string, error) {
 	port, err := parseNodePort(agent.URL)
 	if err != nil {
@@ -3646,6 +3755,53 @@ func buildPathManualUpdateCommand(agent models.PathAgent, cfg *managerConfigPayl
 		maxIntValue(1, agent.MaxConcurrency),
 		shellQuote(dataRootBase),
 	), nil
+}
+
+func buildPathManualUninstallCommand(agent models.PathAgent, cfg *managerConfigPayload) (string, error) {
+	safeName := sanitizeProxyContainerName(agent.Name)
+	dataRootBase := "/opt/aspanel/path-agent"
+	if cfg != nil {
+		if derived := deriveDataRootBase(cfg.UpdateScript); derived != "" {
+			dataRootBase = derived
+		}
+	}
+	return buildManualUninstallCommand(
+		[]string{fmt.Sprintf("path-agent-%s", safeName)},
+		fmt.Sprintf("aspanel-docker-manager-path-%s", safeName),
+		fmt.Sprintf("/etc/systemd/system/aspanel-docker-manager-path-%s.service", safeName),
+		filepath.ToSlash(filepath.Join(dataRootBase, safeName)),
+	), nil
+}
+
+func buildManualUninstallCommand(containers []string, serviceName, serviceFile, dataRoot string) string {
+	parts := []string{
+		`SUDO=""`,
+		`if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi`,
+	}
+	if len(containers) > 0 {
+		quotedContainers := make([]string, 0, len(containers))
+		for _, container := range containers {
+			if strings.TrimSpace(container) != "" {
+				quotedContainers = append(quotedContainers, shellQuote(strings.TrimSpace(container)))
+			}
+		}
+		if len(quotedContainers) > 0 {
+			parts = append(parts, fmt.Sprintf("$SUDO docker rm -f %s >/dev/null 2>&1 || true", strings.Join(quotedContainers, " ")))
+		}
+	}
+	dataRoot = filepath.ToSlash(filepath.Clean(strings.TrimSpace(dataRoot)))
+	if dataRoot != "" && dataRoot != "." && dataRoot != "/" {
+		parts = append(parts, fmt.Sprintf("$SUDO rm -rf %s", shellQuote(dataRoot)))
+	}
+	if strings.TrimSpace(serviceName) != "" && strings.TrimSpace(serviceFile) != "" {
+		parts = append(parts, fmt.Sprintf(
+			"if command -v systemctl >/dev/null 2>&1; then $SUDO systemctl disable %s >/dev/null 2>&1 || true; $SUDO rm -f %s; $SUDO systemctl daemon-reload >/dev/null 2>&1 || true; $SUDO systemctl stop %s >/dev/null 2>&1 || true; fi",
+			shellQuote(strings.TrimSpace(serviceName)),
+			shellQuote(strings.TrimSpace(serviceFile)),
+			shellQuote(strings.TrimSpace(serviceName)),
+		))
+	}
+	return strings.Join(parts, "\n")
 }
 
 func generateDockerCommand(name string, maxConcurrency int, agentPort int) string {

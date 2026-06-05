@@ -39,11 +39,13 @@ import {
   deleteServer,
   extractError,
   getAWVSManualUpdateCommand,
+  getAWVSManualUninstallCommand,
   getCloudSettings,
   getServers,
   refreshServer,
   registerAWVSFromLink,
   restartAWVSDocker,
+  uninstallAWVSServer,
   updateAWVSServerVersion,
   updateCloudSettings,
   updateServer,
@@ -190,6 +192,15 @@ export default function AWVSV3Page() {
     onError: error => message.error(extractError(error)),
   })
 
+  const uninstallMut = useMutation({
+    mutationFn: (id: number) => uninstallAWVSServer(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['servers'] })
+      message.success(t('uninstall_command_sent'))
+    },
+    onError: error => message.error(extractError(error)),
+  })
+
   const awvsAutoRestartMut = useMutation({
     mutationFn: (checked: boolean) => updateCloudSettings({ awvs_auto_restart_on_api_500: checked }),
     onSuccess: () => {
@@ -290,6 +301,20 @@ export default function AWVSV3Page() {
         title: `${server.name || 'AWVS'} ${t('copy_update_command')}`,
         command: String(data?.command || ''),
         powershell,
+      })
+    } catch (error) {
+      message.error(extractError(error))
+    }
+  }
+
+  const handleCopyUninstallCommand = async (server: AWVSServer) => {
+    try {
+      const data = await getAWVSManualUninstallCommand(server.ID)
+      const command = String(data?.command || '').trim()
+      await copyText(command, t('uninstall_command_copied'))
+      setCommandModal({
+        title: `${server.name || 'AWVS'} ${t('copy_uninstall_command')}`,
+        command,
       })
     } catch (error) {
       message.error(extractError(error))
@@ -426,6 +451,12 @@ export default function AWVSV3Page() {
           </Button>
           <Popconfirm title={t('confirm_restart_awvs_docker')} onConfirm={() => restartMut.mutate([server.ID])}>
             <Button size="small" icon={<PlayCircleOutlined />}>{t('restart_docker')}</Button>
+          </Popconfirm>
+          <Button size="small" icon={<CopyOutlined />} onClick={() => handleCopyUninstallCommand(server)}>
+            {t('copy_uninstall_command')}
+          </Button>
+          <Popconfirm title={t('confirm_uninstall_awvs_node')} onConfirm={() => uninstallMut.mutate(server.ID)}>
+            <Button size="small" danger loading={uninstallMut.isPending}>{t('uninstall_agent')}</Button>
           </Popconfirm>
           <Popconfirm title={t('confirm_cleanup_finished_awvs')} onConfirm={() => cleanupFinishedMut.mutate(server.ID)}>
             <Button

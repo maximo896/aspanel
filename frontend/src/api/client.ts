@@ -33,10 +33,12 @@ export const refreshServer = (id: number) => api.post(`/api/servers/${id}/refres
 export const cleanupOfflineAWVS = () => api.post<{ message: string; deleted_count: number }>('/api/servers/cleanup-offline').then(r => r.data)
 export const cleanupFinishedAWVSScans = (id: number) => api.post<{ message: string; deleted_count: number; target_count: number; failed_count: number; running?: boolean; cleanup_status?: string }>(`/api/servers/${id}/cleanup-finished`).then(r => r.data)
 export const restartAWVSDocker = (ids: number[]) => api.post('/api/servers/restart-docker', { ids }).then(r => r.data)
+export const uninstallAWVSServer = (id: number) => api.post(`/api/servers/${id}/uninstall`).then(r => r.data)
 export const createAWVSConfig = (data: { name: string; max_concurrency: number }) => api.post<{ docker_cmd: string }>('/api/awvs/config', data).then(r => r.data)
 export const registerAWVSFromLink = (data: { protocol_link: string }) => api.post('/api/awvs/register', data).then(r => r.data)
 export const updateAWVSServerVersion = (id: number) => api.post(`/api/servers/${id}/update`).then(r => r.data)
 export const getAWVSManualUpdateCommand = (id: number) => api.get<{ command: string; command_powershell: string; name: string; type: string }>(`/api/servers/${id}/manual-update-command`).then(r => r.data)
+export const getAWVSManualUninstallCommand = (id: number) => api.get<{ command: string; name: string; type: string }>(`/api/servers/${id}/manual-uninstall-command`).then(r => r.data)
 
 // Sqlmap Agents
 export const getSqlmapAgents = () => api.get<SqlmapAgent[]>('/api/sqlmap/agents').then(r => r.data)
@@ -46,9 +48,11 @@ export const updateSqlmapAgent = (id: number, data: Partial<SqlmapAgent>) => api
 export const deleteSqlmapAgent = (id: number) => api.delete(`/api/sqlmap/agents/${id}`).then(r => r.data)
 export const cleanupOfflineSqlmap = () => api.post<{ message: string; deleted_count: number }>('/api/sqlmap/agents/cleanup-offline').then(r => r.data)
 export const restartSqlmapDocker = (ids: number[]) => api.post('/api/sqlmap/agents/restart-docker', { ids }).then(r => r.data)
+export const uninstallSqlmapAgent = (id: number) => api.post(`/api/sqlmap/agents/${id}/uninstall`).then(r => r.data)
 export const refreshSqlmapAgent = (id: number) => api.post<SqlmapAgent>(`/api/sqlmap/agents/${id}/refresh`).then(r => r.data)
 export const updateSqlmapAgentVersion = (id: number) => api.post(`/api/sqlmap/agents/${id}/update`).then(r => r.data)
 export const getSqlmapManualUpdateCommand = (id: number) => api.get<{ command: string; command_powershell: string; name: string; type: string; warning?: string }>(`/api/sqlmap/agents/${id}/manual-update-command`).then(r => r.data)
+export const getSqlmapManualUninstallCommand = (id: number) => api.get<{ command: string; name: string; type: string }>(`/api/sqlmap/agents/${id}/manual-uninstall-command`).then(r => r.data)
 export const getSqlmapDefaults = () => api.get<{ sqlmap_agent_default_use_proxy: boolean }>('/api/sqlmap/defaults').then(r => r.data)
 export const updateSqlmapDefaults = (data: { sqlmap_agent_default_use_proxy: boolean }) => api.put('/api/sqlmap/defaults', data).then(r => r.data)
 
@@ -60,9 +64,11 @@ export const updatePathAgent = (id: number, data: Partial<PathAgent>) => api.put
 export const deletePathAgent = (id: number) => api.delete(`/api/path/agents/${id}`).then(r => r.data)
 export const cleanupOfflinePath = () => api.post<{ message: string; deleted_count: number }>('/api/path/agents/cleanup-offline').then(r => r.data)
 export const restartPathDocker = (ids: number[]) => api.post('/api/path/agents/restart-docker', { ids }).then(r => r.data)
+export const uninstallPathAgent = (id: number) => api.post(`/api/path/agents/${id}/uninstall`).then(r => r.data)
 export const refreshPathAgent = (id: number) => api.post<{ agent?: PathAgent; error?: string } | PathAgent>(`/api/path/agents/${id}/refresh`).then(r => r.data)
 export const updatePathAgentVersion = (id: number) => api.post(`/api/path/agents/${id}/update`).then(r => r.data)
 export const getPathManualUpdateCommand = (id: number) => api.get<{ command: string; name: string; type: string; warning?: string }>(`/api/path/agents/${id}/manual-update-command`).then(r => r.data)
+export const getPathManualUninstallCommand = (id: number) => api.get<{ command: string; name: string; type: string }>(`/api/path/agents/${id}/manual-uninstall-command`).then(r => r.data)
 
 // Tasks
 export const getTasks = (params: TaskListParams = {}) => api.get<TaskListResponse>('/api/tasks', {

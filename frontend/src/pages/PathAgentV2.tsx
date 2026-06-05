@@ -34,11 +34,13 @@ import {
   deletePathAgent,
   extractError,
   getCloudSettings,
+  getPathManualUninstallCommand,
   getPathManualUpdateCommand,
   getPathAgents,
   refreshPathAgent,
   registerPathAgentFromLink,
   restartPathDocker,
+  uninstallPathAgent,
   updateCloudSettings,
   updatePathAgent,
   updatePathAgentVersion,
@@ -146,6 +148,15 @@ export default function PathAgentV2Page() {
     onError: error => message.error(extractError(error)),
   })
 
+  const uninstallMut = useMutation({
+    mutationFn: (id: number) => uninstallPathAgent(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['path-agents'] })
+      message.success(t('uninstall_command_sent'))
+    },
+    onError: error => message.error(extractError(error)),
+  })
+
   const refreshMut = useMutation({
     mutationFn: (id: number) => refreshPathAgent(id),
     onMutate: id => {
@@ -221,6 +232,24 @@ export default function PathAgentV2Page() {
       } else {
         message.success(t('update_command_copied'))
       }
+    } catch (error) {
+      message.error(extractError(error))
+    }
+  }
+
+  const handleCopyUninstallCommand = async (agent: PathAgent) => {
+    try {
+      const data = await getPathManualUninstallCommand(agent.ID)
+      if (!data.command) {
+        message.warning(t('nothing_to_copy'))
+        return
+      }
+      await navigator.clipboard.writeText(data.command)
+      setCommandModal({
+        title: `${agent.name || 'Path'} ${t('copy_uninstall_command')}`,
+        command: data.command,
+      })
+      message.success(t('uninstall_command_copied'))
     } catch (error) {
       message.error(extractError(error))
     }
@@ -347,6 +376,12 @@ export default function PathAgentV2Page() {
           </Button>
           <Popconfirm title={t('confirm_restart_path_docker')} onConfirm={() => restartMut.mutate([agent.ID])}>
             <Button size="small" icon={<PlayCircleOutlined />}>{t('restart_docker')}</Button>
+          </Popconfirm>
+          <Button size="small" icon={<CopyOutlined />} onClick={() => handleCopyUninstallCommand(agent)}>
+            {t('copy_uninstall_command')}
+          </Button>
+          <Popconfirm title={t('confirm_uninstall_path_agent')} onConfirm={() => uninstallMut.mutate(agent.ID)}>
+            <Button size="small" danger loading={uninstallMut.isPending}>{t('uninstall_agent')}</Button>
           </Popconfirm>
           <Popconfirm title={t('confirm_delete_path_agent')} onConfirm={() => deleteMut.mutate(agent.ID)}>
             <Button size="small" danger icon={<DeleteOutlined />} />

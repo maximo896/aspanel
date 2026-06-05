@@ -131,6 +131,8 @@ MANAGER_STATE_FILE="${DATA_ROOT}/docker-manager.state.json"
 MANAGER_LOG_FILE="${DATA_ROOT}/docker-manager.log"
 UPDATE_SCRIPT_FILE="${DATA_ROOT}/update-agent.sh"
 UPDATE_LOG_FILE="${DATA_ROOT}/update-agent.log"
+UNINSTALL_SCRIPT_FILE="${DATA_ROOT}/uninstall-agent.sh"
+UNINSTALL_LOG_FILE="${DATA_ROOT}/uninstall-agent.log"
 ensure_packages
 ensure_docker
 
@@ -311,7 +313,7 @@ if [ -n "$PROXY_AGENT_LINK" ]; then
 fi
 
 cat > "$MANAGER_CONFIG_FILE" <<EOF
-{"containers":["$SQLMAP_CN"$( [ -n "$PROXY_AGENT_LINK" ] && printf ',"%s"' "$GATEWAY_CN" )],"update_script":"$UPDATE_SCRIPT_FILE","update_log":"$UPDATE_LOG_FILE","command_timeout_sec":600}
+{"containers":["$SQLMAP_CN"$( [ -n "$PROXY_AGENT_LINK" ] && printf ',"%s"' "$GATEWAY_CN" )],"update_script":"$UPDATE_SCRIPT_FILE","update_log":"$UPDATE_LOG_FILE","uninstall_script":"$UNINSTALL_SCRIPT_FILE","uninstall_log":"$UNINSTALL_LOG_FILE","command_timeout_sec":600}
 EOF
 install_manager_binary
 {
@@ -328,6 +330,23 @@ install_manager_binary
   echo
 } > "$UPDATE_SCRIPT_FILE"
 chmod +x "$UPDATE_SCRIPT_FILE"
+{
+  echo '#!/bin/bash'
+  echo 'set -euo pipefail'
+  echo 'sleep 1'
+  echo 'SUDO=""'
+  echo 'if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi'
+  printf '$SUDO docker rm -f %q' "$SQLMAP_CN"
+  if [ -n "$PROXY_AGENT_LINK" ]; then
+    printf ' %q' "$GATEWAY_CN"
+  fi
+  echo ' >/dev/null 2>&1 || true'
+  printf '$SUDO docker network rm %q >/dev/null 2>&1 || true\n' "$NETWORK_NAME"
+  printf 'if [ -f %q ]; then OLD_PID="$(cat %q 2>/dev/null || true)"; if [ -n "$OLD_PID" ] && [ "$OLD_PID" != "systemd" ]; then kill "$OLD_PID" >/dev/null 2>&1 || true; fi; fi\n' "$MANAGER_PID_FILE" "$MANAGER_PID_FILE"
+  printf '$SUDO rm -rf %q\n' "$DATA_ROOT"
+  printf 'if command -v systemctl >/dev/null 2>&1; then (sleep 1; $SUDO systemctl disable %q >/dev/null 2>&1 || true; $SUDO rm -f %q; $SUDO systemctl daemon-reload >/dev/null 2>&1 || true; $SUDO systemctl stop %q >/dev/null 2>&1 || true) >/dev/null 2>&1 & fi\n' "$MANAGER_SERVICE_NAME" "$MANAGER_SERVICE_FILE" "$MANAGER_SERVICE_NAME"
+} > "$UNINSTALL_SCRIPT_FILE"
+chmod +x "$UNINSTALL_SCRIPT_FILE"
 if [ -f "$MANAGER_PID_FILE" ]; then
   OLD_PID="$(cat "$MANAGER_PID_FILE" 2>/dev/null || true)"
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" >/dev/null 2>&1; then

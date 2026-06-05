@@ -38,11 +38,13 @@ import {
   getProxyAgents,
   getSqlmapAgents,
   getSqlmapDefaults,
+  getSqlmapManualUninstallCommand,
   getSqlmapManualUpdateCommand,
   refreshSqlmapAgent,
   registerSqlmapAgentFromLink,
   restartSqlmapDocker,
   setSqlmapAgentProxy,
+  uninstallSqlmapAgent,
   updateSqlmapAgent,
   updateSqlmapAgentVersion,
   updateSqlmapDefaults,
@@ -145,6 +147,15 @@ export default function SqlmapV3Page() {
     onError: err => message.error(extractError(err)),
   })
 
+  const uninstallMut = useMutation({
+    mutationFn: (id: number) => uninstallSqlmapAgent(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sqlmap-agents'] })
+      message.success(t('uninstall_command_sent'))
+    },
+    onError: err => message.error(extractError(err)),
+  })
+
   const defaultsMut = useMutation({
     mutationFn: updateSqlmapDefaults,
     onSuccess: () => {
@@ -231,6 +242,20 @@ export default function SqlmapV3Page() {
       await copyText(command, t('update_command_copied'))
       setCommandModal({
         title: `${agent.name || 'Sqlmap'} ${t('copy_update_command')}`,
+        command,
+      })
+    } catch (error) {
+      message.error(extractError(error))
+    }
+  }
+
+  const handleCopyUninstallCommand = async (agent: SqlmapAgent) => {
+    try {
+      const data = await getSqlmapManualUninstallCommand(agent.ID)
+      const command = String(data?.command || '').trim()
+      await copyText(command, t('uninstall_command_copied'))
+      setCommandModal({
+        title: `${agent.name || 'Sqlmap'} ${t('copy_uninstall_command')}`,
         command,
       })
     } catch (error) {
@@ -388,6 +413,12 @@ export default function SqlmapV3Page() {
           </Button>
           <Popconfirm title={t('confirm_restart_sqlmap_docker')} onConfirm={() => restartMut.mutate([agent.ID])}>
             <Button size="small" icon={<PlayCircleOutlined />}>{t('restart_docker')}</Button>
+          </Popconfirm>
+          <Button size="small" icon={<CopyOutlined />} onClick={() => handleCopyUninstallCommand(agent)}>
+            {t('copy_uninstall_command')}
+          </Button>
+          <Popconfirm title={t('confirm_uninstall_sqlmap_agent')} onConfirm={() => uninstallMut.mutate(agent.ID)}>
+            <Button size="small" danger loading={uninstallMut.isPending}>{t('uninstall_agent')}</Button>
           </Popconfirm>
           <Popconfirm title={t('confirm_delete_sqlmap_agent')} onConfirm={() => deleteMut.mutate(agent.ID)}>
             <Button size="small" danger icon={<DeleteOutlined />} />

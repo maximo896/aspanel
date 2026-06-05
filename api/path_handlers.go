@@ -203,9 +203,16 @@ func (api *API) UpdatePathAgent(c *gin.Context) {
 
 func (api *API) DeletePathAgent(c *gin.Context) {
 	id := c.Param("id")
-	if idValue, err := strconv.ParseUint(id, 10, 64); err == nil {
-		scheduler.BestEffortCancelPathAgentTasks(api.DB, uint(idValue))
+	idValue, _ := strconv.ParseUint(id, 10, 64)
+	api.deletePathAgentRecord(uint(idValue))
+	c.JSON(200, gin.H{"message": "path agent deleted"})
+}
+
+func (api *API) deletePathAgentRecord(id uint) {
+	if id == 0 {
+		return
 	}
+	scheduler.BestEffortCancelPathAgentTasks(api.DB, id)
 	api.DB.Model(&models.TaskPathScan{}).Where("path_agent_id = ? AND path_status IN ?", id, []string{"running", "queued"}).Updates(map[string]interface{}{
 		"path_agent_id":  0,
 		"path_agent_url": "",
@@ -213,7 +220,6 @@ func (api *API) DeletePathAgent(c *gin.Context) {
 		"path_status":    "none",
 	})
 	api.DB.Delete(&models.PathAgent{}, id)
-	c.JSON(200, gin.H{"message": "path agent deleted"})
 }
 
 func (api *API) CleanupOfflinePathAgents(c *gin.Context) {
@@ -365,6 +371,39 @@ func (api *API) GetPathManualUpdateCommand(c *gin.Context) {
 		response["warning"] = "manager health unavailable, using default data dir fallback"
 	}
 	c.JSON(200, response)
+}
+
+func (api *API) GetPathManualUninstallCommand(c *gin.Context) {
+	var agent models.PathAgent
+	if err := api.DB.First(&agent, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "path agent not found"})
+		return
+	}
+	cfg, _ := api.fetchManagerConfig(agent.ManagerURL, agent.ManagerToken)
+	command, err := buildPathManualUninstallCommand(agent, cfg)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{
+		"command": command,
+		"name":    agent.Name,
+		"type":    "path",
+	})
+}
+
+func (api *API) UninstallPathAgent(c *gin.Context) {
+	var agent models.PathAgent
+	if err := api.DB.First(&agent, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "path agent not found"})
+		return
+	}
+	if err := api.callNodeManagerForNode(agent.ManagerURL, agent.ManagerToken, agent.URL, "uninstall"); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	api.deletePathAgentRecord(agent.ID)
+	c.JSON(202, gin.H{"message": "path agent uninstall requested", "agent_id": agent.ID})
 }
 
 func (api *API) RestartPathDocker(c *gin.Context) {
