@@ -684,6 +684,30 @@ func maskPayloadInRawRequest(rawRequest, payload string) string {
 	return masked
 }
 
+func normalizeHTTPRequestLineSpacing(rawRequest string) string {
+	if rawRequest == "" {
+		return rawRequest
+	}
+
+	lineEnd := strings.IndexByte(rawRequest, '\n')
+	firstLine := rawRequest
+	rest := ""
+	if lineEnd >= 0 {
+		firstLine = rawRequest[:lineEnd]
+		rest = rawRequest[lineEnd:]
+	}
+
+	crSuffix := ""
+	if strings.HasSuffix(firstLine, "\r") {
+		crSuffix = "\r"
+		firstLine = strings.TrimSuffix(firstLine, "\r")
+	}
+
+	re := regexp.MustCompile(`(?i)(\S)(HTTP/[0-9]+(?:\.[0-9]+)?)$`)
+	firstLine = re.ReplaceAllString(firstLine, "$1 $2")
+	return firstLine + crSuffix + rest
+}
+
 func firstString(values ...interface{}) string {
 	for _, v := range values {
 		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
@@ -788,7 +812,7 @@ func RetryFindingFromLocal(db *gorm.DB, findingID uint, sqlmapAgentID uint) erro
 		if rewritten == httpRequest {
 			rewritten = maskPayloadInRawRequest(httpRequest, payload)
 		}
-		httpRequest = rewritten
+		httpRequest = normalizeHTTPRequestLineSpacing(rewritten)
 	}
 
 	globalOptions := loadGlobalSqlmapOptions(db)
@@ -965,7 +989,7 @@ func processVulnerabilities(client *awvs.Client, task *models.Task, db *gorm.DB,
 			if rewritten == httpRequest {
 				rewritten = maskPayloadInRawRequest(httpRequest, payload)
 			}
-			httpRequest = rewritten
+			httpRequest = normalizeHTTPRequestLineSpacing(rewritten)
 		}
 
 		parsedURL, _ := url.Parse(affectsURL)
@@ -1038,6 +1062,7 @@ func isRecentVulnerability(task models.Task, vuln map[string]interface{}) bool {
 }
 
 func sendToSqlmapAgent(task models.Task, domain, vulnID, requestData string, forceSSL bool, useProxy *bool, options map[string]interface{}, forceFresh bool, preferredSqlmapAgentID uint, db *gorm.DB) (string, uint, string, string, bool, bool) {
+	requestData = normalizeHTTPRequestLineSpacing(requestData)
 	effectiveUseProxy := false
 	if useProxy != nil {
 		effectiveUseProxy = *useProxy
