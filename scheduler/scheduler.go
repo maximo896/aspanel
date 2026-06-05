@@ -1148,8 +1148,9 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 	for {
 		time.Sleep(10 * time.Second)
 
+		recentCompletedCutoff := time.Now().Add(-30 * time.Minute)
 		var tasks []models.Task
-		if err := db.Where("sqlmap_task_id <> '' AND sqlmap_agent_id <> 0 AND sqlmap_status IN ?", []string{"running", "queued"}).
+		if err := db.Where("sqlmap_task_id <> '' AND sqlmap_agent_id <> 0 AND (sqlmap_status IN ? OR (sqlmap_status = ? AND updated_at >= ?))", []string{"running", "queued"}, "completed", recentCompletedCutoff).
 			Order("id asc").Limit(sqlmapSyncBatchSize).Find(&tasks).Error; err != nil || len(tasks) == 0 {
 		} else {
 			agentIDs := make([]uint, 0, len(tasks))
@@ -1244,7 +1245,7 @@ func syncSqlmapTaskStatus(db *gorm.DB) {
 		}
 
 		var findings []models.TaskFinding
-		if err := db.Where("sqlmap_task_id <> '' AND sqlmap_agent_id <> 0 AND sqlmap_status IN ?", []string{"running", "queued"}).
+		if err := db.Where("sqlmap_task_id <> '' AND sqlmap_agent_id <> 0 AND (sqlmap_status IN ? OR (sqlmap_status = ? AND updated_at >= ?))", []string{"running", "queued"}, "completed", recentCompletedCutoff).
 			Order("id asc").Limit(sqlmapSyncBatchSize).Find(&findings).Error; err != nil || len(findings) == 0 {
 			continue
 		}
