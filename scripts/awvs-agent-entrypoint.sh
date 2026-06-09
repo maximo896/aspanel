@@ -44,36 +44,6 @@ check_port_free() {
   return 0
 }
 
-container_uses_host_port() {
-  local container="$1"
-  local port="$2"
-  if [ -z "$container" ] || [ -z "$port" ]; then
-    return 1
-  fi
-  if ! $SUDO docker inspect "$container" >/dev/null 2>&1; then
-    return 1
-  fi
-  $SUDO docker port "$container" 2>/dev/null | awk -F: '{print $NF}' | grep -qx "$port"
-}
-
-manager_uses_saved_port() {
-  local port="$1"
-  if [ -z "$port" ] || [ -z "${MANAGER_TOKEN:-}" ]; then
-    return 1
-  fi
-  curl -fsS -H "X-Manager-Token: ${MANAGER_TOKEN}" "http://127.0.0.1:${port}/health" >/dev/null 2>&1
-}
-
-check_manager_port_available() {
-  local port="$1"
-  check_port_free "$port" || manager_uses_saved_port "$port"
-}
-
-check_agent_port_available() {
-  local port="$1"
-  check_port_free "$port" || container_uses_host_port "$CONTAINER_NAME" "$port"
-}
-
 AWVS_EMAIL="admin@admin.com"
 AWVS_PASSWORD="Admin123"
 AWVS_CONTAINER_PORT="3443"
@@ -329,6 +299,13 @@ stop_legacy_manager_pid() {
   fi
 }
 
+stop_existing_manager() {
+  stop_legacy_manager_pid
+  if has_systemd; then
+    $SUDO systemctl stop "$MANAGER_SERVICE_NAME" >/dev/null 2>&1 || true
+  fi
+}
+
 start_manager() {
   stop_legacy_manager_pid
   if has_systemd; then
@@ -436,6 +413,10 @@ else
   echo "$MANAGER_TOKEN" > "$MANAGER_TOKEN_FILE"
 fi
 
+if [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ]; then
+  stop_existing_manager
+fi
+
 MANAGER_PORT=""
 if [ -f "$MANAGER_PORT_FILE" ]; then
   MANAGER_PORT="$(cat "$MANAGER_PORT_FILE" | tr -d ' \t\r\n')"
@@ -443,7 +424,7 @@ fi
 if ! echo "$MANAGER_PORT" | grep -Eq '^[0-9]+$'; then
   MANAGER_PORT=""
 fi
-if [ -n "$MANAGER_PORT" ] && [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ] && ! check_manager_port_available "$MANAGER_PORT"; then
+if [ -n "$MANAGER_PORT" ] && [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ] && ! check_port_free "$MANAGER_PORT"; then
   MANAGER_PORT=""
 fi
 while [ -z "$MANAGER_PORT" ]; do
@@ -466,13 +447,14 @@ if $SUDO docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
   RESTORE_PREVIOUS_STATE=1
 fi
 
-while [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ] && ! check_agent_port_available "$AGENT_PORT"; do
+$SUDO docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+
+while [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ] && ! check_port_free "$AGENT_PORT"; do
   echo "[!] Port $AGENT_PORT is already in use. Assigning a new random port..."
   AGENT_PORT="$((30000 + RANDOM % 10001))"
 done
 
 $SUDO docker pull "$IMAGE" >/dev/null
-$SUDO docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 $SUDO docker run -d \
   --name "$CONTAINER_NAME" \
   -p "${AGENT_PORT}:${AWVS_CONTAINER_PORT}" \
