@@ -43,6 +43,36 @@ check_port_free() {
   return 0
 }
 
+container_uses_host_port() {
+  local container="$1"
+  local port="$2"
+  if [ -z "$container" ] || [ -z "$port" ]; then
+    return 1
+  fi
+  if ! $SUDO docker inspect "$container" >/dev/null 2>&1; then
+    return 1
+  fi
+  $SUDO docker port "$container" 2>/dev/null | awk -F: '{print $NF}' | grep -qx "$port"
+}
+
+manager_uses_saved_port() {
+  local port="$1"
+  if [ -z "$port" ] || [ -z "${MANAGER_TOKEN:-}" ]; then
+    return 1
+  fi
+  curl -fsS -H "X-Manager-Token: ${MANAGER_TOKEN}" "http://127.0.0.1:${port}/health" >/dev/null 2>&1
+}
+
+check_manager_port_available() {
+  local port="$1"
+  check_port_free "$port" || manager_uses_saved_port "$port"
+}
+
+check_agent_port_available() {
+  local port="$1"
+  check_port_free "$port" || container_uses_host_port "$CONTAINER_NAME" "$port"
+}
+
 if [ "$(id -u)" -eq 0 ]; then
   SUDO=""
 else
@@ -255,7 +285,7 @@ fi
 if ! echo "$MANAGER_PORT" | grep -Eq '^[0-9]+$'; then
   MANAGER_PORT=""
 fi
-if [ -n "$MANAGER_PORT" ] && [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ] && ! check_port_free "$MANAGER_PORT"; then
+if [ -n "$MANAGER_PORT" ] && [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ] && ! check_manager_port_available "$MANAGER_PORT"; then
   MANAGER_PORT=""
 fi
 while [ -z "$MANAGER_PORT" ]; do
@@ -274,7 +304,7 @@ PUBLIC_HOST="$(detect_public_host)"
 MANAGER_HOST="$(resolve_manager_host)"
 MANAGER_URL="http://${MANAGER_HOST}:${MANAGER_PORT}"
 
-while [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ] && ! check_port_free "$AGENT_PORT"; do
+while [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ] && ! check_agent_port_available "$AGENT_PORT"; do
   echo "[!] Port $AGENT_PORT is already in use. Assigning a new random port..."
   AGENT_PORT="$((30000 + RANDOM % 10001))"
 done
