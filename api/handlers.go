@@ -3827,9 +3827,11 @@ type managerDiskPayload struct {
 }
 
 type managerHealthResponse struct {
-	OK     bool                 `json:"ok"`
-	Config managerConfigPayload `json:"config"`
-	Disk   managerDiskPayload   `json:"disk"`
+	OK            bool                   `json:"ok"`
+	Config        managerConfigPayload   `json:"config"`
+	Disk          managerDiskPayload     `json:"disk"`
+	State         map[string]interface{} `json:"state"`
+	UpdateLogTail string                 `json:"update_log_tail"`
 }
 
 func normalizeAgentVersionValue(version string) string {

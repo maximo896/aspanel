@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const managerVersion = "1.0.0"
+const managerVersion = "1.0.1"
 
 type config struct {
 	Containers        []string `json:"containers"`
@@ -231,23 +231,14 @@ func (m *manager) handleUpdate(w http.ResponseWriter, cfg config, reinstall bool
 	m.actionMu.Lock()
 	defer m.actionMu.Unlock()
 
-	logFile, err := openAppendFile(cfg.UpdateLog)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
-		return
-	}
-	defer logFile.Close()
-
-	cmd := exec.Command(updateScript)
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	cmd.Env = os.Environ()
 	action := "update"
+	env := map[string]string{}
 	if reinstall {
 		action = "reinstall"
-		cmd.Env = append(cmd.Env, "ASPANEL_AWVS_HARD_REINSTALL=1")
+		env["ASPANEL_AWVS_HARD_REINSTALL"] = "1"
 	}
-	if err := cmd.Start(); err != nil {
+	launchMethod, err := startDetachedScript(action, updateScript, cfg.UpdateLog, env)
+	if err != nil {
 		m.markActionDone(action, err)
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
@@ -258,13 +249,96 @@ func (m *manager) handleUpdate(w http.ResponseWriter, cfg config, reinstall bool
 	} else {
 		m.markUpdateRequested()
 	}
-	_ = cmd.Process.Release()
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"ok":            true,
 		"action":        action,
 		"message":       action + " requested",
 		"update_script": updateScript,
+		"launch_method": launchMethod,
 	})
+}
+
+func startDetachedScript(action, scriptPath, logPath string, env map[string]string) (string, error) {
+	if strings.TrimSpace(logPath) != "" {
+		if file, err := openAppendFile(logPath); err != nil {
+			return "", err
+		} else {
+			_ = file.Close()
+		}
+	}
+	shell := buildDetachedShellCommand(scriptPath, logPath, env)
+	unitName := fmt.Sprintf("aspanel-%s-%d", sanitizeUnitFragment(action), time.Now().UnixNano())
+	if _, err := exec.LookPath("systemd-run"); err == nil {
+		cmd := exec.Command(
+			"systemd-run",
+			"--unit", unitName,
+			"--description", "ASPanel "+action,
+			"--collect",
+			"--same-dir",
+			"/bin/sh",
+			"-c",
+			shell,
+		)
+		output, runErr := cmd.CombinedOutput()
+		if runErr == nil {
+			return "systemd-run:" + unitName, nil
+		}
+		log.Printf("[docker-manager] systemd-run failed for action=%s err=%v output=%s; falling back to nohup", action, runErr, strings.TrimSpace(string(output)))
+	}
+	cmd := exec.Command("/bin/sh", "-c", "nohup /bin/sh -c "+shellQuote(shell)+" >/dev/null 2>&1 &")
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	_ = cmd.Process.Release()
+	return "nohup", nil
+}
+
+func buildDetachedShellCommand(scriptPath, logPath string, env map[string]string) string {
+	parts := make([]string, 0, len(env)+4)
+	for key, value := range env {
+		key = sanitizeEnvKey(key)
+		if key == "" {
+			continue
+		}
+		parts = append(parts, key+"="+shellQuote(value))
+	}
+	parts = append(parts, "exec", shellQuote(scriptPath))
+	command := strings.Join(parts, " ")
+	if strings.TrimSpace(logPath) != "" {
+		command += " >> " + shellQuote(logPath) + " 2>&1"
+	}
+	return command
+}
+
+func sanitizeUnitFragment(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	replacer := strings.NewReplacer(" ", "-", "/", "-", "\\", "-", ".", "-", ":", "-")
+	value = replacer.Replace(value)
+	value = strings.Trim(value, "-")
+	if value == "" {
+		return "action"
+	}
+	return value
+}
+
+func sanitizeEnvKey(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	for _, ch := range value {
+		if (ch < 'A' || ch > 'Z') && (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '_' {
+			return ""
+		}
+	}
+	return value
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
 func (m *manager) handleUninstall(w http.ResponseWriter, cfg config) {
