@@ -35,7 +35,7 @@ type API struct {
 }
 
 const (
-	defaultLatestSQLMapAgentVersion = "2.4.56"
+	defaultLatestSQLMapAgentVersion = "2.4.57"
 	sqlmapAgentReleaseAPI           = "https://api.github.com/repos/maximo896/as/releases/latest"
 	sqlmapAgentTagsAPI              = "https://api.github.com/repos/maximo896/as/tags?per_page=1"
 	sqlmapAgentVersionCacheTTL      = 10 * time.Minute
@@ -2864,6 +2864,20 @@ func (api *API) SearchFindingSqlmap(c *gin.Context) {
 	kind := strings.TrimSpace(strings.ToLower(c.Query("kind")))
 	if query == "" {
 		c.JSON(400, gin.H{"error": "q is required"})
+		return
+	}
+
+	{
+		scan := loadFindingSearchSnapshot(api.DB, finding, task.URL)
+		tree, _ := scan["tree"].(map[string]interface{})
+		results := buildSQLMapTreeSearchResults(tree, query, kind)
+		c.JSON(200, gin.H{
+			"query":         query,
+			"kind":          kind,
+			"results":       results,
+			"action_queued": false,
+			"warning":       "sqlmap --search is disabled; showing cached structured tree results only",
+		})
 		return
 	}
 

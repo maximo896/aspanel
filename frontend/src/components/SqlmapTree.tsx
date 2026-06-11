@@ -254,11 +254,7 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
               搜索
             </Button>
           </Space.Compact>
-          {recentSearchMeta && (
-            <div style={{ marginBottom: 8 }}>
-              <Tag color={recentSearchMeta.color}>{recentSearchMeta.text}</Tag>
-            </div>
-          )}
+          {recentSearchMeta ? null : null}
 
           {searchResult && searchResult.length > 0 && (
             <Table
@@ -283,7 +279,7 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
           {searchResult && searchResult.length === 0 && !searchQueued && (
             <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>未找到匹配结果</Text>
           )}
-          {searchResult && searchResult.length === 0 && searchQueued && (
+          {false && Boolean(searchResult) && searchQueued && (
             <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>搜索任务已触发，等待 sqlmap 返回结果后刷新查看。</Text>
           )}
 
