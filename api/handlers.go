@@ -2434,27 +2434,13 @@ func parseSQLMapSnapshot(raw string) (map[string]interface{}, bool) {
 	return snapshot, true
 }
 
-func (api *API) SearchAllSqlmapExports(c *gin.Context) {
-	query := strings.TrimSpace(c.Query("q"))
-	kind := strings.TrimSpace(strings.ToLower(c.DefaultQuery("kind", "data")))
-	if query == "" {
-		c.JSON(400, gin.H{"error": "q is required"})
-		return
-	}
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "200"))
-	if limit <= 0 {
-		limit = 200
-	}
-	if limit > 500 {
-		limit = 500
-	}
-
+func runSQLMapGlobalExportSearch(db *gorm.DB, query, kind string, limit int) ([]gin.H, error) {
 	results := make([]gin.H, 0)
 	appendFromSnapshot := func(snapshot map[string]interface{}, base gin.H) {
 		if len(results) >= limit || len(snapshot) == 0 {
 			return
 		}
-		if merged, err := domaincache.ApplySnapshot(api.DB, snapshot); err == nil {
+		if merged, err := domaincache.ApplySnapshot(db, snapshot); err == nil {
 			snapshot = merged
 		}
 		tree, _ := snapshot["tree"].(map[string]interface{})
@@ -2462,7 +2448,9 @@ func (api *API) SearchAllSqlmapExports(c *gin.Context) {
 	}
 
 	var tasks []models.Task
-	api.DB.Where("sqlmap_result_json <> ''").Order("id desc").Find(&tasks)
+	if err := db.Where("sqlmap_result_json <> ''").Order("id desc").Find(&tasks).Error; err != nil {
+		return nil, err
+	}
 	for _, task := range tasks {
 		if len(results) >= limit {
 			break
@@ -2484,7 +2472,9 @@ func (api *API) SearchAllSqlmapExports(c *gin.Context) {
 	}
 
 	var findings []models.TaskFinding
-	api.DB.Where("sqlmap_result_json <> ''").Order("id desc").Find(&findings)
+	if err := db.Where("sqlmap_result_json <> ''").Order("id desc").Find(&findings).Error; err != nil {
+		return nil, err
+	}
 	taskIDs := make([]uint, 0, len(findings))
 	for _, finding := range findings {
 		taskIDs = append(taskIDs, finding.TaskID)
@@ -2492,7 +2482,9 @@ func (api *API) SearchAllSqlmapExports(c *gin.Context) {
 	taskMap := map[uint]models.Task{}
 	if len(taskIDs) > 0 {
 		var findingTasks []models.Task
-		api.DB.Where("id IN ?", taskIDs).Find(&findingTasks)
+		if err := db.Where("id IN ?", taskIDs).Find(&findingTasks).Error; err != nil {
+			return nil, err
+		}
 		for _, task := range findingTasks {
 			taskMap[task.ID] = task
 		}
@@ -2519,12 +2511,14 @@ func (api *API) SearchAllSqlmapExports(c *gin.Context) {
 	}
 
 	var caches []models.DomainSQLMapCache
-	api.DB.Where("tree_json <> ''").Order("id desc").Find(&caches)
+	if err := db.Where("tree_json <> ''").Order("id desc").Find(&caches).Error; err != nil {
+		return nil, err
+	}
 	for _, cache := range caches {
 		if len(results) >= limit {
 			break
 		}
-		snapshot, ok, err := domaincache.LoadSnapshotByScope(api.DB, cache.Domain, cache.ForceSSL)
+		snapshot, ok, err := domaincache.LoadSnapshotByScope(db, cache.Domain, cache.ForceSSL)
 		if err != nil || !ok {
 			continue
 		}
@@ -2542,6 +2536,140 @@ func (api *API) SearchAllSqlmapExports(c *gin.Context) {
 			"sqlmap_status":    "",
 			"sqlmap_cached_at": cache.UpdatedAt.Unix(),
 		})
+	}
+	return results, nil
+}
+
+func normalizeSQLMapGlobalSearchParams(query, kind string, limit int) (string, string, int, error) {
+	query = strings.TrimSpace(query)
+	kind = strings.TrimSpace(strings.ToLower(kind))
+	if kind == "" {
+		kind = "data"
+	}
+	if query == "" {
+		return "", "", 0, fmt.Errorf("q is required")
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	return query, kind, limit, nil
+}
+
+func sqlmapGlobalSearchTaskResponse(task models.SQLMapGlobalSearchTask, includeResults bool) gin.H {
+	resp := gin.H{
+		"id":          task.ID,
+		"query":       task.Query,
+		"kind":        task.Kind,
+		"limit":       task.Limit,
+		"status":      task.Status,
+		"count":       task.Count,
+		"error":       task.Error,
+		"created_at":  task.CreatedAt.Unix(),
+		"started_at":  task.StartedAt,
+		"finished_at": task.FinishedAt,
+		"results":     []gin.H{},
+	}
+	if includeResults && strings.TrimSpace(task.ResultsJSON) != "" {
+		var results []gin.H
+		if err := json.Unmarshal([]byte(task.ResultsJSON), &results); err == nil {
+			resp["results"] = results
+		}
+	}
+	return resp
+}
+
+func (api *API) runSQLMapGlobalSearchTask(taskID uint) {
+	var task models.SQLMapGlobalSearchTask
+	if err := api.DB.First(&task, taskID).Error; err != nil {
+		return
+	}
+	startedAt := time.Now().Unix()
+	api.DB.Model(&models.SQLMapGlobalSearchTask{}).Where("id = ?", taskID).Updates(map[string]interface{}{
+		"status":     "running",
+		"started_at": startedAt,
+		"error":      "",
+	})
+	results, err := runSQLMapGlobalExportSearch(api.DB, task.Query, task.Kind, task.Limit)
+	updates := map[string]interface{}{
+		"finished_at": time.Now().Unix(),
+	}
+	if err != nil {
+		updates["status"] = "failed"
+		updates["error"] = err.Error()
+		api.DB.Model(&models.SQLMapGlobalSearchTask{}).Where("id = ?", taskID).Updates(updates)
+		return
+	}
+	raw, marshalErr := json.Marshal(results)
+	if marshalErr != nil {
+		updates["status"] = "failed"
+		updates["error"] = marshalErr.Error()
+		api.DB.Model(&models.SQLMapGlobalSearchTask{}).Where("id = ?", taskID).Updates(updates)
+		return
+	}
+	updates["status"] = "completed"
+	updates["count"] = len(results)
+	updates["results_json"] = string(raw)
+	api.DB.Model(&models.SQLMapGlobalSearchTask{}).Where("id = ?", taskID).Updates(updates)
+}
+
+func (api *API) CreateSqlmapGlobalSearchTask(c *gin.Context) {
+	var req struct {
+		Query string `json:"q"`
+		Kind  string `json:"kind"`
+		Limit int    `json:"limit"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	query, kind, limit, err := normalizeSQLMapGlobalSearchParams(req.Query, req.Kind, req.Limit)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	task := models.SQLMapGlobalSearchTask{
+		Query:  query,
+		Kind:   kind,
+		Limit:  limit,
+		Status: "queued",
+	}
+	if err := api.DB.Create(&task).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	go api.runSQLMapGlobalSearchTask(task.ID)
+	c.JSON(202, sqlmapGlobalSearchTaskResponse(task, false))
+}
+
+func (api *API) GetSqlmapGlobalSearchTask(c *gin.Context) {
+	id, err := parseUint(c.Param("id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "invalid task id"})
+		return
+	}
+	var task models.SQLMapGlobalSearchTask
+	if err := api.DB.First(&task, uint(id)).Error; err != nil {
+		c.JSON(404, gin.H{"error": "search task not found"})
+		return
+	}
+	c.JSON(200, sqlmapGlobalSearchTaskResponse(task, true))
+}
+
+func (api *API) SearchAllSqlmapExports(c *gin.Context) {
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "200"))
+	query, kind, limit, err := normalizeSQLMapGlobalSearchParams(c.Query("q"), c.DefaultQuery("kind", "data"), limit)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	results, err := runSQLMapGlobalExportSearch(api.DB, query, kind, limit)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
 	}
 
 	c.JSON(200, gin.H{

@@ -182,6 +182,19 @@ type DomainSQLMapCache struct {
 	TreeJSON    string `json:"tree_json" gorm:"type:text"`
 }
 
+type SQLMapGlobalSearchTask struct {
+	gorm.Model
+	Query       string `json:"query" gorm:"index"`
+	Kind        string `json:"kind" gorm:"index"`
+	Limit       int    `json:"limit"`
+	Status      string `json:"status" gorm:"default:'queued';index"`
+	Count       int    `json:"count"`
+	ResultsJSON string `json:"-" gorm:"type:text"`
+	Error       string `json:"error" gorm:"type:text"`
+	StartedAt   int64  `json:"started_at"`
+	FinishedAt  int64  `json:"finished_at"`
+}
+
 type ProxyAgent struct {
 	gorm.Model
 	Name           string `json:"name"`

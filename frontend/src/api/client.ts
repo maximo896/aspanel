@@ -57,6 +57,8 @@ export const getSqlmapManualUninstallCommand = (id: number) => api.get<{ command
 export const getSqlmapDefaults = () => api.get<{ sqlmap_agent_default_use_proxy: boolean }>('/api/sqlmap/defaults').then(r => r.data)
 export const updateSqlmapDefaults = (data: { sqlmap_agent_default_use_proxy: boolean }) => api.put('/api/sqlmap/defaults', data).then(r => r.data)
 export const searchAllSqlmapExports = (params: { q: string; kind?: string; limit?: number }) => api.get<SqlmapGlobalSearchResponse>('/api/sqlmap/global-search', { params }).then(r => r.data)
+export const createSqlmapGlobalSearchTask = (data: { q: string; kind?: string; limit?: number }) => api.post<SqlmapGlobalSearchTaskResponse>('/api/sqlmap/global-search', data).then(r => r.data)
+export const getSqlmapGlobalSearchTask = (id: number) => api.get<SqlmapGlobalSearchTaskResponse>(`/api/sqlmap/global-search/${id}`).then(r => r.data)
 
 // Path Agents
 export const getPathAgents = () => api.get<PathAgent[]>('/api/path/agents').then(r => r.data)
@@ -213,6 +215,15 @@ export interface SqlmapGlobalSearchResponse {
   limit: number
   count: number
   results: SqlmapGlobalSearchHit[]
+}
+
+export interface SqlmapGlobalSearchTaskResponse extends SqlmapGlobalSearchResponse {
+  id: number
+  status: 'queued' | 'running' | 'completed' | 'failed' | string
+  error?: string
+  created_at?: number
+  started_at?: number
+  finished_at?: number
 }
 
 export { extractError }

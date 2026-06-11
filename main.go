@@ -48,6 +48,7 @@ func main() {
 		&models.TaskPathScan{},
 		&models.TaskFinding{},
 		&models.DomainSQLMapCache{},
+		&models.SQLMapGlobalSearchTask{},
 		&models.ProxyAgent{},
 		&models.CloudSettings{},
 		&models.CloudInstance{},
@@ -164,7 +165,9 @@ func main() {
 	r.GET("/api/panel/logs", h.GetPanelLogs)
 
 	r.GET("/api/sqlmap/agents", h.GetSqlmapAgents)
+	r.POST("/api/sqlmap/global-search", h.CreateSqlmapGlobalSearchTask)
 	r.GET("/api/sqlmap/global-search", h.SearchAllSqlmapExports)
+	r.GET("/api/sqlmap/global-search/:id", h.GetSqlmapGlobalSearchTask)
 	r.GET("/api/sqlmap/agents/latest-version", h.GetSqlmapAgentLatestVersion)
 	r.GET("/api/sqlmap/defaults", h.GetSqlmapDefaults)
 	r.PUT("/api/sqlmap/defaults", h.UpdateSqlmapDefaults)

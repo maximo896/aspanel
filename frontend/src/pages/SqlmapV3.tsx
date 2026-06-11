@@ -33,10 +33,12 @@ import type { ColumnsType } from 'antd/es/table'
 import type { ProxyAgent, SqlmapAgent } from '../types'
 import {
   cleanupOfflineSqlmap,
+  createSqlmapGlobalSearchTask,
   createSqlmapAgentConfig,
   deleteSqlmapAgent,
   extractError,
   getProxyAgents,
+  getSqlmapGlobalSearchTask,
   getSqlmapAgents,
   getSqlmapDefaults,
   getSqlmapManualUninstallCommand,
@@ -44,9 +46,9 @@ import {
   refreshSqlmapAgent,
   registerSqlmapAgentFromLink,
   restartSqlmapDocker,
-  searchAllSqlmapExports,
   setSqlmapAgentProxy,
   type SqlmapGlobalSearchHit,
+  type SqlmapGlobalSearchTaskResponse,
   uninstallSqlmapAgent,
   updateSqlmapAgent,
   updateSqlmapAgentVersion,
@@ -88,6 +90,9 @@ export default function SqlmapV3Page() {
   const [globalSearchKind, setGlobalSearchKind] = useState('data')
   const [globalSearchResults, setGlobalSearchResults] = useState<SqlmapGlobalSearchHit[]>([])
   const [globalSearchCount, setGlobalSearchCount] = useState<number | null>(null)
+  const [globalSearchTaskId, setGlobalSearchTaskId] = useState<number | null>(null)
+  const [globalSearchTaskIdInput, setGlobalSearchTaskIdInput] = useState<number | null>(null)
+  const [globalSearchTask, setGlobalSearchTask] = useState<SqlmapGlobalSearchTaskResponse | null>(null)
   const [form] = Form.useForm()
   const [installForm] = Form.useForm()
   const [registerForm] = Form.useForm()
@@ -223,18 +228,43 @@ export default function SqlmapV3Page() {
     onError: err => message.error(extractError(err)),
   })
 
+  const applyGlobalSearchTask = (data: SqlmapGlobalSearchTaskResponse) => {
+    setGlobalSearchTask(data)
+    setGlobalSearchTaskId(data.id)
+    setGlobalSearchTaskIdInput(data.id)
+    setGlobalSearchCount(data.count ?? 0)
+    setGlobalSearchResults(data.results || [])
+    if (data.query) setGlobalSearchQuery(data.query)
+    if (data.kind) setGlobalSearchKind(data.kind)
+  }
+
+  const globalSearchTaskQuery = useQuery({
+    queryKey: ['sqlmap-global-search-task', globalSearchTaskId],
+    queryFn: () => getSqlmapGlobalSearchTask(globalSearchTaskId!),
+    enabled: Boolean(globalSearchTaskId),
+    refetchInterval: query => {
+      const status = query.state.data?.status
+      return status === 'queued' || status === 'running' ? 2000 : false
+    },
+  })
+
+  useEffect(() => {
+    if (!globalSearchTaskQuery.data) return
+    applyGlobalSearchTask(globalSearchTaskQuery.data)
+    if (globalSearchTaskQuery.data.status === 'failed') {
+      message.error(globalSearchTaskQuery.data.error || 'Global search failed')
+    }
+  }, [globalSearchTaskQuery.data])
+
   const globalSearchMut = useMutation({
-    mutationFn: () => searchAllSqlmapExports({
+    mutationFn: () => createSqlmapGlobalSearchTask({
       q: globalSearchQuery.trim(),
       kind: globalSearchKind,
       limit: 200,
     }),
     onSuccess: data => {
-      setGlobalSearchResults(data.results || [])
-      setGlobalSearchCount(data.count || 0)
-      if ((data.count || 0) === 0) {
-        message.info('No matching exported data')
-      }
+      applyGlobalSearchTask(data)
+      message.success(`Search task #${data.id} started`)
     },
     onError: err => message.error(extractError(err)),
   })
@@ -327,6 +357,15 @@ export default function SqlmapV3Page() {
       return
     }
     globalSearchMut.mutate()
+  }
+
+  const loadGlobalSearchTask = () => {
+    const id = Number(globalSearchTaskIdInput || 0)
+    if (!id) {
+      message.warning('Enter a task ID')
+      return
+    }
+    setGlobalSearchTaskId(id)
   }
 
   const globalSearchColumns: ColumnsType<SqlmapGlobalSearchHit> = [
@@ -502,7 +541,13 @@ export default function SqlmapV3Page() {
       <Card
         title="Global Export Search"
         size="small"
-        extra={globalSearchCount !== null ? <Tag color="blue">{globalSearchCount} hit(s)</Tag> : null}
+        extra={(
+          <Space size={4} wrap>
+            {globalSearchTask?.id ? <Tag color="geekblue">Task #{globalSearchTask.id}</Tag> : null}
+            {globalSearchTask?.status ? <Tag color={globalSearchTask.status === 'completed' ? 'success' : globalSearchTask.status === 'failed' ? 'error' : 'processing'}>{globalSearchTask.status}</Tag> : null}
+            {globalSearchCount !== null ? <Tag color="blue">{globalSearchCount} hit(s)</Tag> : null}
+          </Space>
+        )}
       >
         <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
           <Select
@@ -524,14 +569,26 @@ export default function SqlmapV3Page() {
             placeholder="Paste hash or keyword to locate target, database, table and raw row"
           />
           <Button icon={<SearchOutlined />} type="primary" onClick={handleGlobalSearch} loading={globalSearchMut.isPending}>
-            Search
+            Start
+          </Button>
+        </Space.Compact>
+        <Space.Compact style={{ width: 360, maxWidth: '100%', marginBottom: 12 }}>
+          <InputNumber
+            value={globalSearchTaskIdInput}
+            onChange={value => setGlobalSearchTaskIdInput(typeof value === 'number' ? value : null)}
+            placeholder="Task ID"
+            style={{ width: 180 }}
+            min={1}
+          />
+          <Button onClick={loadGlobalSearchTask} loading={globalSearchTaskQuery.isFetching}>
+            Load
           </Button>
         </Space.Compact>
         <Table
           dataSource={globalSearchResults}
           columns={globalSearchColumns}
           rowKey={(_, index) => `${index}`}
-          loading={globalSearchMut.isPending}
+          loading={globalSearchMut.isPending || globalSearchTaskQuery.isFetching || globalSearchTask?.status === 'queued' || globalSearchTask?.status === 'running'}
           size="small"
           pagination={{ pageSize: 10 }}
           scroll={{ x: 1050 }}
