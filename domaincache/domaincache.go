@@ -598,6 +598,7 @@ func treeDatabasesToGeneric(dbMap map[string]*treeDatabase) []interface{} {
 	out := make([]interface{}, 0, len(names))
 	for _, dbName := range names {
 		database := dbMap[dbName]
+		priorityTable := choosePriorityTable(database)
 		tableNames := make([]string, 0, len(database.Tables))
 		for tableName := range database.Tables {
 			tableNames = append(tableNames, tableName)
@@ -620,16 +621,115 @@ func treeDatabasesToGeneric(dbMap map[string]*treeDatabase) []interface{} {
 				"columns":      stringsToInterfaces(table.Columns),
 				"column_types": columnTypes,
 				"rows":         rows,
-				"priority":     table.Priority || database.PriorityTable == table.Name,
+				"priority":     table.Priority || priorityTable == table.Name,
 			})
 		}
 		out = append(out, map[string]interface{}{
 			"name":           database.Name,
-			"priority_table": database.PriorityTable,
+			"priority_table": priorityTable,
 			"tables":         tables,
 		})
 	}
 	return out
+}
+
+func choosePriorityTable(database *treeDatabase) string {
+	if database == nil || len(database.Tables) == 0 {
+		return ""
+	}
+	tableNames := make([]string, 0, len(database.Tables))
+	for tableName := range database.Tables {
+		tableNames = append(tableNames, tableName)
+	}
+	sortStrings(tableNames)
+	passwordAdmin := make([]string, 0)
+	passwordOther := make([]string, 0)
+	adminTables := make([]string, 0)
+	sensitiveTables := make([]string, 0)
+	for _, tableName := range tableNames {
+		table := database.Tables[tableName]
+		if treeTableHasPriorityPasswordColumn(table) {
+			if isAdminTableName(tableName) {
+				passwordAdmin = append(passwordAdmin, tableName)
+			} else {
+				passwordOther = append(passwordOther, tableName)
+			}
+			continue
+		}
+		if isAdminTableName(tableName) {
+			adminTables = append(adminTables, tableName)
+			continue
+		}
+		if isSensitiveTableName(tableName) {
+			sensitiveTables = append(sensitiveTables, tableName)
+		}
+	}
+	for _, group := range [][]string{passwordAdmin, passwordOther, adminTables, sensitiveTables} {
+		if len(group) > 0 {
+			return group[0]
+		}
+	}
+	if database.PriorityTable != "" {
+		return database.PriorityTable
+	}
+	return tableNames[0]
+}
+
+func treeTableHasPriorityPasswordColumn(table *treeTable) bool {
+	if table == nil {
+		return false
+	}
+	for _, columnName := range table.Columns {
+		if isPriorityPasswordColumnName(columnName) {
+			return true
+		}
+	}
+	for columnName := range table.ColumnTypes {
+		if isPriorityPasswordColumnName(columnName) {
+			return true
+		}
+	}
+	for _, row := range table.Rows {
+		for columnName := range row {
+			if isPriorityPasswordColumnName(columnName) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isPriorityPasswordColumnName(columnName string) bool {
+	name := strings.ToLower(strings.TrimSpace(columnName))
+	if name == "" {
+		return false
+	}
+	for _, keyword := range []string{"password", "passwd", "pass", "pwd", "pass_hash", "password_hash"} {
+		if strings.Contains(name, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAdminTableName(tableName string) bool {
+	name := strings.ToLower(strings.TrimSpace(tableName))
+	for _, keyword := range []string{"adm", "admin", "administrator", "manager", "staff", "root"} {
+		if strings.Contains(name, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSensitiveTableName(tableName string) bool {
+	name := strings.ToLower(strings.TrimSpace(tableName))
+	for _, keyword := range []string{"admin", "administrator", "admins", "user", "users", "member", "members", "account", "accounts", "manager", "staff", "sys_user", "sys_users", "wp_users"} {
+		if strings.Contains(name, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsRow(rows []map[string]interface{}, candidate map[string]interface{}) bool {

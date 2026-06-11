@@ -35,7 +35,7 @@ type API struct {
 }
 
 const (
-	defaultLatestSQLMapAgentVersion = "2.4.55"
+	defaultLatestSQLMapAgentVersion = "2.4.56"
 	sqlmapAgentReleaseAPI           = "https://api.github.com/repos/maximo896/as/releases/latest"
 	sqlmapAgentTagsAPI              = "https://api.github.com/repos/maximo896/as/tags?per_page=1"
 	sqlmapAgentVersionCacheTTL      = 10 * time.Minute
@@ -272,6 +272,15 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 	server.URL = normalizeBaseURL(server.URL)
 	server.IsActive = true
 	server.Updating = false
+	if strings.EqualFold(strings.TrimSpace(server.MaintenanceStatus), "reinstalling") {
+		server.Draining = false
+		server.MaintenanceStatus = ""
+	}
+	if health, healthErr := api.fetchManagerHealth(server.ManagerURL, server.ManagerToken); healthErr == nil {
+		server.DiskTotalGB = health.Disk.TotalGB
+		server.DiskFreeGB = health.Disk.FreeGB
+		server.DiskUsedPercent = health.Disk.UsedPercent
+	}
 	server.LastError = ""
 	activeScans, countErr := getAWVSActiveScanCount(server.URL, server.APIKey)
 	if countErr != nil {
@@ -311,6 +320,12 @@ func (api *API) AddServer(c *gin.Context) {
 	srv.APIKey = strings.TrimSpace(srv.APIKey)
 	if srv.MaxConcurrency <= 0 {
 		srv.MaxConcurrency = 5
+	}
+	if srv.ReinstallThresholdPct <= 0 {
+		srv.ReinstallThresholdPct = 85
+	}
+	if srv.ReinstallMinFreeGB <= 0 {
+		srv.ReinstallMinFreeGB = 10
 	}
 	srv.IsActive = false
 	api.DB.Create(&srv)
@@ -375,20 +390,28 @@ func (api *API) RegisterAWVSFromProtocol(c *gin.Context) {
 		if cfg.MaxConcurrency > 0 {
 			server.MaxConcurrency = cfg.MaxConcurrency
 		}
+		if server.ReinstallThresholdPct <= 0 {
+			server.ReinstallThresholdPct = 85
+		}
+		if server.ReinstallMinFreeGB <= 0 {
+			server.ReinstallMinFreeGB = 10
+		}
 		server.LastCheckedAt = time.Now().Unix()
 		api.DB.Save(&server)
 	} else {
 		server = models.AWVSServer{
-			Name:           cfg.Name,
-			URL:            normalizedURL,
-			APIKey:         strings.TrimSpace(cfg.APIKey),
-			ManagerURL:     normalizeBaseURL(cfg.ManagerURL),
-			ManagerToken:   strings.TrimSpace(cfg.ManagerToken),
-			AWVSUsername:   strings.TrimSpace(cfg.AWVSUsername),
-			AWVSPassword:   strings.TrimSpace(cfg.AWVSPassword),
-			MaxConcurrency: cfg.MaxConcurrency,
-			IsActive:       true,
-			LastCheckedAt:  time.Now().Unix(),
+			Name:                  cfg.Name,
+			URL:                   normalizedURL,
+			APIKey:                strings.TrimSpace(cfg.APIKey),
+			ManagerURL:            normalizeBaseURL(cfg.ManagerURL),
+			ManagerToken:          strings.TrimSpace(cfg.ManagerToken),
+			AWVSUsername:          strings.TrimSpace(cfg.AWVSUsername),
+			AWVSPassword:          strings.TrimSpace(cfg.AWVSPassword),
+			MaxConcurrency:        cfg.MaxConcurrency,
+			IsActive:              true,
+			ReinstallThresholdPct: 85,
+			ReinstallMinFreeGB:    10,
+			LastCheckedAt:         time.Now().Unix(),
 		}
 		api.DB.Create(&server)
 	}
@@ -422,6 +445,9 @@ func (api *API) UpdateServer(c *gin.Context) {
 		AWVSPassword        *string `json:"awvs_password"`
 		MaxConcurrency      *int    `json:"max_concurrency"`
 		AutoRestartOnAPI500 *bool   `json:"auto_restart_on_api_500"`
+		AutoReinstall       *bool   `json:"auto_reinstall_enabled"`
+		ReinstallThreshold  *int    `json:"reinstall_threshold_percent"`
+		ReinstallMinFreeGB  *int64  `json:"reinstall_min_free_gb"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
@@ -455,8 +481,23 @@ func (api *API) UpdateServer(c *gin.Context) {
 	if req.AutoRestartOnAPI500 != nil {
 		server.AutoRestartOnAPI500 = *req.AutoRestartOnAPI500
 	}
+	if req.AutoReinstall != nil {
+		server.AutoReinstallEnabled = *req.AutoReinstall
+	}
+	if req.ReinstallThreshold != nil && *req.ReinstallThreshold > 0 {
+		server.ReinstallThresholdPct = *req.ReinstallThreshold
+	}
+	if req.ReinstallMinFreeGB != nil && *req.ReinstallMinFreeGB > 0 {
+		server.ReinstallMinFreeGB = *req.ReinstallMinFreeGB
+	}
 	if server.MaxConcurrency <= 0 {
 		server.MaxConcurrency = 5
+	}
+	if server.ReinstallThresholdPct <= 0 {
+		server.ReinstallThresholdPct = 85
+	}
+	if server.ReinstallMinFreeGB <= 0 {
+		server.ReinstallMinFreeGB = 10
 	}
 
 	api.DB.Save(&server)
@@ -585,6 +626,34 @@ func (api *API) UpdateAWVSServerVersion(c *gin.Context) {
 		"message":   "awvs server update requested",
 		"server_id": server.ID,
 	})
+}
+
+func (api *API) ReinstallAWVSServer(c *gin.Context) {
+	var server models.AWVSServer
+	if err := api.DB.First(&server, c.Param("id")).Error; err != nil {
+		c.JSON(404, gin.H{"error": "awvs server not found"})
+		return
+	}
+	if running := api.countAWVSBoundRunningTasks(server.ID); running > 0 && strings.TrimSpace(c.Query("force")) != "1" {
+		c.JSON(409, gin.H{"error": fmt.Sprintf("node still has %d panel-bound running task(s); wait for drain or use force=1", running)})
+		return
+	}
+	if err := api.callNodeManagerForNode(server.ManagerURL, server.ManagerToken, server.URL, "reinstall"); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	now := time.Now().Unix()
+	api.DB.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
+		"draining":            true,
+		"maintenance_status":  "reinstalling",
+		"updating":            true,
+		"is_active":           false,
+		"current_running":     0,
+		"last_reinstall_at":   now,
+		"last_auto_update_at": now,
+		"last_error":          "manual hard reinstall requested",
+	})
+	c.JSON(202, gin.H{"message": "awvs hard reinstall requested", "server_id": server.ID})
 }
 
 func (api *API) DeleteServer(c *gin.Context) {
@@ -2269,6 +2338,221 @@ func buildSQLMapTreeSearchResults(tree map[string]interface{}, term, kindFilter 
 	return results
 }
 
+func appendSQLMapTreeSearchResults(results []gin.H, tree map[string]interface{}, term, kindFilter string, base gin.H, limit int) []gin.H {
+	needle := strings.ToLower(strings.TrimSpace(term))
+	kindFilter = strings.ToLower(strings.TrimSpace(kindFilter))
+	if needle == "" || len(tree) == 0 || len(results) >= limit {
+		return results
+	}
+	include := func(kindName string) bool {
+		return kindFilter == "" || kindFilter == "all" || kindFilter == kindName
+	}
+	appendHit := func(hit gin.H) {
+		if len(results) >= limit {
+			return
+		}
+		item := gin.H{}
+		for key, value := range base {
+			item[key] = value
+		}
+		for key, value := range hit {
+			item[key] = value
+		}
+		results = append(results, item)
+	}
+
+	databases, _ := tree["databases"].([]interface{})
+	for _, rawDatabase := range databases {
+		database, ok := rawDatabase.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		dbName := sqlmapSearchString(database["name"])
+		if include("database") && strings.Contains(strings.ToLower(dbName), needle) {
+			appendHit(gin.H{"kind": "database", "database": dbName, "table": "", "column": "", "value": dbName})
+		}
+		tables, _ := database["tables"].([]interface{})
+		for _, rawTable := range tables {
+			if len(results) >= limit {
+				return results
+			}
+			table, ok := rawTable.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			tableName := sqlmapSearchString(table["name"])
+			if include("table") && strings.Contains(strings.ToLower(tableName), needle) {
+				appendHit(gin.H{"kind": "table", "database": dbName, "table": tableName, "column": "", "value": tableName})
+			}
+			columns, _ := table["columns"].([]interface{})
+			for _, rawColumn := range columns {
+				columnName := sqlmapSearchString(rawColumn)
+				if include("column") && strings.Contains(strings.ToLower(columnName), needle) {
+					appendHit(gin.H{"kind": "column", "database": dbName, "table": tableName, "column": columnName, "value": columnName})
+				}
+			}
+			rows, _ := table["rows"].([]interface{})
+			for rowIndex, rawRow := range rows {
+				if len(results) >= limit {
+					return results
+				}
+				row, ok := rawRow.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				rowJSON, _ := json.Marshal(row)
+				for columnName, rawValue := range row {
+					value := sqlmapSearchString(rawValue)
+					if include("data") && strings.Contains(strings.ToLower(value), needle) {
+						appendHit(gin.H{
+							"kind":      "data",
+							"database":  dbName,
+							"table":     tableName,
+							"column":    columnName,
+							"value":     value,
+							"row":       row,
+							"row_json":  string(rowJSON),
+							"row_index": rowIndex,
+						})
+					}
+				}
+			}
+		}
+	}
+	return results
+}
+
+func parseSQLMapSnapshot(raw string) (map[string]interface{}, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, false
+	}
+	var snapshot map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return nil, false
+	}
+	return snapshot, true
+}
+
+func (api *API) SearchAllSqlmapExports(c *gin.Context) {
+	query := strings.TrimSpace(c.Query("q"))
+	kind := strings.TrimSpace(strings.ToLower(c.DefaultQuery("kind", "data")))
+	if query == "" {
+		c.JSON(400, gin.H{"error": "q is required"})
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "200"))
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	results := make([]gin.H, 0)
+	appendFromSnapshot := func(snapshot map[string]interface{}, base gin.H) {
+		if len(results) >= limit || len(snapshot) == 0 {
+			return
+		}
+		if merged, err := domaincache.ApplySnapshot(api.DB, snapshot); err == nil {
+			snapshot = merged
+		}
+		tree, _ := snapshot["tree"].(map[string]interface{})
+		results = appendSQLMapTreeSearchResults(results, tree, query, kind, base, limit)
+	}
+
+	var tasks []models.Task
+	api.DB.Where("sqlmap_result_json <> ''").Order("id desc").Find(&tasks)
+	for _, task := range tasks {
+		if len(results) >= limit {
+			break
+		}
+		snapshot, ok := parseSQLMapSnapshot(task.SqlmapResultJSON)
+		if !ok {
+			continue
+		}
+		appendFromSnapshot(snapshot, gin.H{
+			"source":           "task",
+			"task_id":          task.ID,
+			"finding_id":       nil,
+			"target_url":       task.URL,
+			"affects_url":      "",
+			"sqlmap_task_id":   task.SqlmapTaskID,
+			"sqlmap_status":    task.SqlmapStatus,
+			"sqlmap_cached_at": task.SqlmapCachedAt,
+		})
+	}
+
+	var findings []models.TaskFinding
+	api.DB.Where("sqlmap_result_json <> ''").Order("id desc").Find(&findings)
+	taskIDs := make([]uint, 0, len(findings))
+	for _, finding := range findings {
+		taskIDs = append(taskIDs, finding.TaskID)
+	}
+	taskMap := map[uint]models.Task{}
+	if len(taskIDs) > 0 {
+		var findingTasks []models.Task
+		api.DB.Where("id IN ?", taskIDs).Find(&findingTasks)
+		for _, task := range findingTasks {
+			taskMap[task.ID] = task
+		}
+	}
+	for _, finding := range findings {
+		if len(results) >= limit {
+			break
+		}
+		snapshot, ok := parseSQLMapSnapshot(finding.SqlmapResultJSON)
+		if !ok {
+			continue
+		}
+		task := taskMap[finding.TaskID]
+		appendFromSnapshot(snapshot, gin.H{
+			"source":           "finding",
+			"task_id":          finding.TaskID,
+			"finding_id":       finding.ID,
+			"target_url":       task.URL,
+			"affects_url":      finding.AffectsURL,
+			"sqlmap_task_id":   finding.SqlmapTaskID,
+			"sqlmap_status":    finding.SqlmapStatus,
+			"sqlmap_cached_at": finding.SqlmapCachedAt,
+		})
+	}
+
+	var caches []models.DomainSQLMapCache
+	api.DB.Where("tree_json <> ''").Order("id desc").Find(&caches)
+	for _, cache := range caches {
+		if len(results) >= limit {
+			break
+		}
+		snapshot, ok, err := domaincache.LoadSnapshotByScope(api.DB, cache.Domain, cache.ForceSSL)
+		if err != nil || !ok {
+			continue
+		}
+		scheme := "http"
+		if cache.ForceSSL {
+			scheme = "https"
+		}
+		appendFromSnapshot(snapshot, gin.H{
+			"source":           "domain_cache",
+			"task_id":          nil,
+			"finding_id":       nil,
+			"target_url":       fmt.Sprintf("%s://%s", scheme, cache.Domain),
+			"affects_url":      "",
+			"sqlmap_task_id":   "",
+			"sqlmap_status":    "",
+			"sqlmap_cached_at": cache.UpdatedAt.Unix(),
+		})
+	}
+
+	c.JSON(200, gin.H{
+		"query":   query,
+		"kind":    kind,
+		"limit":   limit,
+		"count":   len(results),
+		"results": results,
+	})
+}
+
 func loadFindingSearchSnapshot(db *gorm.DB, finding *models.TaskFinding, fallbackURL string) map[string]interface{} {
 	if finding == nil {
 		return map[string]interface{}{}
@@ -3394,9 +3678,16 @@ type managerConfigPayload struct {
 	CommandTimeoutSec int      `json:"command_timeout_sec"`
 }
 
+type managerDiskPayload struct {
+	TotalGB     int64 `json:"total_gb"`
+	FreeGB      int64 `json:"free_gb"`
+	UsedPercent int   `json:"used_percent"`
+}
+
 type managerHealthResponse struct {
 	OK     bool                 `json:"ok"`
 	Config managerConfigPayload `json:"config"`
+	Disk   managerDiskPayload   `json:"disk"`
 }
 
 func normalizeAgentVersionValue(version string) string {
@@ -3592,6 +3883,14 @@ func deriveDataRootBase(updateScript string) string {
 }
 
 func (api *API) fetchManagerConfig(managerURL, managerToken string) (*managerConfigPayload, error) {
+	payload, err := api.fetchManagerHealth(managerURL, managerToken)
+	if err != nil {
+		return nil, err
+	}
+	return &payload.Config, nil
+}
+
+func (api *API) fetchManagerHealth(managerURL, managerToken string) (*managerHealthResponse, error) {
 	managerURL = normalizeBaseURL(managerURL)
 	managerToken = strings.TrimSpace(managerToken)
 	if managerURL == "" || managerToken == "" {
@@ -3616,7 +3915,7 @@ func (api *API) fetchManagerConfig(managerURL, managerToken string) (*managerCon
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("invalid manager health response: %v", err)
 	}
-	return &payload.Config, nil
+	return &payload, nil
 }
 
 func buildAWVSManualUpdateCommand(server models.AWVSServer) (string, error) {
@@ -3649,11 +3948,12 @@ func buildAWVSManualUpdatePowerShellCommand(server models.AWVSServer) (string, e
 
 func buildAWVSManualUninstallCommand(server models.AWVSServer) (string, error) {
 	safeName := sanitizeProxyContainerName(server.Name)
-	return buildManualUninstallCommand(
+	return buildManualUninstallCommandWithOptions(
 		[]string{fmt.Sprintf("awvs-agent-%s", safeName)},
 		fmt.Sprintf("aspanel-docker-manager-awvs-%s", safeName),
 		fmt.Sprintf("/etc/systemd/system/aspanel-docker-manager-awvs-%s.service", safeName),
 		fmt.Sprintf("/opt/aspanel/awvs-agent/%s", safeName),
+		true,
 	), nil
 }
 
@@ -3774,23 +4074,52 @@ func buildPathManualUninstallCommand(agent models.PathAgent, cfg *managerConfigP
 }
 
 func buildManualUninstallCommand(containers []string, serviceName, serviceFile, dataRoot string) string {
+	return buildManualUninstallCommandWithOptions(containers, serviceName, serviceFile, dataRoot, false)
+}
+
+func buildManualUninstallCommandWithOptions(containers []string, serviceName, serviceFile, dataRoot string, clearAWVSImmutable bool) string {
 	parts := []string{
 		`SUDO=""`,
 		`if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi`,
+	}
+	if clearAWVSImmutable {
+		parts = append(parts, `clear_awvs_immutable() {
+  cn="$1"
+  if ! $SUDO docker inspect "$cn" >/dev/null 2>&1; then return 0; fi
+  $SUDO docker start "$cn" >/dev/null 2>&1 || true
+  $SUDO docker exec -u 0 "$cn" sh -c 'for p in /home/acunetix /home/acunetix/.acunetix /opt/acunetix /var/lib/acunetix /var/opt/acunetix; do if [ -e "$p" ] && command -v chattr >/dev/null 2>&1; then chattr -R -i -a "$p" >/dev/null 2>&1 || true; fi; done' >/dev/null 2>&1 || true
+  if command -v chattr >/dev/null 2>&1; then
+    $SUDO docker inspect -f '{{range $k,$v := .GraphDriver.Data}}{{println $v}}{{end}}' "$cn" 2>/dev/null | while IFS= read -r p; do
+      case "$p" in /var/lib/docker/*) [ -e "$p" ] && $SUDO chattr -R -i -a "$p" >/dev/null 2>&1 || true ;; esac
+    done
+  fi
+}`)
 	}
 	if len(containers) > 0 {
 		quotedContainers := make([]string, 0, len(containers))
 		for _, container := range containers {
 			if strings.TrimSpace(container) != "" {
+				if clearAWVSImmutable {
+					parts = append(parts, fmt.Sprintf("clear_awvs_immutable %s", shellQuote(strings.TrimSpace(container))))
+				}
 				quotedContainers = append(quotedContainers, shellQuote(strings.TrimSpace(container)))
 			}
 		}
 		if len(quotedContainers) > 0 {
-			parts = append(parts, fmt.Sprintf("$SUDO docker rm -f %s >/dev/null 2>&1 || true", strings.Join(quotedContainers, " ")))
+			if clearAWVSImmutable {
+				for _, container := range quotedContainers {
+					parts = append(parts, fmt.Sprintf("$SUDO docker rm -f %s >/dev/null 2>&1 || { clear_awvs_immutable %s; $SUDO docker rm -f %s >/dev/null 2>&1 || true; }", container, container, container))
+				}
+			} else {
+				parts = append(parts, fmt.Sprintf("$SUDO docker rm -f %s >/dev/null 2>&1 || true", strings.Join(quotedContainers, " ")))
+			}
 		}
 	}
 	dataRoot = filepath.ToSlash(filepath.Clean(strings.TrimSpace(dataRoot)))
 	if dataRoot != "" && dataRoot != "." && dataRoot != "/" {
+		if clearAWVSImmutable {
+			parts = append(parts, fmt.Sprintf("if command -v chattr >/dev/null 2>&1 && [ -d %s ]; then $SUDO chattr -R -i -a %s >/dev/null 2>&1 || true; fi", shellQuote(dataRoot), shellQuote(dataRoot)))
+		}
 		parts = append(parts, fmt.Sprintf("$SUDO rm -rf %s", shellQuote(dataRoot)))
 	}
 	if strings.TrimSpace(serviceName) != "" && strings.TrimSpace(serviceFile) != "" {

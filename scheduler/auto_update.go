@@ -21,7 +21,7 @@ const (
 	agentAutoUpdateCooldownSec      = 21600
 	agentAutoUpdateIdleWindowSec    = 120
 	autoUpdateLatestVersionTTL      = 10 * time.Minute
-	defaultLatestAgentVersion       = "2.4.55"
+	defaultLatestAgentVersion       = "2.4.56"
 	sqlmapAgentLatestReleaseAPI     = "https://api.github.com/repos/maximo896/as/releases/latest"
 	sqlmapAgentLatestTagsAPI        = "https://api.github.com/repos/maximo896/as/tags?per_page=1"
 )

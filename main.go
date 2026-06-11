@@ -145,6 +145,7 @@ func main() {
 	r.POST("/api/servers/:id/cleanup-finished", h.CleanupFinishedAWVSScans)
 	r.POST("/api/servers/:id/refresh", h.RefreshAWVSServerStatus)
 	r.POST("/api/servers/:id/update", h.UpdateAWVSServerVersion)
+	r.POST("/api/servers/:id/reinstall", h.ReinstallAWVSServer)
 	r.GET("/api/servers/:id/manual-update-command", h.GetAWVSManualUpdateCommand)
 	r.POST("/api/servers/:id/uninstall", h.UninstallAWVSServer)
 	r.GET("/api/servers/:id/manual-uninstall-command", h.GetAWVSManualUninstallCommand)
@@ -163,6 +164,7 @@ func main() {
 	r.GET("/api/panel/logs", h.GetPanelLogs)
 
 	r.GET("/api/sqlmap/agents", h.GetSqlmapAgents)
+	r.GET("/api/sqlmap/global-search", h.SearchAllSqlmapExports)
 	r.GET("/api/sqlmap/agents/latest-version", h.GetSqlmapAgentLatestVersion)
 	r.GET("/api/sqlmap/defaults", h.GetSqlmapDefaults)
 	r.PUT("/api/sqlmap/defaults", h.UpdateSqlmapDefaults)

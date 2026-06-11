@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -126,6 +127,8 @@ func (m *manager) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"pid":             os.Getpid(),
 		"started_at":      m.startedAt,
 		"containers":      dockerStates(cfg.Containers),
+		"disk":            diskInfo("/"),
+		"update_log_tail": tailFile(cfg.UpdateLog, 65536),
 		"config":          cfg,
 		"state":           m.snapshotState(),
 	})
@@ -159,7 +162,9 @@ func (m *manager) handleControl(w http.ResponseWriter, r *http.Request) {
 	case "start", "stop", "restart":
 		m.handleDockerAction(w, action, cfg)
 	case "update":
-		m.handleUpdate(w, cfg)
+		m.handleUpdate(w, cfg, false)
+	case "reinstall":
+		m.handleUpdate(w, cfg, true)
 	case "uninstall":
 		m.handleUninstall(w, cfg)
 	default:
@@ -207,7 +212,7 @@ func (m *manager) handleDockerAction(w http.ResponseWriter, action string, cfg c
 	})
 }
 
-func (m *manager) handleUpdate(w http.ResponseWriter, cfg config) {
+func (m *manager) handleUpdate(w http.ResponseWriter, cfg config, reinstall bool) {
 	updateScript := strings.TrimSpace(cfg.UpdateScript)
 	if updateScript == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "update script is not configured"})
@@ -237,18 +242,27 @@ func (m *manager) handleUpdate(w http.ResponseWriter, cfg config) {
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.Env = os.Environ()
+	action := "update"
+	if reinstall {
+		action = "reinstall"
+		cmd.Env = append(cmd.Env, "ASPANEL_AWVS_HARD_REINSTALL=1")
+	}
 	if err := cmd.Start(); err != nil {
-		m.markActionDone("update", err)
+		m.markActionDone(action, err)
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{"error": err.Error()})
 		return
 	}
 
-	m.markUpdateRequested()
+	if reinstall {
+		m.markActionStart(action)
+	} else {
+		m.markUpdateRequested()
+	}
 	_ = cmd.Process.Release()
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"ok":            true,
-		"action":        "update",
-		"message":       "update requested",
+		"action":        action,
+		"message":       action + " requested",
 		"update_script": updateScript,
 	})
 }
@@ -450,6 +464,71 @@ func writeJSON(w http.ResponseWriter, statusCode int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func diskInfo(path string) map[string]interface{} {
+	result := map[string]interface{}{
+		"path":         path,
+		"total_gb":     int64(0),
+		"free_gb":      int64(0),
+		"used_percent": 0,
+	}
+	output, err := exec.Command("df", "-Pk", path).Output()
+	if err != nil {
+		result["error"] = err.Error()
+		return result
+	}
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) < 2 {
+		result["error"] = "unexpected df output"
+		return result
+	}
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(fields) < 5 {
+		result["error"] = "unexpected df columns"
+		return result
+	}
+	totalKB, _ := strconv.ParseInt(fields[1], 10, 64)
+	usedKB, _ := strconv.ParseInt(fields[2], 10, 64)
+	freeKB, _ := strconv.ParseInt(fields[3], 10, 64)
+	totalGB := totalKB / 1024 / 1024
+	freeGB := freeKB / 1024 / 1024
+	usedPercent := 0
+	if totalKB > 0 {
+		usedPercent = int(usedKB * 100 / totalKB)
+	}
+	result["total_gb"] = totalGB
+	result["free_gb"] = freeGB
+	result["used_percent"] = usedPercent
+	return result
+}
+
+func tailFile(path string, maxBytes int64) string {
+	path = strings.TrimSpace(path)
+	if path == "" || maxBytes <= 0 {
+		return ""
+	}
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		return ""
+	}
+	start := int64(0)
+	if info.Size() > maxBytes {
+		start = info.Size() - maxBytes
+	}
+	if _, err := file.Seek(start, 0); err != nil {
+		return ""
+	}
+	buf, err := io.ReadAll(file)
+	if err != nil {
+		return ""
+	}
+	return string(buf)
 }
 
 func init() {

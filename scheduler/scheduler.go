@@ -65,6 +65,8 @@ const (
 	awvsAutoRestartCooldownSec  = 600
 	awvsDispatchBatchSize       = 50
 	awvsStatusBatchSize         = 200
+	awvsMaintenanceIntervalSec  = 60
+	awvsReinstallCooldownSec    = 3600
 	sqlmapSyncBatchSize         = 200
 	scanningVulnBatchSize       = 100
 )
@@ -181,6 +183,67 @@ func callNodeManager(managerURL, managerToken, action string) error {
 	return nil
 }
 
+type nodeManagerDiskInfo struct {
+	TotalGB     int64 `json:"total_gb"`
+	FreeGB      int64 `json:"free_gb"`
+	UsedPercent int   `json:"used_percent"`
+}
+
+type nodeManagerHealthInfo struct {
+	OK            bool                `json:"ok"`
+	Disk          nodeManagerDiskInfo `json:"disk"`
+	UpdateLogTail string              `json:"update_log_tail"`
+}
+
+func fetchNodeManagerHealth(managerURL, managerToken string) (*nodeManagerHealthInfo, error) {
+	managerURL = strings.TrimRight(strings.TrimSpace(managerURL), "/")
+	managerToken = strings.TrimSpace(managerToken)
+	if managerURL == "" || managerToken == "" {
+		return nil, fmt.Errorf("manager API is not configured for this node")
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	client := &http.Client{Timeout: 30 * time.Second, Transport: tr}
+	req, _ := http.NewRequest("GET", managerURL+"/health", nil)
+	req.Header.Set("X-Manager-Token", managerToken)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = fmt.Sprintf("manager api returned %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("%s", message)
+	}
+	var health nodeManagerHealthInfo
+	if err := json.Unmarshal(body, &health); err != nil {
+		return nil, err
+	}
+	return &health, nil
+}
+
+func updateAWVSDiskFromManager(db *gorm.DB, server *models.AWVSServer) {
+	if db == nil || server == nil || strings.TrimSpace(server.ManagerURL) == "" || strings.TrimSpace(server.ManagerToken) == "" {
+		return
+	}
+	health, err := fetchNodeManagerHealth(server.ManagerURL, server.ManagerToken)
+	if err != nil {
+		return
+	}
+	server.DiskTotalGB = health.Disk.TotalGB
+	server.DiskFreeGB = health.Disk.FreeGB
+	server.DiskUsedPercent = health.Disk.UsedPercent
+	db.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
+		"disk_total_gb":     server.DiskTotalGB,
+		"disk_free_gb":      server.DiskFreeGB,
+		"disk_used_percent": server.DiskUsedPercent,
+	})
+}
+
 func triggerAWVSAutoRestartOnOffline(db *gorm.DB, server *models.AWVSServer, err error, source string) bool {
 	if !shouldAutoRestartAWVSOffline(db, server) {
 		return false
@@ -256,6 +319,7 @@ func StartScheduler(db *gorm.DB) {
 	go dispatchAWVSTasks(db)
 	go checkAWVSStatus(db)
 	go refreshAWVSServersStatus(db)
+	go maintainAWVSServers(db)
 	go refreshSqlmapAgentsStatus(db)
 	go refreshPathAgentsStatus(db)
 	go autoUpdateAgents(db)
@@ -312,6 +376,7 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 			server.IsActive = true
 			server.Updating = false
 			server.LastCheckedAt = checkedAt
+			updateAWVSDiskFromManager(db, &server)
 			activeScans, countErr := client.CountActiveScans()
 			if countErr != nil {
 				server.LastError = fmt.Sprintf("count active scans failed; keeping last synced value %d: %v", server.CurrentRunning, countErr)
@@ -323,6 +388,158 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 			db.Save(&server)
 		}
 	}
+}
+
+func maintainAWVSServers(db *gorm.DB) {
+	for {
+		time.Sleep(time.Duration(awvsMaintenanceIntervalSec) * time.Second)
+		var servers []models.AWVSServer
+		if err := db.Where("auto_reinstall_enabled = ? OR draining = ?", true, true).Find(&servers).Error; err != nil || len(servers) == 0 {
+			continue
+		}
+		for _, server := range servers {
+			maintainAWVSServer(db, &server)
+		}
+	}
+}
+
+func maintainAWVSServer(db *gorm.DB, server *models.AWVSServer) {
+	if db == nil || server == nil || server.ID == 0 {
+		return
+	}
+	now := time.Now().Unix()
+	updateAWVSDiskFromManager(db, server)
+	if server.ReinstallThresholdPct <= 0 {
+		server.ReinstallThresholdPct = 85
+	}
+	if server.ReinstallMinFreeGB <= 0 {
+		server.ReinstallMinFreeGB = 10
+	}
+	diskKnown := server.DiskTotalGB > 0
+	diskLow := diskKnown && (server.DiskUsedPercent >= server.ReinstallThresholdPct || server.DiskFreeGB <= server.ReinstallMinFreeGB)
+	status := strings.ToLower(strings.TrimSpace(server.MaintenanceStatus))
+
+	if status == "reinstalling" {
+		if applyAWVSReinstallProtocolFromManager(db, server) {
+			return
+		}
+		if server.IsActive && now-server.LastReinstallAt > 120 {
+			db.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
+				"draining":           false,
+				"maintenance_status": "",
+				"updating":           false,
+				"last_error":         "",
+			})
+			log.Printf("[awvs][maintenance] reinstall completed id=%d name=%s", server.ID, server.Name)
+		}
+		return
+	}
+
+	if !server.AutoReinstallEnabled {
+		return
+	}
+	if !diskLow {
+		if server.Draining && status == "draining_low_disk" {
+			db.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
+				"draining":           false,
+				"maintenance_status": "",
+			})
+		}
+		return
+	}
+
+	if !server.Draining || status == "" {
+		db.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
+			"draining":           true,
+			"maintenance_status": "draining_low_disk",
+			"last_error":         fmt.Sprintf("low disk: %d%% used, %dGB free; waiting for scans to finish before reinstall", server.DiskUsedPercent, server.DiskFreeGB),
+		})
+		log.Printf("[awvs][maintenance] drain requested id=%d name=%s disk=%d%% free=%dGB", server.ID, server.Name, server.DiskUsedPercent, server.DiskFreeGB)
+	}
+
+	active := countAWVSScanningTasks(db, server.ID)
+	if active > 0 {
+		return
+	}
+	if server.LastReinstallAt > 0 && now-server.LastReinstallAt < awvsReinstallCooldownSec {
+		return
+	}
+	if strings.TrimSpace(server.ManagerURL) == "" || strings.TrimSpace(server.ManagerToken) == "" {
+		db.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
+			"last_error": fmt.Sprintf("low disk: %d%% used, %dGB free; manager not configured for auto reinstall", server.DiskUsedPercent, server.DiskFreeGB),
+		})
+		return
+	}
+	if err := callNodeManager(server.ManagerURL, server.ManagerToken, "reinstall"); err != nil {
+		db.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
+			"last_error": fmt.Sprintf("auto reinstall failed: %v", err),
+		})
+		log.Printf("[awvs][maintenance] reinstall failed id=%d name=%s err=%v", server.ID, server.Name, err)
+		return
+	}
+	db.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
+		"draining":            true,
+		"maintenance_status":  "reinstalling",
+		"updating":            true,
+		"is_active":           false,
+		"current_running":     0,
+		"last_reinstall_at":   now,
+		"last_auto_update_at": now,
+		"last_error":          fmt.Sprintf("auto reinstall requested after low disk: %d%% used, %dGB free", server.DiskUsedPercent, server.DiskFreeGB),
+	})
+	log.Printf("[awvs][maintenance] reinstall requested id=%d name=%s", server.ID, server.Name)
+}
+
+func countAWVSScanningTasks(db *gorm.DB, serverID uint) int64 {
+	var count int64
+	db.Model(&models.Task{}).Where("awvs_server_id = ? AND status = ?", serverID, "scanning").Count(&count)
+	return count
+}
+
+func applyAWVSReinstallProtocolFromManager(db *gorm.DB, server *models.AWVSServer) bool {
+	if db == nil || server == nil || strings.TrimSpace(server.ManagerURL) == "" || strings.TrimSpace(server.ManagerToken) == "" {
+		return false
+	}
+	health, err := fetchNodeManagerHealth(server.ManagerURL, server.ManagerToken)
+	if err != nil {
+		return false
+	}
+	matches := regexp.MustCompile(`awvsagent://[A-Za-z0-9+/_=-]+`).FindAllString(health.UpdateLogTail, -1)
+	if len(matches) == 0 {
+		return false
+	}
+	cfg, err := decodeProto(matches[len(matches)-1], "awvsagent://")
+	if err != nil || strings.TrimSpace(cfg.URL) == "" || strings.TrimSpace(cfg.APIKey) == "" {
+		return false
+	}
+	now := time.Now().Unix()
+	updates := map[string]interface{}{
+		"url":                strings.TrimRight(strings.TrimSpace(cfg.URL), "/"),
+		"api_key":            strings.TrimSpace(cfg.APIKey),
+		"manager_url":        strings.TrimRight(strings.TrimSpace(cfg.ManagerURL), "/"),
+		"manager_token":      strings.TrimSpace(cfg.ManagerToken),
+		"awvs_username":      strings.TrimSpace(cfg.AWVSUsername),
+		"awvs_password":      strings.TrimSpace(cfg.AWVSPassword),
+		"max_concurrency":    maxInt(1, cfg.MaxConcurrency),
+		"is_active":          true,
+		"updating":           false,
+		"draining":           false,
+		"maintenance_status": "",
+		"last_checked_at":    now,
+		"last_heartbeat_at":  now,
+		"last_error":         "",
+	}
+	if strings.TrimSpace(cfg.Name) != "" {
+		updates["name"] = cfg.Name
+	}
+	if health.Disk.TotalGB > 0 {
+		updates["disk_total_gb"] = health.Disk.TotalGB
+		updates["disk_free_gb"] = health.Disk.FreeGB
+		updates["disk_used_percent"] = health.Disk.UsedPercent
+	}
+	db.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(updates)
+	log.Printf("[awvs][maintenance] reinstall protocol applied id=%d name=%s url=%s", server.ID, server.Name, cfg.URL)
+	return true
 }
 
 func refreshSqlmapAgentsStatus(db *gorm.DB) {
@@ -392,7 +609,7 @@ func dispatchAWVSTasks(db *gorm.DB) {
 		}
 
 		var servers []models.AWVSServer
-		if err := db.Where("is_active = ?", true).Find(&servers).Error; err != nil || len(servers) == 0 {
+		if err := db.Where("is_active = ? AND draining = ? AND updating = ? AND (maintenance_status = '' OR maintenance_status IS NULL)", true, false, false).Find(&servers).Error; err != nil || len(servers) == 0 {
 			continue
 		}
 
@@ -1427,6 +1644,9 @@ func pickBalancedAWVSServer(db *gorm.DB, servers []models.AWVSServer) (models.AW
 	}
 	items := make([]item, 0, len(servers))
 	for _, srv := range servers {
+		if srv.Draining || srv.Updating || strings.TrimSpace(srv.MaintenanceStatus) != "" {
+			continue
+		}
 		var activeCount int64
 		db.Model(&models.Task{}).Where("awvs_server_id = ? AND status = ?", srv.ID, "scanning").Count(&activeCount)
 		if srv.MaxConcurrency > 0 && activeCount >= int64(srv.MaxConcurrency) {
@@ -2168,6 +2388,7 @@ func registerAWVSFromProto(db *gorm.DB, sig interact.Signal, inst *models.CloudI
 		existing.InstanceID = inst.InstanceID
 		existing.Provider = "tencent"
 		existing.Name = cloudAgentName("awvs", inst.InstanceID, cfg.Name)
+		existing.APIKey = strings.TrimSpace(cfg.APIKey)
 		existing.ManagerURL = strings.TrimRight(strings.TrimSpace(cfg.ManagerURL), "/")
 		existing.ManagerToken = strings.TrimSpace(cfg.ManagerToken)
 		if u := strings.TrimSpace(cfg.AWVSUsername); u != "" {

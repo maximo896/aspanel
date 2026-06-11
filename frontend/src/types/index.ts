@@ -21,6 +21,15 @@ export interface AWVSServer {
   last_auto_update_at: number
   last_auto_update_error: string
   last_error: string
+  draining: boolean
+  maintenance_status: string
+  disk_total_gb: number
+  disk_free_gb: number
+  disk_used_percent: number
+  last_reinstall_at: number
+  auto_reinstall_enabled: boolean
+  reinstall_threshold_percent: number
+  reinstall_min_free_gb: number
   provider: string
   instance_id: string
   region: string

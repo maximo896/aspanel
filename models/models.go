@@ -26,6 +26,15 @@ type AWVSServer struct {
 	LastAutoUpdateAt      int64  `json:"last_auto_update_at"`
 	LastAutoUpdateError   string `json:"last_auto_update_error"`
 	LastError             string `json:"last_error"`
+	Draining              bool   `json:"draining" gorm:"default:false;index"`
+	MaintenanceStatus     string `json:"maintenance_status" gorm:"index"`
+	DiskTotalGB           int64  `json:"disk_total_gb"`
+	DiskFreeGB            int64  `json:"disk_free_gb"`
+	DiskUsedPercent       int    `json:"disk_used_percent"`
+	LastReinstallAt       int64  `json:"last_reinstall_at"`
+	AutoReinstallEnabled  bool   `json:"auto_reinstall_enabled" gorm:"default:false"`
+	ReinstallThresholdPct int    `json:"reinstall_threshold_percent" gorm:"default:85"`
+	ReinstallMinFreeGB    int64  `json:"reinstall_min_free_gb" gorm:"default:10"`
 	Provider              string `json:"provider" gorm:"default:'manual'"`
 	InstanceID            string `json:"instance_id"`
 	Region                string `json:"region"`

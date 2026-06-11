@@ -44,6 +44,7 @@ import {
   getServers,
   refreshServer,
   registerAWVSFromLink,
+  reinstallAWVSServer,
   restartAWVSDocker,
   uninstallAWVSServer,
   updateAWVSServerVersion,
@@ -98,7 +99,7 @@ export default function AWVSV3Page() {
     queryKey: ['servers'],
     queryFn: getServers,
     refetchInterval: query =>
-      ((query.state.data as AWVSServer[] | undefined) || []).some(server => server.cleanup_running) ? 3000 : false,
+      ((query.state.data as AWVSServer[] | undefined) || []).some(server => server.cleanup_running || server.draining || Boolean(server.maintenance_status)) ? 3000 : false,
   })
   const { data: cloudSettings } = useQuery({
     queryKey: ['cloud-settings'],
@@ -201,6 +202,15 @@ export default function AWVSV3Page() {
     onError: error => message.error(extractError(error)),
   })
 
+  const reinstallMut = useMutation({
+    mutationFn: (id: number) => reinstallAWVSServer(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['servers'] })
+      message.success(t('awvs_reinstall_requested'))
+    },
+    onError: error => message.error(extractError(error)),
+  })
+
   const awvsAutoRestartMut = useMutation({
     mutationFn: (checked: boolean) => updateCloudSettings({ awvs_auto_restart_on_api_500: checked }),
     onSuccess: () => {
@@ -279,6 +289,9 @@ export default function AWVSV3Page() {
       api_key: '',
       manager_token: '',
       awvs_password: '',
+      auto_reinstall_enabled: server.auto_reinstall_enabled,
+      reinstall_threshold_percent: server.reinstall_threshold_percent || 85,
+      reinstall_min_free_gb: server.reinstall_min_free_gb || 10,
     })
   }
 
@@ -329,6 +342,14 @@ export default function AWVSV3Page() {
     if (!payload.manager_token) delete payload.manager_token
     if (!payload.awvs_password) delete payload.awvs_password
     updateMut.mutate({ id: editingServer.ID, data: payload })
+  }
+
+  const diskColor = (server: AWVSServer) => {
+    const threshold = server.reinstall_threshold_percent || 85
+    if (!server.disk_total_gb) return 'default'
+    if (server.disk_used_percent >= threshold || server.disk_free_gb <= (server.reinstall_min_free_gb || 10)) return 'red'
+    if (server.disk_used_percent >= Math.max(0, threshold - 10)) return 'orange'
+    return 'green'
   }
 
   const columns: ColumnsType<AWVSServer> = [
@@ -403,11 +424,25 @@ export default function AWVSV3Page() {
     {
       title: t('status'),
       key: 'status',
-      width: 90,
+      width: 140,
       render: (_, server) => {
+        if (server.maintenance_status) return <Tag color="processing">{server.maintenance_status}</Tag>
+        if (server.draining) return <Tag color="orange">draining</Tag>
         if (server.updating) return <Tag color="warning">{t('updating')}</Tag>
         return <Tag color={server.is_active ? 'success' : 'default'}>{server.is_active ? t('online') : t('offline')}</Tag>
       },
+    },
+    {
+      title: t('disk'),
+      key: 'disk',
+      width: 170,
+      render: (_, server) => (
+        <Tooltip title={server.disk_total_gb ? `${server.disk_free_gb}GB free / ${server.disk_total_gb}GB total` : t('disk_unknown')}>
+          <Tag color={diskColor(server)}>
+            {server.disk_total_gb ? `${server.disk_used_percent}% / ${server.disk_free_gb}GB` : '-'}
+          </Tag>
+        </Tooltip>
+      ),
     },
     {
       title: 'Last Auto Restart',
@@ -451,6 +486,9 @@ export default function AWVSV3Page() {
           </Button>
           <Popconfirm title={t('confirm_restart_awvs_docker')} onConfirm={() => restartMut.mutate([server.ID])}>
             <Button size="small" icon={<PlayCircleOutlined />}>{t('restart_docker')}</Button>
+          </Popconfirm>
+          <Popconfirm title={t('confirm_reinstall_awvs_node')} onConfirm={() => reinstallMut.mutate(server.ID)}>
+            <Button size="small" danger loading={reinstallMut.isPending}>{t('hard_reinstall')}</Button>
           </Popconfirm>
           <Button size="small" icon={<CopyOutlined />} onClick={() => handleCopyUninstallCommand(server)}>
             {t('copy_uninstall_command')}
@@ -568,6 +606,15 @@ export default function AWVSV3Page() {
           <Form.Item name="max_concurrency" label={t('max_concurrency')}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
           <Form.Item name="auto_restart_on_api_500" valuePropName="checked">
             <Checkbox>{t('awvs_auto_restart_global')}</Checkbox>
+          </Form.Item>
+          <Form.Item name="auto_reinstall_enabled" valuePropName="checked">
+            <Checkbox>{t('auto_reinstall_low_disk')}</Checkbox>
+          </Form.Item>
+          <Form.Item name="reinstall_threshold_percent" label={t('disk_reinstall_threshold')}>
+            <InputNumber min={50} max={99} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="reinstall_min_free_gb" label={t('disk_reinstall_min_free')}>
+            <InputNumber min={1} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="manager_url" label="Manager URL"><Input placeholder="http://ip:port" /></Form.Item>
           <Form.Item name="manager_token" label="Manager Token"><Input.Password placeholder="******" /></Form.Item>

@@ -376,6 +376,28 @@ restore_existing_awvs_state() {
   return 0
 }
 
+clear_awvs_immutable() {
+  local cn="$1"
+  if ! $SUDO docker inspect "$cn" >/dev/null 2>&1; then
+    return 0
+  fi
+  $SUDO docker start "$cn" >/dev/null 2>&1 || true
+  $SUDO docker exec -u 0 "$cn" sh -c '
+    for p in /home/acunetix /home/acunetix/.acunetix /opt/acunetix /var/lib/acunetix /var/opt/acunetix; do
+      if [ -e "$p" ] && command -v chattr >/dev/null 2>&1; then
+        chattr -R -i -a "$p" >/dev/null 2>&1 || true
+      fi
+    done
+  ' >/dev/null 2>&1 || true
+  if command -v chattr >/dev/null 2>&1; then
+    $SUDO docker inspect -f '{{range $k,$v := .GraphDriver.Data}}{{println $v}}{{end}}' "$cn" 2>/dev/null | while IFS= read -r p; do
+      case "$p" in
+        /var/lib/docker/*) [ -e "$p" ] && $SUDO chattr -R -i -a "$p" >/dev/null 2>&1 || true ;;
+      esac
+    done
+  fi
+}
+
 detect_manager_arch() {
   case "$(uname -m)" in
     x86_64|amd64)
@@ -440,14 +462,17 @@ MANAGER_HOST="$(resolve_manager_host)"
 MANAGER_URL="http://${MANAGER_HOST}:${MANAGER_PORT}"
 
 RESTORE_PREVIOUS_STATE=0
-if $SUDO docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+if [ "${ASPANEL_AWVS_HARD_REINSTALL:-0}" = "1" ]; then
+  echo "[*] Hard reinstall requested; existing AWVS state will be discarded."
+  clear_awvs_immutable "$CONTAINER_NAME"
+elif $SUDO docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
   if ! backup_existing_awvs_state; then
     exit 1
   fi
   RESTORE_PREVIOUS_STATE=1
 fi
 
-$SUDO docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+$SUDO docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || { clear_awvs_immutable "$CONTAINER_NAME"; $SUDO docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true; }
 
 while [ "${MANAGER_ALLOW_REUSE_PORT:-0}" != "1" ] && ! check_port_free "$AGENT_PORT"; do
   echo "[!] Port $AGENT_PORT is already in use. Assigning a new random port..."
@@ -483,8 +508,33 @@ $SUDO chmod +x "$UPDATE_SCRIPT_FILE"
   echo 'sleep 1'
   echo 'SUDO=""'
   echo 'if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi'
-  printf '$SUDO docker rm -f %q >/dev/null 2>&1 || true\n' "$CONTAINER_NAME"
+  cat <<'EOS'
+clear_awvs_immutable() {
+  local cn="$1"
+  if ! $SUDO docker inspect "$cn" >/dev/null 2>&1; then
+    return 0
+  fi
+  $SUDO docker start "$cn" >/dev/null 2>&1 || true
+  $SUDO docker exec -u 0 "$cn" sh -c '
+    for p in /home/acunetix /home/acunetix/.acunetix /opt/acunetix /var/lib/acunetix /var/opt/acunetix; do
+      if [ -e "$p" ] && command -v chattr >/dev/null 2>&1; then
+        chattr -R -i -a "$p" >/dev/null 2>&1 || true
+      fi
+    done
+  ' >/dev/null 2>&1 || true
+  if command -v chattr >/dev/null 2>&1; then
+    $SUDO docker inspect -f '{{range $k,$v := .GraphDriver.Data}}{{println $v}}{{end}}' "$cn" 2>/dev/null | while IFS= read -r p; do
+      case "$p" in
+        /var/lib/docker/*) [ -e "$p" ] && $SUDO chattr -R -i -a "$p" >/dev/null 2>&1 || true ;;
+      esac
+    done
+  fi
+}
+EOS
+  printf 'clear_awvs_immutable %q\n' "$CONTAINER_NAME"
+  printf '$SUDO docker rm -f %q >/dev/null 2>&1 || { clear_awvs_immutable %q; $SUDO docker rm -f %q >/dev/null 2>&1 || true; }\n' "$CONTAINER_NAME" "$CONTAINER_NAME" "$CONTAINER_NAME"
   printf 'if [ -f %q ]; then OLD_PID="$(cat %q 2>/dev/null || true)"; if [ -n "$OLD_PID" ] && [ "$OLD_PID" != "systemd" ]; then kill "$OLD_PID" >/dev/null 2>&1 || true; fi; fi\n' "$MANAGER_PID_FILE" "$MANAGER_PID_FILE"
+  printf 'if command -v chattr >/dev/null 2>&1 && [ -d %q ]; then $SUDO chattr -R -i -a %q >/dev/null 2>&1 || true; fi\n' "$DATA_ROOT" "$DATA_ROOT"
   printf '$SUDO rm -rf %q\n' "$DATA_ROOT"
   printf 'if command -v systemctl >/dev/null 2>&1; then (sleep 1; $SUDO systemctl disable %q >/dev/null 2>&1 || true; $SUDO rm -f %q; $SUDO systemctl daemon-reload >/dev/null 2>&1 || true; $SUDO systemctl stop %q >/dev/null 2>&1 || true) >/dev/null 2>&1 & fi\n' "$MANAGER_SERVICE_NAME" "$MANAGER_SERVICE_FILE" "$MANAGER_SERVICE_NAME"
 } | $SUDO tee "$UNINSTALL_SCRIPT_FILE" >/dev/null

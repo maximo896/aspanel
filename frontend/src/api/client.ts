@@ -34,6 +34,7 @@ export const cleanupOfflineAWVS = () => api.post<{ message: string; deleted_coun
 export const cleanupFinishedAWVSScans = (id: number) => api.post<{ message: string; deleted_count: number; target_count: number; failed_count: number; running?: boolean; cleanup_status?: string }>(`/api/servers/${id}/cleanup-finished`).then(r => r.data)
 export const restartAWVSDocker = (ids: number[]) => api.post('/api/servers/restart-docker', { ids }).then(r => r.data)
 export const uninstallAWVSServer = (id: number) => api.post(`/api/servers/${id}/uninstall`).then(r => r.data)
+export const reinstallAWVSServer = (id: number, force = false) => api.post(`/api/servers/${id}/reinstall`, null, { params: { force: force ? 1 : 0 } }).then(r => r.data)
 export const createAWVSConfig = (data: { name: string; max_concurrency: number }) => api.post<{ docker_cmd: string }>('/api/awvs/config', data).then(r => r.data)
 export const registerAWVSFromLink = (data: { protocol_link: string }) => api.post('/api/awvs/register', data).then(r => r.data)
 export const updateAWVSServerVersion = (id: number) => api.post(`/api/servers/${id}/update`).then(r => r.data)
@@ -55,6 +56,7 @@ export const getSqlmapManualUpdateCommand = (id: number) => api.get<{ command: s
 export const getSqlmapManualUninstallCommand = (id: number) => api.get<{ command: string; name: string; type: string }>(`/api/sqlmap/agents/${id}/manual-uninstall-command`).then(r => r.data)
 export const getSqlmapDefaults = () => api.get<{ sqlmap_agent_default_use_proxy: boolean }>('/api/sqlmap/defaults').then(r => r.data)
 export const updateSqlmapDefaults = (data: { sqlmap_agent_default_use_proxy: boolean }) => api.put('/api/sqlmap/defaults', data).then(r => r.data)
+export const searchAllSqlmapExports = (params: { q: string; kind?: string; limit?: number }) => api.get<SqlmapGlobalSearchResponse>('/api/sqlmap/global-search', { params }).then(r => r.data)
 
 // Path Agents
 export const getPathAgents = () => api.get<PathAgent[]>('/api/path/agents').then(r => r.data)
@@ -185,6 +187,32 @@ export interface SqlmapScan {
   }
   shell_probe?: { ok?: boolean; status?: string; message?: string }
   logs?: Array<{ time?: string; level?: string; message?: string }>
+}
+
+export interface SqlmapGlobalSearchHit {
+  source?: string
+  task_id?: number
+  finding_id?: number
+  target_url?: string
+  affects_url?: string
+  sqlmap_task_id?: string
+  sqlmap_status?: string
+  sqlmap_cached_at?: number
+  kind?: string
+  database?: string
+  table?: string
+  column?: string
+  value?: string
+  row_json?: string
+  row?: Record<string, unknown>
+}
+
+export interface SqlmapGlobalSearchResponse {
+  query: string
+  kind: string
+  limit: number
+  count: number
+  results: SqlmapGlobalSearchHit[]
 }
 
 export { extractError }

@@ -25,6 +25,7 @@ import {
   EditOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  SearchOutlined,
   SyncOutlined,
   UploadOutlined,
 } from '@ant-design/icons'
@@ -43,7 +44,9 @@ import {
   refreshSqlmapAgent,
   registerSqlmapAgentFromLink,
   restartSqlmapDocker,
+  searchAllSqlmapExports,
   setSqlmapAgentProxy,
+  type SqlmapGlobalSearchHit,
   uninstallSqlmapAgent,
   updateSqlmapAgent,
   updateSqlmapAgentVersion,
@@ -81,6 +84,10 @@ export default function SqlmapV3Page() {
   const [installOpen, setInstallOpen] = useState(false)
   const [registerOpen, setRegisterOpen] = useState(false)
   const [commandModal, setCommandModal] = useState<CommandModalState | null>(null)
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('')
+  const [globalSearchKind, setGlobalSearchKind] = useState('data')
+  const [globalSearchResults, setGlobalSearchResults] = useState<SqlmapGlobalSearchHit[]>([])
+  const [globalSearchCount, setGlobalSearchCount] = useState<number | null>(null)
   const [form] = Form.useForm()
   const [installForm] = Form.useForm()
   const [registerForm] = Form.useForm()
@@ -216,6 +223,22 @@ export default function SqlmapV3Page() {
     onError: err => message.error(extractError(err)),
   })
 
+  const globalSearchMut = useMutation({
+    mutationFn: () => searchAllSqlmapExports({
+      q: globalSearchQuery.trim(),
+      kind: globalSearchKind,
+      limit: 200,
+    }),
+    onSuccess: data => {
+      setGlobalSearchResults(data.results || [])
+      setGlobalSearchCount(data.count || 0)
+      if ((data.count || 0) === 0) {
+        message.info('No matching exported data')
+      }
+    },
+    onError: err => message.error(extractError(err)),
+  })
+
   const copyText = async (value: string, successText: string) => {
     if (!value) {
       message.warning(t('nothing_to_copy'))
@@ -297,6 +320,52 @@ export default function SqlmapV3Page() {
       // Validation or mutation errors are already surfaced.
     }
   }
+
+  const handleGlobalSearch = () => {
+    if (!globalSearchQuery.trim()) {
+      message.warning('Enter a hash or keyword')
+      return
+    }
+    globalSearchMut.mutate()
+  }
+
+  const globalSearchColumns: ColumnsType<SqlmapGlobalSearchHit> = [
+    {
+      title: 'Target',
+      dataIndex: 'target_url',
+      width: 260,
+      ellipsis: true,
+      render: (value: string, hit) => (
+        <Space direction="vertical" size={0}>
+          <Text copyable style={{ fontSize: 12 }}>{value || '-'}</Text>
+          {hit.affects_url && hit.affects_url !== value && (
+            <Text type="secondary" copyable style={{ fontSize: 11 }}>{hit.affects_url}</Text>
+          )}
+        </Space>
+      ),
+    },
+    { title: 'DB', dataIndex: 'database', width: 130, ellipsis: true },
+    { title: 'Table', dataIndex: 'table', width: 150, ellipsis: true },
+    { title: 'Column', dataIndex: 'column', width: 140, ellipsis: true },
+    {
+      title: 'Matched Value',
+      dataIndex: 'value',
+      ellipsis: true,
+      render: (value: string) => <Text copyable style={{ fontSize: 12 }}>{value || '-'}</Text>,
+    },
+    {
+      title: 'Source',
+      key: 'source',
+      width: 160,
+      render: (_, hit) => (
+        <Space size={4} wrap>
+          <Tag>{hit.source || '-'}</Tag>
+          {hit.finding_id ? <Tag color="blue">F#{hit.finding_id}</Tag> : null}
+          {hit.task_id ? <Tag color="geekblue">T#{hit.task_id}</Tag> : null}
+        </Space>
+      ),
+    },
+  ]
 
   const columns: ColumnsType<SqlmapAgent> = [
     {
@@ -430,6 +499,56 @@ export default function SqlmapV3Page() {
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={16}>
+      <Card
+        title="Global Export Search"
+        size="small"
+        extra={globalSearchCount !== null ? <Tag color="blue">{globalSearchCount} hit(s)</Tag> : null}
+      >
+        <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
+          <Select
+            value={globalSearchKind}
+            onChange={setGlobalSearchKind}
+            options={[
+              { label: 'Data values', value: 'data' },
+              { label: 'Columns', value: 'column' },
+              { label: 'Tables', value: 'table' },
+              { label: 'Databases', value: 'database' },
+              { label: 'All', value: 'all' },
+            ]}
+            style={{ width: 140 }}
+          />
+          <Input
+            value={globalSearchQuery}
+            onChange={event => setGlobalSearchQuery(event.target.value)}
+            onPressEnter={handleGlobalSearch}
+            placeholder="Paste hash or keyword to locate target, database, table and raw row"
+          />
+          <Button icon={<SearchOutlined />} type="primary" onClick={handleGlobalSearch} loading={globalSearchMut.isPending}>
+            Search
+          </Button>
+        </Space.Compact>
+        <Table
+          dataSource={globalSearchResults}
+          columns={globalSearchColumns}
+          rowKey={(_, index) => `${index}`}
+          loading={globalSearchMut.isPending}
+          size="small"
+          pagination={{ pageSize: 10 }}
+          scroll={{ x: 1050 }}
+          expandable={{
+            expandedRowRender: hit => (
+              <Input.TextArea
+                value={hit.row_json || JSON.stringify(hit.row || {}, null, 2)}
+                rows={4}
+                readOnly
+              />
+            ),
+            rowExpandable: hit => Boolean(hit.row_json || hit.row),
+          }}
+          locale={{ emptyText: 'Search exported sqlmap data by hash or keyword' }}
+        />
+      </Card>
+
       <Card title={t('sqlmap_agent_defaults')} size="small">
         <Space>
           <Text>{t('sqlmap_new_agent_default_proxy')}</Text>
