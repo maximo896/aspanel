@@ -175,6 +175,8 @@ export interface SqlmapScan {
         name: string
         columns?: string[]
         column_types?: Record<string, string>
+        confirmed_column_count?: number
+        preview_column_count?: number
         rows?: Array<Record<string, string>>
         row_count?: number
         priority?: boolean

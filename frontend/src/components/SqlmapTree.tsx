@@ -54,6 +54,7 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
   const handleGetCurrentDb = () => actionMut.mutate({ action: 'get_current_db' })
   const handleGetTables = (db: string) => actionMut.mutate({ action: 'get_tables', db })
   const handleGetColumns = (db: string, table: string) => actionMut.mutate({ action: 'get_columns', db, table })
+  const handleCountRows = (db: string, table: string) => actionMut.mutate({ action: 'count_rows', db, table })
   const handleDump = (db: string, table: string) => actionMut.mutate({ action: 'dump_table_data', db, table, limit_start: 1, limit_stop: 20 })
 
   const handleSearch = async () => {
@@ -326,6 +327,14 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
                     ),
                     children: (db.tables || []).map(tbl => {
                       const tblCols = tbl.column_types || {}
+                      const confirmedColumnCount = typeof tbl.confirmed_column_count === 'number'
+                        ? tbl.confirmed_column_count
+                        : Object.keys(tblCols).length
+                      const previewColumnCount = typeof tbl.preview_column_count === 'number'
+                        ? tbl.preview_column_count
+                        : (tbl.columns || []).length
+                      const displayedColumnCount = confirmedColumnCount || previewColumnCount
+                      const needsColumns = confirmedColumnCount === 0 || previewColumnCount > confirmedColumnCount
                       const dumpColumns = (tbl.columns || []).map(c => ({
                         title: <span style={{ color: isSensitive(c) ? '#ff7875' : undefined }}>{c}</span>,
                         dataIndex: c,
@@ -344,18 +353,29 @@ export default function SqlmapTree({ finding, scan, onRefresh, loading }: Props)
                               <Space>
                                 <TableOutlined style={{ color: '#52c41a' }} />
                                 <Text>{tbl.name}</Text>
-                                <Tag>{(tbl.columns || []).length} 列</Tag>
-                                {typeof tbl.row_count === 'number' && <Tag color="purple">{tbl.row_count} 行</Tag>}
+                                <Tag color={confirmedColumnCount > 0 ? 'green' : 'default'}>
+                                  {confirmedColumnCount > 0 ? `确认 ${confirmedColumnCount} 列` : `${displayedColumnCount} 列`}
+                                </Tag>
+                                {confirmedColumnCount === 0 && previewColumnCount > 0 && <Tag color="orange">预览列</Tag>}
+                                {typeof tbl.row_count === 'number'
+                                  ? <Tag color="purple">{tbl.row_count} 行</Tag>
+                                  : <Tag>未统计行数</Tag>}
                                 {tbl.priority && <Tag color="gold">优先</Tag>}
                               </Space>
                             ),
                             extra: (
                               <Space size={4}>
-                                {Object.keys(tblCols).length === 0 && (
+                                {needsColumns && (
                                   <Button size="small" onClick={e => { e.stopPropagation(); handleGetColumns(db.name, tbl.name) }}>
                                     获取列
                                   </Button>
                                 )}
+                                <Button size="small" onClick={e => { e.stopPropagation(); handleGetColumns(db.name, tbl.name) }}>
+                                  确认列数
+                                </Button>
+                                <Button size="small" onClick={e => { e.stopPropagation(); handleCountRows(db.name, tbl.name) }}>
+                                  统计行数
+                                </Button>
                                 <Button
                                   size="small"
                                   type="primary"
