@@ -244,6 +244,66 @@ func updateAWVSDiskFromManager(db *gorm.DB, server *models.AWVSServer) {
 	})
 }
 
+func recoverAWVSAPIKey(db *gorm.DB, server *models.AWVSServer, source string) bool {
+	if db == nil || server == nil {
+		return false
+	}
+	if strings.TrimSpace(server.AWVSUsername) == "" || strings.TrimSpace(server.AWVSPassword) == "" {
+		return false
+	}
+	client := awvs.NewClient(server.URL, server.APIKey)
+	apiKey, err := client.RecoverAPIKey(server.AWVSUsername, server.AWVSPassword)
+	if err != nil || strings.TrimSpace(apiKey) == "" {
+		log.Printf("[awvs][auth] recover api key failed id=%d source=%s err=%v", server.ID, source, err)
+		return false
+	}
+	apiKey = strings.TrimSpace(apiKey)
+	verifyClient := awvs.NewClient(server.URL, apiKey)
+	if _, err := verifyClient.TestConnection(); err != nil {
+		log.Printf("[awvs][auth] recovered api key verification failed id=%d source=%s err=%v", server.ID, source, err)
+		return false
+	}
+	server.APIKey = apiKey
+	server.IsActive = true
+	server.LastError = ""
+	server.LastCheckedAt = time.Now().Unix()
+	db.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
+		"api_key":         server.APIKey,
+		"is_active":       true,
+		"last_error":      "",
+		"last_checked_at": server.LastCheckedAt,
+	})
+	log.Printf("[awvs][auth] recovered api key id=%d source=%s", server.ID, source)
+	return true
+}
+
+func isAWVSUnauthorized(err error) bool {
+	code := awvs.StatusCode(err)
+	return code == http.StatusUnauthorized || code == http.StatusForbidden
+}
+
+func recoverAWVSClientForTask(db *gorm.DB, task *models.Task, source string) (*awvs.Client, bool) {
+	if db == nil || task == nil || task.AWVSServerID == 0 {
+		return nil, false
+	}
+	var server models.AWVSServer
+	if err := db.First(&server, task.AWVSServerID).Error; err != nil {
+		return nil, false
+	}
+	if !recoverAWVSAPIKey(db, &server, source) {
+		return nil, false
+	}
+	return awvs.NewClient(server.URL, server.APIKey), true
+}
+
+func awvsKeyValid(baseURL, apiKey string) bool {
+	if strings.TrimSpace(baseURL) == "" || strings.TrimSpace(apiKey) == "" {
+		return false
+	}
+	_, err := awvs.NewClient(baseURL, apiKey).TestConnection()
+	return err == nil
+}
+
 func triggerAWVSAutoRestartOnOffline(db *gorm.DB, server *models.AWVSServer, err error, source string) bool {
 	if !shouldAutoRestartAWVSOffline(db, server) {
 		return false
@@ -346,6 +406,10 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 			client := awvs.NewClient(server.URL, server.APIKey)
 			checkedAt := time.Now().Unix()
 			_, err := client.TestConnection()
+			if isAWVSUnauthorized(err) && recoverAWVSAPIKey(db, &server, "heartbeat_test_connection") {
+				client = awvs.NewClient(server.URL, server.APIKey)
+				_, err = client.TestConnection()
+			}
 			if err != nil {
 				if server.Updating && updateGraceActive(server.LastAutoUpdateAt, server.LastCheckedAt, checkedAt) {
 					db.Save(&server)
@@ -620,12 +684,20 @@ func dispatchAWVSTasks(db *gorm.DB) {
 			}
 			client := awvs.NewClient(selected.URL, selected.APIKey)
 			targetID, err := client.CreateTarget(task.URL)
+			if isAWVSUnauthorized(err) && recoverAWVSAPIKey(db, &selected, "create_target") {
+				client = awvs.NewClient(selected.URL, selected.APIKey)
+				targetID, err = client.CreateTarget(task.URL)
+			}
 			if err != nil {
 				log.Printf("Failed to create target for %s: %v", task.URL, err)
 				recordAWVSDispatchFailure(db, task.ID, "awvs_create_target_failed", err)
 				continue
 			}
 			scanID, err := client.StartScan(targetID)
+			if isAWVSUnauthorized(err) && recoverAWVSAPIKey(db, &selected, "start_scan") {
+				client = awvs.NewClient(selected.URL, selected.APIKey)
+				scanID, err = client.StartScan(targetID)
+			}
 			if err != nil {
 				log.Printf("Failed to start scan for %s: %v", task.URL, err)
 				_ = client.DeleteTarget(targetID)
@@ -676,6 +748,10 @@ func checkAWVSStatus(db *gorm.DB) {
 
 			client := awvs.NewClient(srv.URL, srv.APIKey)
 			status, err := client.GetScanStatus(task.ScanSessionID)
+			if isAWVSUnauthorized(err) && recoverAWVSAPIKey(db, &srv, "scan_status") {
+				client = awvs.NewClient(srv.URL, srv.APIKey)
+				status, err = client.GetScanStatus(task.ScanSessionID)
+			}
 			if err != nil {
 				srv.IsActive = false
 				srv.LastCheckedAt = time.Now().Unix()
@@ -1120,6 +1196,12 @@ func processVulnerabilities(client *awvs.Client, task *models.Task, db *gorm.DB,
 	}
 	log.Printf("task=%d status=%s target_id=%s scan_session_id=%s retry=%t starting vulnerability collection", task.ID, task.Status, task.TargetID, task.ScanSessionID, forceRetry)
 	vulns, err := client.GetVulnerabilities(task.TargetID)
+	if isAWVSUnauthorized(err) {
+		if recoveredClient, ok := recoverAWVSClientForTask(db, task, "get_vulnerabilities"); ok {
+			client = recoveredClient
+			vulns, err = client.GetVulnerabilities(task.TargetID)
+		}
+	}
 	if err != nil {
 		log.Printf("Failed to get vulns for task %d: %v", task.ID, err)
 		return false
@@ -1171,6 +1253,12 @@ func processVulnerabilities(client *awvs.Client, task *models.Task, db *gorm.DB,
 		}
 
 		details, err := client.GetVulnerabilityDetails(vulnID)
+		if isAWVSUnauthorized(err) {
+			if recoveredClient, ok := recoverAWVSClientForTask(db, task, "get_vulnerability_details"); ok {
+				client = recoveredClient
+				details, err = client.GetVulnerabilityDetails(vulnID)
+			}
+		}
 		if err != nil {
 			log.Printf("task=%d vuln=%s failed to fetch vulnerability details: %v", task.ID, vulnID, err)
 			continue
@@ -2384,11 +2472,22 @@ func registerAWVSFromProto(db *gorm.DB, sig interact.Signal, inst *models.CloudI
 	}
 	var existing models.AWVSServer
 	if err := db.Where("url = ?", cfg.URL).First(&existing).Error; err == nil {
+		incomingAPIKey := strings.TrimSpace(cfg.APIKey)
+		currentAPIKey := strings.TrimSpace(existing.APIKey)
 		existing.LastHeartbeatAt = time.Now().Unix()
 		existing.InstanceID = inst.InstanceID
 		existing.Provider = "tencent"
 		existing.Name = cloudAgentName("awvs", inst.InstanceID, cfg.Name)
-		existing.APIKey = strings.TrimSpace(cfg.APIKey)
+		if incomingAPIKey != "" && incomingAPIKey != currentAPIKey {
+			if currentAPIKey != "" && awvsKeyValid(existing.URL, currentAPIKey) {
+				log.Printf("[cloud][register] awvs stale api key ignored id=%d url=%s instance_id=%s", existing.ID, existing.URL, inst.InstanceID)
+			} else if awvsKeyValid(cfg.URL, incomingAPIKey) {
+				existing.APIKey = incomingAPIKey
+				log.Printf("[cloud][register] awvs api key refreshed id=%d url=%s instance_id=%s", existing.ID, existing.URL, inst.InstanceID)
+			} else {
+				log.Printf("[cloud][register] awvs incoming api key invalid; keeping current id=%d url=%s instance_id=%s", existing.ID, existing.URL, inst.InstanceID)
+			}
+		}
 		existing.ManagerURL = strings.TrimRight(strings.TrimSpace(cfg.ManagerURL), "/")
 		existing.ManagerToken = strings.TrimSpace(cfg.ManagerToken)
 		if u := strings.TrimSpace(cfg.AWVSUsername); u != "" {

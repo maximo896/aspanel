@@ -2,12 +2,15 @@ package awvs
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"time"
@@ -73,6 +76,142 @@ func (c *Client) TestConnection() (map[string]interface{}, error) {
 		return nil, err
 	}
 	return data, nil
+}
+
+func (c *Client) RecoverAPIKey(username, password string) (string, error) {
+	username = strings.TrimSpace(username)
+	password = strings.TrimSpace(password)
+	if username == "" || password == "" {
+		return "", fmt.Errorf("awvs username/password not configured")
+	}
+	jar, _ := cookiejar.New(nil)
+	authClient := *c.HTTP
+	authClient.Jar = jar
+
+	passwordHash := sha256.Sum256([]byte(password))
+	loginBody := map[string]string{
+		"email":    username,
+		"password": hex.EncodeToString(passwordHash[:]),
+	}
+	loginRaw, _ := json.Marshal(loginBody)
+	req, err := http.NewRequest("POST", c.BaseURL+"/api/v1/me/login", bytes.NewReader(loginRaw))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	resp, err := authClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	_, _ = ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", &APIError{StatusCode: resp.StatusCode}
+	}
+	sessionToken := strings.TrimSpace(resp.Header.Get("X-Auth"))
+	if sessionToken == "" {
+		return "", fmt.Errorf("awvs login did not return X-Auth")
+	}
+
+	for _, query := range []string{
+		"query { apiKey }",
+		"query { apikey }",
+		"mutation { generateApiKey }",
+		"mutation { generateAPIKey }",
+	} {
+		if key := c.graphqlAPIKey(&authClient, sessionToken, query); key != "" {
+			return key, nil
+		}
+	}
+	if key := c.restAPIKey(&authClient, sessionToken); key != "" {
+		return key, nil
+	}
+	return "", fmt.Errorf("failed to recover awvs api key")
+}
+
+func (c *Client) graphqlAPIKey(client *http.Client, sessionToken, query string) string {
+	body, _ := json.Marshal(map[string]string{"query": query})
+	for _, endpoint := range []string{"/graphql/", "/graphql", "/api/graphql/", "/api/graphql"} {
+		req, err := http.NewRequest("POST", c.BaseURL+endpoint, bytes.NewReader(body))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("X-Auth", sessionToken)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		raw, _ := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			continue
+		}
+		if key := firstJSONValue(raw, "apiKey", "apikey", "generateApiKey", "generateAPIKey"); key != "" {
+			return key
+		}
+	}
+	return ""
+}
+
+func (c *Client) restAPIKey(client *http.Client, sessionToken string) string {
+	req, err := http.NewRequest("GET", c.BaseURL+"/api/v1/me", nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("X-Auth", sessionToken)
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	raw, _ := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	return firstJSONValue(raw, "api_key", "apiKey", "apikey")
+}
+
+func firstJSONValue(raw []byte, keys ...string) string {
+	var walk func(interface{}) string
+	keySet := map[string]struct{}{}
+	for _, key := range keys {
+		keySet[key] = struct{}{}
+	}
+	walk = func(value interface{}) string {
+		switch typed := value.(type) {
+		case map[string]interface{}:
+			for _, key := range keys {
+				if rawValue, ok := typed[key]; ok {
+					if text, ok := rawValue.(string); ok && strings.TrimSpace(text) != "" {
+						return strings.TrimSpace(text)
+					}
+				}
+			}
+			for key, rawValue := range typed {
+				if _, ok := keySet[key]; ok {
+					continue
+				}
+				if found := walk(rawValue); found != "" {
+					return found
+				}
+			}
+		case []interface{}:
+			for _, item := range typed {
+				if found := walk(item); found != "" {
+					return found
+				}
+			}
+		}
+		return ""
+	}
+	var payload interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	return walk(payload)
 }
 
 func (c *Client) doReq(method, path string, body interface{}) ([]byte, error) {

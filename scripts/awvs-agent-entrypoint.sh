@@ -609,11 +609,6 @@ if [ -z "$API_KEY" ]; then
 fi
 
 if [ -z "$API_KEY" ]; then
-  echo "[!] Failed to obtain dedicated API key, fallback to session token."
-  API_KEY="$SESSION_TOKEN"
-fi
-
-if [ -z "$API_KEY" ]; then
   echo "failed to obtain awvs api key"
   exit 1
 fi
