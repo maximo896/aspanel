@@ -377,15 +377,22 @@ func copyAllModels(src, dst *gorm.DB) error {
 }
 
 func copyModel[T any](src, dst *gorm.DB) error {
-	var rows []T
-	return src.Unscoped().FindInBatches(&rows, 100, func(batch *gorm.DB, batchNumber int) error {
+	const batchSize = 100
+	for offset := 0; ; {
+		rows := make([]T, 0, batchSize)
+		if err := src.Unscoped().Limit(batchSize).Offset(offset).Find(&rows).Error; err != nil {
+			return err
+		}
 		if len(rows) == 0 {
 			return nil
 		}
-		err := dst.Session(&gorm.Session{SkipDefaultTransaction: true}).CreateInBatches(rows, 1).Error
-		rows = rows[:0]
-		return err
-	}).Error
+		for i := range rows {
+			if err := dst.Session(&gorm.Session{SkipDefaultTransaction: true}).Create(&rows[i]).Error; err != nil {
+				return err
+			}
+		}
+		offset += len(rows)
+	}
 }
 
 func fileExists(path string) bool {
