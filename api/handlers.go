@@ -4265,59 +4265,29 @@ func buildManualUninstallCommand(containers []string, serviceName, serviceFile, 
 }
 
 func buildManualUninstallCommandWithOptions(containers []string, serviceName, serviceFile, dataRoot string, clearAWVSImmutable bool) string {
-	parts := []string{
-		`SUDO=""`,
-		`if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi`,
-	}
-	if clearAWVSImmutable {
-		parts = append(parts, `clear_awvs_immutable() {
-  cn="$1"
-  if ! $SUDO docker inspect "$cn" >/dev/null 2>&1; then return 0; fi
-  $SUDO docker start "$cn" >/dev/null 2>&1 || true
-  $SUDO docker exec -u 0 "$cn" sh -c 'for p in /home/acunetix /home/acunetix/.acunetix /opt/acunetix /var/lib/acunetix /var/opt/acunetix; do if [ -e "$p" ] && command -v chattr >/dev/null 2>&1; then chattr -R -i -a "$p" >/dev/null 2>&1 || true; fi; done' >/dev/null 2>&1 || true
-  if command -v chattr >/dev/null 2>&1; then
-    $SUDO docker inspect -f '{{range $k,$v := .GraphDriver.Data}}{{println $v}}{{end}}' "$cn" 2>/dev/null | while IFS= read -r p; do
-      case "$p" in /var/lib/docker/*) [ -e "$p" ] && $SUDO chattr -R -i -a "$p" >/dev/null 2>&1 || true ;; esac
-    done
-  fi
-}`)
-	}
-	if len(containers) > 0 {
-		quotedContainers := make([]string, 0, len(containers))
-		for _, container := range containers {
-			if strings.TrimSpace(container) != "" {
-				if clearAWVSImmutable {
-					parts = append(parts, fmt.Sprintf("clear_awvs_immutable %s", shellQuote(strings.TrimSpace(container))))
-				}
-				quotedContainers = append(quotedContainers, shellQuote(strings.TrimSpace(container)))
-			}
+	cleanContainers := make([]string, 0, len(containers))
+	for _, container := range containers {
+		if trimmed := strings.TrimSpace(container); trimmed != "" {
+			cleanContainers = append(cleanContainers, trimmed)
 		}
-		if len(quotedContainers) > 0 {
-			if clearAWVSImmutable {
-				for _, container := range quotedContainers {
-					parts = append(parts, fmt.Sprintf("$SUDO docker rm -f %s >/dev/null 2>&1 || { clear_awvs_immutable %s; $SUDO docker rm -f %s >/dev/null 2>&1 || true; }", container, container, container))
-				}
-			} else {
-				parts = append(parts, fmt.Sprintf("$SUDO docker rm -f %s >/dev/null 2>&1 || true", strings.Join(quotedContainers, " ")))
-			}
-		}
+	}
+	args := []string{
+		fmt.Sprintf("-c %s", shellQuote(strings.Join(cleanContainers, ","))),
+	}
+	if strings.TrimSpace(serviceName) != "" {
+		args = append(args, fmt.Sprintf("-s %s", shellQuote(strings.TrimSpace(serviceName))))
 	}
 	dataRoot = filepath.ToSlash(filepath.Clean(strings.TrimSpace(dataRoot)))
 	if dataRoot != "" && dataRoot != "." && dataRoot != "/" {
-		if clearAWVSImmutable {
-			parts = append(parts, fmt.Sprintf("if command -v chattr >/dev/null 2>&1 && [ -d %s ]; then $SUDO chattr -R -i -a %s >/dev/null 2>&1 || true; fi", shellQuote(dataRoot), shellQuote(dataRoot)))
-		}
-		parts = append(parts, fmt.Sprintf("$SUDO rm -rf %s", shellQuote(dataRoot)))
+		args = append(args, fmt.Sprintf("-d %s", shellQuote(dataRoot)))
 	}
-	if strings.TrimSpace(serviceName) != "" && strings.TrimSpace(serviceFile) != "" {
-		parts = append(parts, fmt.Sprintf(
-			"if command -v systemctl >/dev/null 2>&1; then $SUDO systemctl disable %s >/dev/null 2>&1 || true; $SUDO rm -f %s; $SUDO systemctl daemon-reload >/dev/null 2>&1 || true; $SUDO systemctl stop %s >/dev/null 2>&1 || true; fi",
-			shellQuote(strings.TrimSpace(serviceName)),
-			shellQuote(strings.TrimSpace(serviceFile)),
-			shellQuote(strings.TrimSpace(serviceName)),
-		))
+	if clearAWVSImmutable {
+		args = append(args, "-i")
 	}
-	return strings.Join(parts, "\n")
+	return fmt.Sprintf(
+		"curl -fsSL https://raw.githubusercontent.com/maximo896/aspanel/main/scripts/manual-uninstall.sh | bash -s -- %s",
+		strings.Join(args, " "),
+	)
 }
 
 func generateDockerCommand(name string, maxConcurrency int, agentPort int) string {
