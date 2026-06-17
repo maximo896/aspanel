@@ -196,6 +196,43 @@ func getAWVSActiveScanCount(baseURL, apiKey string) (int, error) {
 	return client.CountActiveScans()
 }
 
+func isAWVSAuthError(err error) bool {
+	code := awvs.StatusCode(err)
+	return code == http.StatusUnauthorized || code == http.StatusForbidden
+}
+
+func (api *API) recoverAWVSServerAPIKey(server *models.AWVSServer, source string) bool {
+	if api == nil || api.DB == nil || server == nil {
+		return false
+	}
+	if strings.TrimSpace(server.AWVSUsername) == "" || strings.TrimSpace(server.AWVSPassword) == "" {
+		return false
+	}
+	client := awvs.NewClient(normalizeBaseURL(server.URL), strings.TrimSpace(server.APIKey))
+	apiKey, err := client.RecoverAPIKey(server.AWVSUsername, server.AWVSPassword)
+	if err != nil || strings.TrimSpace(apiKey) == "" {
+		log.Printf("[awvs][auth] manual recover api key failed id=%d source=%s err=%v", server.ID, source, err)
+		return false
+	}
+	apiKey = strings.TrimSpace(apiKey)
+	if _, err := testAWVSConnection(server.URL, apiKey); err != nil {
+		log.Printf("[awvs][auth] manual recovered api key verification failed id=%d source=%s err=%v", server.ID, source, err)
+		return false
+	}
+	server.APIKey = apiKey
+	server.IsActive = true
+	server.LastError = ""
+	server.LastCheckedAt = time.Now().Unix()
+	api.DB.Model(&models.AWVSServer{}).Where("id = ?", server.ID).Updates(map[string]interface{}{
+		"api_key":         server.APIKey,
+		"is_active":       true,
+		"last_error":      "",
+		"last_checked_at": server.LastCheckedAt,
+	})
+	log.Printf("[awvs][auth] manual recovered api key id=%d source=%s", server.ID, source)
+	return true
+}
+
 func loadGlobalAWVSAutoRestartOnAPI500(db *gorm.DB) bool {
 	if db == nil {
 		return false
@@ -252,6 +289,9 @@ func (api *API) countAWVSBoundRunningTasks(serverID uint) int {
 
 func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]interface{}, error) {
 	info, err := testAWVSConnection(server.URL, server.APIKey)
+	if isAWVSAuthError(err) && api.recoverAWVSServerAPIKey(server, "manual_refresh") {
+		info, err = testAWVSConnection(server.URL, server.APIKey)
+	}
 	server.LastCheckedAt = time.Now().Unix()
 	if err != nil {
 		if server.Updating {
@@ -283,6 +323,9 @@ func (api *API) refreshAWVSServerRecord(server *models.AWVSServer) (map[string]i
 	}
 	server.LastError = ""
 	activeScans, countErr := getAWVSActiveScanCount(server.URL, server.APIKey)
+	if isAWVSAuthError(countErr) && api.recoverAWVSServerAPIKey(server, "manual_count_active_scans") {
+		activeScans, countErr = getAWVSActiveScanCount(server.URL, server.APIKey)
+	}
 	if countErr != nil {
 		server.LastError = fmt.Sprintf("count active scans failed; keeping last synced value %d: %v", server.CurrentRunning, countErr)
 		api.DB.Save(server)
