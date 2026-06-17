@@ -3,7 +3,7 @@ package main
 import (
 	"awvs-sqlmap-panel/api"
 	"awvs-sqlmap-panel/auth"
-	"awvs-sqlmap-panel/models"
+	"awvs-sqlmap-panel/paneldb"
 	"awvs-sqlmap-panel/scheduler"
 	"awvs-sqlmap-panel/updater"
 	"embed"
@@ -17,8 +17,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
-	"gorm.io/gorm"
 )
 
 //go:embed frontend/index.html frontend/dist
@@ -35,26 +33,10 @@ func main() {
 		return
 	}
 
-	db, err := gorm.Open(sqlite.Open("panel.db"), &gorm.Config{})
+	db, err := paneldb.Open()
 	if err != nil {
-		log.Fatal("failed to connect database")
+		log.Fatalf("failed to initialize database: %v", err)
 	}
-
-	db.AutoMigrate(
-		&models.AWVSServer{},
-		&models.SqlmapAgent{},
-		&models.PathAgent{},
-		&models.Task{},
-		&models.TaskPathScan{},
-		&models.TaskFinding{},
-		&models.DomainSQLMapCache{},
-		&models.SQLMapGlobalSearchTask{},
-		&models.ProxyAgent{},
-		&models.CloudSettings{},
-		&models.CloudInstance{},
-		&models.AdminCredential{},
-		&models.AdminSession{},
-	)
 
 	if handled, err := auth.HandleCLI(db, remainingArgs); handled {
 		if err != nil {

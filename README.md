@@ -10,12 +10,12 @@ workflow. It is designed for controlled, authorized testing environments.
 2. Dispatch targets to available AWVS nodes with concurrency balancing.
 3. Collect confirmed SQL injection findings from AWVS.
 4. Send SQLi findings to sqlmap agents for validation, enumeration, and limited data dump.
-5. Normalize sqlmap output into structured SQLite records and domain-level cache.
+5. Normalize sqlmap output into structured MySQL records and domain-level cache.
 6. Search cached/exported results globally by hash, keyword, database, table, column, or row data.
 
 ## Components
 
-- **Panel backend**: Go, Gin, GORM, SQLite.
+- **Panel backend**: Go, Gin, GORM, MariaDB/MySQL started by Docker.
 - **Panel frontend**: React, TypeScript, Vite, TanStack Query, Ant Design.
 - **AWVS node manager**: lightweight Docker manager for health checks, updates, restarts, uninstall, and hard reinstall.
 - **sqlmap agent**: Python service that wraps sqlmap tasks and converts outputs into structured snapshots.
@@ -27,7 +27,7 @@ workflow. It is designed for controlled, authorized testing environments.
 
 The project does not rely on sqlmap's internal session files as a complete target database.
 Instead, the agent drives sqlmap with explicit structural actions and the panel stores the
-result in SQLite:
+result in MySQL:
 
 - `--dbs` -> `content.dbs`
 - `-D <db> --tables` -> `content.tables`
@@ -68,7 +68,7 @@ This priority is used when choosing which tables to enumerate or dump first.
 
 ## Global Export Search
 
-Global Export Search searches panel-side SQLite cache, not live remote agents. It covers:
+Global Export Search searches panel-side MySQL cache, not live remote agents. It covers:
 
 - task-level sqlmap snapshots
 - finding-level sqlmap snapshots
@@ -117,6 +117,28 @@ Long-running panel work is moved out of request/response paths where practical:
 
 This avoids reverse proxy timeouts and keeps the UI recoverable after refresh.
 
+## Database
+
+The panel starts and uses a project-local MariaDB container automatically. No manual database
+setup is required after uploading and starting the new program on the server.
+
+Startup behavior:
+
+- If `panel.db` exists and the project MySQL container does not exist, the program starts Docker
+  container `awvs-sqlmap-mysql`, mounts `./mysql-data` to `/var/lib/mysql`, and migrates all
+  SQLite data into MySQL.
+- If the project MySQL container already exists, the program starts it if needed and uses it
+  directly.
+- If neither `panel.db` nor the project MySQL container exists, the program starts a fresh MySQL.
+
+Generated local files:
+
+- `./mysql-data/`: MariaDB data directory, mounted from the current directory.
+- `./data/mysql.env`: generated project-only database credentials.
+- `./data/sqlite-to-mysql.migrated`: migration marker after a successful SQLite import.
+
+The old `panel.db` is kept as a backup after migration.
+
 ## Release Notes For Current Behavior
 
 - Automatic sqlmap `--search` is disabled.
@@ -145,4 +167,3 @@ sqlmap agent:
 ```bash
 python -m py_compile sqlmap_agent.py
 ```
-

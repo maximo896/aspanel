@@ -4,6 +4,24 @@ import (
 	"gorm.io/gorm"
 )
 
+func AllModels() []interface{} {
+	return []interface{}{
+		&AWVSServer{},
+		&SqlmapAgent{},
+		&PathAgent{},
+		&Task{},
+		&TaskPathScan{},
+		&TaskFinding{},
+		&DomainSQLMapCache{},
+		&SQLMapGlobalSearchTask{},
+		&ProxyAgent{},
+		&CloudSettings{},
+		&CloudInstance{},
+		&AdminCredential{},
+		&AdminSession{},
+	}
+}
+
 type AWVSServer struct {
 	gorm.Model
 	Name                  string `json:"name"`
@@ -109,7 +127,7 @@ type Task struct {
 	SqlmapTaskID        string `json:"sqlmap_task_id" gorm:"index"`
 	SqlmapStatus        string `json:"sqlmap_status" gorm:"default:'none';index;index:idx_task_sqlmap_agent_status"`
 	SqlmapAgentURL      string `json:"sqlmap_agent_url"`
-	SqlmapResultJSON    string `json:"sqlmap_result_json" gorm:"type:text"`
+	SqlmapResultJSON    string `json:"sqlmap_result_json" gorm:"type:longtext"`
 	SqlmapCachedAt      int64  `json:"sqlmap_cached_at"`
 	HasData             bool   `json:"has_data"`
 	HasDBNames          bool   `json:"has_db_names" gorm:"-"`
@@ -139,8 +157,8 @@ type TaskPathScan struct {
 	AgentVersion     string `json:"agent_version"`
 	PathsCount       int    `json:"paths_count"`
 	FormsCount       int    `json:"forms_count"`
-	ResultJSON       string `json:"result_json" gorm:"type:text"`
-	LastError        string `json:"last_error" gorm:"type:text"`
+	ResultJSON       string `json:"result_json" gorm:"type:longtext"`
+	LastError        string `json:"last_error" gorm:"type:longtext"`
 	LastDispatchedAt int64  `json:"last_dispatched_at"`
 }
 
@@ -149,8 +167,8 @@ type TaskFinding struct {
 	TaskID           uint   `json:"task_id" gorm:"index:idx_task_vuln,unique"`
 	VulnID           string `json:"vuln_id" gorm:"index:idx_task_vuln,unique"`
 	AffectsURL       string `json:"affects_url"`
-	AWVSPayload      string `json:"awvs_payload"`
-	AWVSRaw          string `json:"awvs_raw"`
+	AWVSPayload      string `json:"awvs_payload" gorm:"type:longtext"`
+	AWVSRaw          string `json:"awvs_raw" gorm:"type:longtext"`
 	Confidence       int    `json:"confidence"`
 	AWVSStatus       string `json:"awvs_status"`
 	IsSQLi           bool   `json:"is_sqli"`
@@ -160,7 +178,7 @@ type TaskFinding struct {
 	SqlmapStatus     string `json:"sqlmap_status" gorm:"index;index:idx_finding_sqlmap_agent_status"`
 	SqlmapAgentURL   string `json:"sqlmap_agent_url"`
 	SqlmapTechniques string `json:"sqlmap_techniques"`
-	SqlmapResultJSON string `json:"sqlmap_result_json" gorm:"type:text"`
+	SqlmapResultJSON string `json:"sqlmap_result_json" gorm:"type:longtext"`
 	SqlmapCachedAt   int64  `json:"sqlmap_cached_at"`
 	HasData          bool   `json:"has_data"`
 	HasDBNames       bool   `json:"has_db_names" gorm:"-"`
@@ -171,15 +189,15 @@ type TaskFinding struct {
 	HasDBA           bool   `json:"has_dba"`
 	HasInjection     bool   `json:"has_injection"`
 	UseProxy         bool   `json:"use_proxy" gorm:"default:false"`
-	SqlmapOptions    string `json:"sqlmap_options" gorm:"type:text"`
+	SqlmapOptions    string `json:"sqlmap_options" gorm:"type:longtext"`
 }
 
 type DomainSQLMapCache struct {
 	gorm.Model
 	Domain      string `json:"domain" gorm:"index:idx_domain_force_ssl,unique"`
 	ForceSSL    bool   `json:"force_ssl" gorm:"index:idx_domain_force_ssl,unique"`
-	ContentJSON string `json:"content_json" gorm:"type:text"`
-	TreeJSON    string `json:"tree_json" gorm:"type:text"`
+	ContentJSON string `json:"content_json" gorm:"type:longtext"`
+	TreeJSON    string `json:"tree_json" gorm:"type:longtext"`
 }
 
 type SQLMapGlobalSearchTask struct {
@@ -189,8 +207,8 @@ type SQLMapGlobalSearchTask struct {
 	Limit       int    `json:"limit"`
 	Status      string `json:"status" gorm:"default:'queued';index"`
 	Count       int    `json:"count"`
-	ResultsJSON string `json:"-" gorm:"type:text"`
-	Error       string `json:"error" gorm:"type:text"`
+	ResultsJSON string `json:"-" gorm:"type:longtext"`
+	Error       string `json:"error" gorm:"type:longtext"`
 	StartedAt   int64  `json:"started_at"`
 	FinishedAt  int64  `json:"finished_at"`
 }
@@ -230,8 +248,8 @@ type CloudSettings struct {
 	VpcID                      string  `json:"vpc_id"`
 	SubnetID                   string  `json:"subnet_id"`
 	InteractCmd                string  `json:"interact_cmd" gorm:"default:'interact.sh client'"`
-	SqlmapDefaultOptions       string  `json:"sqlmap_default_options" gorm:"type:text"`
-	PathDefaultCustomPaths     string  `json:"path_default_custom_paths" gorm:"type:text"`
+	SqlmapDefaultOptions       string  `json:"sqlmap_default_options" gorm:"type:longtext"`
+	PathDefaultCustomPaths     string  `json:"path_default_custom_paths" gorm:"type:longtext"`
 	LaunchStartedAt            int64   `json:"launch_started_at"`
 	PortMin                    int     `json:"port_min" gorm:"default:30000"`
 	PortMax                    int     `json:"port_max" gorm:"default:40000"`

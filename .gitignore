@@ -7,10 +7,13 @@ frontend/node_modules/
 frontend/dist/
 
 panel.db
+mysql-data/
 awvs-panel.exe
 awvs-sqlmap-panel.exe
 
 data/panel.log
+data/mysql.env
+data/sqlite-to-mysql.migrated
 data/*.db
 data/releases/
 data/tmp/
