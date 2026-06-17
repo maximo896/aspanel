@@ -69,6 +69,9 @@ func Open() (*gorm.DB, error) {
 	if err := ensureMySQLContainer(cwd, cfg, containerExists); err != nil {
 		return nil, err
 	}
+	if err := tuneMySQLContainer(); err != nil {
+		log.Printf("[db] failed to apply MySQL runtime tuning: %v", err)
+	}
 
 	db, err := openMySQLWithRetry(cfg, 90*time.Second)
 	if err != nil {
@@ -205,8 +208,22 @@ func ensureMySQLContainer(baseDir string, cfg mysqlConfig, exists bool) error {
 		mysqlImage,
 		"--character-set-server=utf8mb4",
 		"--collation-server=utf8mb4_unicode_ci",
+		"--max-allowed-packet=1G",
+		"--net-read-timeout=120",
+		"--net-write-timeout=120",
 	}
 	_, err = dockerOutput(args...)
+	return err
+}
+
+func tuneMySQLContainer() error {
+	_, err := dockerOutput(
+		"exec",
+		containerName,
+		"sh",
+		"-c",
+		`mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" -e "SET GLOBAL max_allowed_packet=1073741824; SET GLOBAL net_read_timeout=120; SET GLOBAL net_write_timeout=120;"`,
+	)
 	return err
 }
 
@@ -255,7 +272,7 @@ func openMySQLWithRetry(cfg mysqlConfig, timeout time.Duration) (*gorm.DB, error
 }
 
 func dsn(cfg mysqlConfig) string {
-	return fmt.Sprintf("%s:%s@tcp(127.0.0.1:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=10s&readTimeout=60s&writeTimeout=60s",
+	return fmt.Sprintf("%s:%s@tcp(127.0.0.1:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=10s&readTimeout=120s&writeTimeout=120s&maxAllowedPacket=0",
 		mysqlUser,
 		cfg.Password,
 		mysqlPort,
@@ -361,13 +378,14 @@ func copyAllModels(src, dst *gorm.DB) error {
 
 func copyModel[T any](src, dst *gorm.DB) error {
 	var rows []T
-	if err := src.Unscoped().Find(&rows).Error; err != nil {
+	return src.Unscoped().FindInBatches(&rows, 100, func(batch *gorm.DB, batchNumber int) error {
+		if len(rows) == 0 {
+			return nil
+		}
+		err := dst.Session(&gorm.Session{SkipDefaultTransaction: true}).CreateInBatches(rows, 1).Error
+		rows = rows[:0]
 		return err
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-	return dst.CreateInBatches(rows, 500).Error
+	}).Error
 }
 
 func fileExists(path string) bool {
