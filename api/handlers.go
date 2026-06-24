@@ -245,7 +245,7 @@ func loadGlobalAWVSAutoRestartOnAPI500(db *gorm.DB) bool {
 }
 
 func shouldAutoRestartAWVSOffline(db *gorm.DB, server *models.AWVSServer) bool {
-	if server == nil || !server.AutoRestartOnAPI500 || !loadGlobalAWVSAutoRestartOnAPI500(db) {
+	if server == nil || !loadGlobalAWVSAutoRestartOnAPI500(db) {
 		return false
 	}
 	if server.IsActive {
@@ -255,6 +255,9 @@ func shouldAutoRestartAWVSOffline(db *gorm.DB, server *models.AWVSServer) bool {
 		return false
 	}
 	now := time.Now().Unix()
+	if server.LastHeartbeatAt <= 0 || now-server.LastHeartbeatAt < 1800 {
+		return false
+	}
 	return server.LastAutoRestartAt <= 0 || now-server.LastAutoRestartAt >= int64(awvsAutoRestartCooldown/time.Second)
 }
 
@@ -4342,25 +4345,27 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 	var settings models.CloudSettings
 	if err := api.DB.Order("id desc").First(&settings).Error; err != nil {
 		settings = models.CloudSettings{
-			MaxPriceUSDPerHour:       0.02,
-			PollIntervalSec:          60,
-			PortMin:                  30000,
-			PortMax:                  40000,
-			InstanceType:             "S5.SMALL1",
-			AWVSMaxConcurrency:       5,
-			SQLMapMaxConcurrency:     10,
-			PathMaxConcurrency:       5,
-			CloudProxyMode:           "none",
-			AWVSMaxPriceUSDPerHour:   0.02,
-			SQLMapMaxPriceUSDPerHour: 0.02,
-			PathMaxPriceUSDPerHour:   0.02,
-			AWVSMinCPU:               1,
-			AWVSMinMemoryGB:          1,
-			SQLMapMinCPU:             1,
-			SQLMapMinMemoryGB:        1,
-			PathMinCPU:               1,
-			PathMinMemoryGB:          1,
-			InteractCmd:              "interact.sh client",
+			MaxPriceUSDPerHour:        0.02,
+			PollIntervalSec:           60,
+			PortMin:                   30000,
+			PortMax:                   40000,
+			InstanceType:              "S5.SMALL1",
+			AWVSMaxConcurrency:        5,
+			SQLMapMaxConcurrency:      10,
+			PathMaxConcurrency:        5,
+			CloudProxyMode:            "none",
+			AWVSMaxPriceUSDPerHour:    0.02,
+			SQLMapMaxPriceUSDPerHour:  0.02,
+			PathMaxPriceUSDPerHour:    0.02,
+			AWVSMinCPU:                1,
+			AWVSMinMemoryGB:           1,
+			SQLMapMinCPU:              1,
+			SQLMapMinMemoryGB:         1,
+			PathMinCPU:                1,
+			PathMinMemoryGB:           1,
+			AWVSReinstallThresholdPct: 90,
+			AWVSReinstallMinFreeGB:    10,
+			InteractCmd:               "interact.sh client",
 		}
 		api.DB.Create(&settings)
 	}
@@ -4409,6 +4414,12 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 	if settings.PathMinMemoryGB <= 0 {
 		settings.PathMinMemoryGB = 1
 	}
+	if settings.AWVSReinstallThresholdPct <= 0 {
+		settings.AWVSReinstallThresholdPct = 90
+	}
+	if settings.AWVSReinstallMinFreeGB <= 0 {
+		settings.AWVSReinstallMinFreeGB = 10
+	}
 	masked := settings
 	masked.SecretID = ""
 	masked.SecretKey = ""
@@ -4427,68 +4438,71 @@ func (api *API) GetCloudSettings(c *gin.Context) {
 		remaining = pathRemaining
 	}
 	c.JSON(200, gin.H{
-		"ID":                             masked.ID,
-		"CreatedAt":                      masked.CreatedAt,
-		"UpdatedAt":                      masked.UpdatedAt,
-		"DeletedAt":                      masked.DeletedAt,
-		"secret_id":                      masked.SecretID,
-		"secret_key":                     masked.SecretKey,
-		"max_price_usd_per_hour":         masked.MaxPriceUSDPerHour,
-		"hourly_budget_usd":              masked.HourlyBudgetUSD,
-		"budget_hours":                   masked.BudgetHours,
-		"enabled":                        masked.Enabled,
-		"poll_interval_sec":              masked.PollIntervalSec,
-		"instance_type":                  masked.InstanceType,
-		"awvs_max_concurrency":           masked.AWVSMaxConcurrency,
-		"sqlmap_max_concurrency":         masked.SQLMapMaxConcurrency,
-		"path_max_concurrency":           masked.PathMaxConcurrency,
-		"cloud_proxy_mode":               masked.CloudProxyMode,
-		"cloud_proxy_agent_id":           masked.CloudProxyAgentID,
-		"image_id":                       masked.ImageID,
-		"key_id":                         masked.KeyID,
-		"security_group_id":              masked.SecurityGroupID,
-		"vpc_id":                         masked.VpcID,
-		"subnet_id":                      masked.SubnetID,
-		"interact_cmd":                   masked.InteractCmd,
-		"sqlmap_default_options":         masked.SqlmapDefaultOptions,
-		"path_default_custom_paths":      masked.PathDefaultCustomPaths,
-		"launch_started_at":              masked.LaunchStartedAt,
-		"port_min":                       masked.PortMin,
-		"port_max":                       masked.PortMax,
-		"awvs_auto_restart_on_api_500":   masked.AWVSAutoRestartOnAPI500,
-		"awvs_auto_cleanup_synced_tasks": masked.AWVSAutoCleanupSyncedTasks,
-		"autoscale_status":               status,
-		"autoscale_remaining_sec":        remaining,
-		"awvs_auto_enabled":              masked.AWVSAutoEnabled,
-		"awvs_launch_started_at":         masked.AWVSLaunchStartedAt,
-		"awvs_max_price_usd_per_hour":    masked.AWVSMaxPriceUSDPerHour,
-		"awvs_hourly_budget_usd":         masked.AWVSHourlyBudgetUSD,
-		"awvs_budget_hours":              masked.AWVSBudgetHours,
-		"awvs_instance_type":             masked.AWVSInstanceType,
-		"awvs_min_cpu":                   masked.AWVSMinCPU,
-		"awvs_min_memory_gb":             masked.AWVSMinMemoryGB,
-		"awvs_autoscale_status":          awvsStatus,
-		"awvs_autoscale_remaining_sec":   awvsRemaining,
-		"sqlmap_auto_enabled":            masked.SQLMapAutoEnabled,
-		"sqlmap_launch_started_at":       masked.SQLMapLaunchStartedAt,
-		"sqlmap_max_price_usd_per_hour":  masked.SQLMapMaxPriceUSDPerHour,
-		"sqlmap_hourly_budget_usd":       masked.SQLMapHourlyBudgetUSD,
-		"sqlmap_budget_hours":            masked.SQLMapBudgetHours,
-		"sqlmap_instance_type":           masked.SQLMapInstanceType,
-		"sqlmap_min_cpu":                 masked.SQLMapMinCPU,
-		"sqlmap_min_memory_gb":           masked.SQLMapMinMemoryGB,
-		"sqlmap_autoscale_status":        sqlmapStatus,
-		"sqlmap_autoscale_remaining_sec": sqlmapRemaining,
-		"path_auto_enabled":              masked.PathAutoEnabled,
-		"path_launch_started_at":         masked.PathLaunchStartedAt,
-		"path_max_price_usd_per_hour":    masked.PathMaxPriceUSDPerHour,
-		"path_hourly_budget_usd":         masked.PathHourlyBudgetUSD,
-		"path_budget_hours":              masked.PathBudgetHours,
-		"path_instance_type":             masked.PathInstanceType,
-		"path_min_cpu":                   masked.PathMinCPU,
-		"path_min_memory_gb":             masked.PathMinMemoryGB,
-		"path_autoscale_status":          pathStatus,
-		"path_autoscale_remaining_sec":   pathRemaining,
+		"ID":                               masked.ID,
+		"CreatedAt":                        masked.CreatedAt,
+		"UpdatedAt":                        masked.UpdatedAt,
+		"DeletedAt":                        masked.DeletedAt,
+		"secret_id":                        masked.SecretID,
+		"secret_key":                       masked.SecretKey,
+		"max_price_usd_per_hour":           masked.MaxPriceUSDPerHour,
+		"hourly_budget_usd":                masked.HourlyBudgetUSD,
+		"budget_hours":                     masked.BudgetHours,
+		"enabled":                          masked.Enabled,
+		"poll_interval_sec":                masked.PollIntervalSec,
+		"instance_type":                    masked.InstanceType,
+		"awvs_max_concurrency":             masked.AWVSMaxConcurrency,
+		"sqlmap_max_concurrency":           masked.SQLMapMaxConcurrency,
+		"path_max_concurrency":             masked.PathMaxConcurrency,
+		"cloud_proxy_mode":                 masked.CloudProxyMode,
+		"cloud_proxy_agent_id":             masked.CloudProxyAgentID,
+		"image_id":                         masked.ImageID,
+		"key_id":                           masked.KeyID,
+		"security_group_id":                masked.SecurityGroupID,
+		"vpc_id":                           masked.VpcID,
+		"subnet_id":                        masked.SubnetID,
+		"interact_cmd":                     masked.InteractCmd,
+		"sqlmap_default_options":           masked.SqlmapDefaultOptions,
+		"path_default_custom_paths":        masked.PathDefaultCustomPaths,
+		"launch_started_at":                masked.LaunchStartedAt,
+		"port_min":                         masked.PortMin,
+		"port_max":                         masked.PortMax,
+		"awvs_auto_restart_on_api_500":     masked.AWVSAutoRestartOnAPI500,
+		"awvs_auto_reinstall_enabled":      masked.AWVSAutoReinstallEnabled,
+		"awvs_reinstall_threshold_percent": masked.AWVSReinstallThresholdPct,
+		"awvs_reinstall_min_free_gb":       masked.AWVSReinstallMinFreeGB,
+		"awvs_auto_cleanup_synced_tasks":   masked.AWVSAutoCleanupSyncedTasks,
+		"autoscale_status":                 status,
+		"autoscale_remaining_sec":          remaining,
+		"awvs_auto_enabled":                masked.AWVSAutoEnabled,
+		"awvs_launch_started_at":           masked.AWVSLaunchStartedAt,
+		"awvs_max_price_usd_per_hour":      masked.AWVSMaxPriceUSDPerHour,
+		"awvs_hourly_budget_usd":           masked.AWVSHourlyBudgetUSD,
+		"awvs_budget_hours":                masked.AWVSBudgetHours,
+		"awvs_instance_type":               masked.AWVSInstanceType,
+		"awvs_min_cpu":                     masked.AWVSMinCPU,
+		"awvs_min_memory_gb":               masked.AWVSMinMemoryGB,
+		"awvs_autoscale_status":            awvsStatus,
+		"awvs_autoscale_remaining_sec":     awvsRemaining,
+		"sqlmap_auto_enabled":              masked.SQLMapAutoEnabled,
+		"sqlmap_launch_started_at":         masked.SQLMapLaunchStartedAt,
+		"sqlmap_max_price_usd_per_hour":    masked.SQLMapMaxPriceUSDPerHour,
+		"sqlmap_hourly_budget_usd":         masked.SQLMapHourlyBudgetUSD,
+		"sqlmap_budget_hours":              masked.SQLMapBudgetHours,
+		"sqlmap_instance_type":             masked.SQLMapInstanceType,
+		"sqlmap_min_cpu":                   masked.SQLMapMinCPU,
+		"sqlmap_min_memory_gb":             masked.SQLMapMinMemoryGB,
+		"sqlmap_autoscale_status":          sqlmapStatus,
+		"sqlmap_autoscale_remaining_sec":   sqlmapRemaining,
+		"path_auto_enabled":                masked.PathAutoEnabled,
+		"path_launch_started_at":           masked.PathLaunchStartedAt,
+		"path_max_price_usd_per_hour":      masked.PathMaxPriceUSDPerHour,
+		"path_hourly_budget_usd":           masked.PathHourlyBudgetUSD,
+		"path_budget_hours":                masked.PathBudgetHours,
+		"path_instance_type":               masked.PathInstanceType,
+		"path_min_cpu":                     masked.PathMinCPU,
+		"path_min_memory_gb":               masked.PathMinMemoryGB,
+		"path_autoscale_status":            pathStatus,
+		"path_autoscale_remaining_sec":     pathRemaining,
 	})
 }
 
@@ -4627,6 +4641,15 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	}
 	if _, ok := present["awvs_auto_restart_on_api_500"]; ok {
 		settings.AWVSAutoRestartOnAPI500 = req.AWVSAutoRestartOnAPI500
+	}
+	if _, ok := present["awvs_auto_reinstall_enabled"]; ok {
+		settings.AWVSAutoReinstallEnabled = req.AWVSAutoReinstallEnabled
+	}
+	if _, ok := present["awvs_reinstall_threshold_percent"]; ok && req.AWVSReinstallThresholdPct > 0 {
+		settings.AWVSReinstallThresholdPct = req.AWVSReinstallThresholdPct
+	}
+	if _, ok := present["awvs_reinstall_min_free_gb"]; ok && req.AWVSReinstallMinFreeGB > 0 {
+		settings.AWVSReinstallMinFreeGB = req.AWVSReinstallMinFreeGB
 	}
 	if _, ok := present["awvs_auto_cleanup_synced_tasks"]; ok {
 		settings.AWVSAutoCleanupSyncedTasks = req.AWVSAutoCleanupSyncedTasks
@@ -4805,6 +4828,12 @@ func (api *API) UpdateCloudSettings(c *gin.Context) {
 	if settings.PathMinMemoryGB <= 0 {
 		settings.PathMinMemoryGB = 1
 	}
+	if settings.AWVSReinstallThresholdPct <= 0 {
+		settings.AWVSReinstallThresholdPct = 90
+	}
+	if settings.AWVSReinstallMinFreeGB <= 0 {
+		settings.AWVSReinstallMinFreeGB = 10
+	}
 	if strings.TrimSpace(settings.AWVSInstanceType) != "" {
 		cpu, mem, ok := tencent.InstanceTypeSpec(settings.AWVSInstanceType)
 		if ok && (cpu < settings.AWVSMinCPU || mem < settings.AWVSMinMemoryGB) {
@@ -4924,7 +4953,65 @@ func (api *API) GetCloudInstances(c *gin.Context) {
 		query = query.Where("workload = ?", workload)
 	}
 	query.Find(&instances)
+	api.populateCloudInstanceNodeNames(instances)
 	c.JSON(200, instances)
+}
+
+func (api *API) populateCloudInstanceNodeNames(instances []models.CloudInstance) {
+	if len(instances) == 0 {
+		return
+	}
+	awvsIDs := make([]uint, 0)
+	sqlmapIDs := make([]uint, 0)
+	pathIDs := make([]uint, 0)
+	for _, inst := range instances {
+		if inst.AWVSServerID != 0 {
+			awvsIDs = append(awvsIDs, inst.AWVSServerID)
+		}
+		if inst.SqlmapAgentID != 0 {
+			sqlmapIDs = append(sqlmapIDs, inst.SqlmapAgentID)
+		}
+		if inst.PathAgentID != 0 {
+			pathIDs = append(pathIDs, inst.PathAgentID)
+		}
+	}
+	awvsNames := map[uint]string{}
+	if len(awvsIDs) > 0 {
+		var nodes []models.AWVSServer
+		if err := api.DB.Select("id", "name").Where("id IN ?", awvsIDs).Find(&nodes).Error; err == nil {
+			for _, node := range nodes {
+				awvsNames[node.ID] = node.Name
+			}
+		}
+	}
+	sqlmapNames := map[uint]string{}
+	if len(sqlmapIDs) > 0 {
+		var nodes []models.SqlmapAgent
+		if err := api.DB.Select("id", "name").Where("id IN ?", sqlmapIDs).Find(&nodes).Error; err == nil {
+			for _, node := range nodes {
+				sqlmapNames[node.ID] = node.Name
+			}
+		}
+	}
+	pathNames := map[uint]string{}
+	if len(pathIDs) > 0 {
+		var nodes []models.PathAgent
+		if err := api.DB.Select("id", "name").Where("id IN ?", pathIDs).Find(&nodes).Error; err == nil {
+			for _, node := range nodes {
+				pathNames[node.ID] = node.Name
+			}
+		}
+	}
+	for i := range instances {
+		switch {
+		case instances[i].AWVSServerID != 0:
+			instances[i].NodeName = awvsNames[instances[i].AWVSServerID]
+		case instances[i].SqlmapAgentID != 0:
+			instances[i].NodeName = sqlmapNames[instances[i].SqlmapAgentID]
+		case instances[i].PathAgentID != 0:
+			instances[i].NodeName = pathNames[instances[i].PathAgentID]
+		}
+	}
 }
 
 func (api *API) loadCloudClient() (*tencent.Client, error) {

@@ -61,6 +61,8 @@ const (
 	bootstrapProtocolTimeoutSec = 1800
 	agentHeartbeatIntervalSec   = 60
 	agentHeartbeatTimeoutSec    = 600
+	agentOfflineRestartDelaySec = 1800
+	agentAutoRestartCooldownSec = 1800
 	estimatedPublicTrafficUSD   = 0.02
 	awvsAutoRestartCooldownSec  = 600
 	awvsDispatchBatchSize       = 50
@@ -133,7 +135,7 @@ func cleanupCompletedAWVSTaskRemoteData(db *gorm.DB, task *models.Task) {
 }
 
 func shouldAutoRestartAWVSOffline(db *gorm.DB, server *models.AWVSServer) bool {
-	if server == nil || !server.AutoRestartOnAPI500 || !loadGlobalAWVSAutoRestartOnAPI500(db) {
+	if server == nil || !loadGlobalAWVSAutoRestartOnAPI500(db) {
 		return false
 	}
 	if server.IsActive {
@@ -143,7 +145,38 @@ func shouldAutoRestartAWVSOffline(db *gorm.DB, server *models.AWVSServer) bool {
 		return false
 	}
 	now := time.Now().Unix()
+	if server.LastHeartbeatAt <= 0 || now-server.LastHeartbeatAt < agentOfflineRestartDelaySec {
+		return false
+	}
 	return server.LastAutoRestartAt <= 0 || now-server.LastAutoRestartAt >= awvsAutoRestartCooldownSec
+}
+
+type awvsGlobalReinstallSettings struct {
+	Enabled      bool
+	ThresholdPct int
+	MinFreeGB    int64
+}
+
+func loadGlobalAWVSReinstallSettings(db *gorm.DB) awvsGlobalReinstallSettings {
+	settings := awvsGlobalReinstallSettings{
+		ThresholdPct: 90,
+		MinFreeGB:    10,
+	}
+	if db == nil {
+		return settings
+	}
+	var cloud models.CloudSettings
+	if err := db.Order("id desc").Select("awvs_auto_reinstall_enabled", "awvs_reinstall_threshold_percent", "awvs_reinstall_min_free_gb").First(&cloud).Error; err != nil {
+		return settings
+	}
+	settings.Enabled = cloud.AWVSAutoReinstallEnabled
+	if cloud.AWVSReinstallThresholdPct > 0 {
+		settings.ThresholdPct = cloud.AWVSReinstallThresholdPct
+	}
+	if cloud.AWVSReinstallMinFreeGB > 0 {
+		settings.MinFreeGB = cloud.AWVSReinstallMinFreeGB
+	}
+	return settings
 }
 
 func callNodeManager(managerURL, managerToken, action string) error {
@@ -325,6 +358,64 @@ func triggerAWVSAutoRestartOnOffline(db *gorm.DB, server *models.AWVSServer, err
 	return true
 }
 
+func shouldAutoRestartManagedAgent(isActive bool, updating bool, lastHeartbeatAt, lastAutoRestartAt int64, managerURL, managerToken string) bool {
+	if isActive || updating {
+		return false
+	}
+	if strings.TrimSpace(managerURL) == "" || strings.TrimSpace(managerToken) == "" {
+		return false
+	}
+	now := time.Now().Unix()
+	if lastHeartbeatAt <= 0 || now-lastHeartbeatAt < agentOfflineRestartDelaySec {
+		return false
+	}
+	return lastAutoRestartAt <= 0 || now-lastAutoRestartAt >= agentAutoRestartCooldownSec
+}
+
+func triggerSQLMapAutoRestartOnOffline(db *gorm.DB, agent *models.SqlmapAgent, err error, source string) bool {
+	if db == nil || agent == nil || !shouldAutoRestartManagedAgent(agent.IsActive, agent.Updating, agent.LastHeartbeatAt, agent.LastAutoRestartAt, agent.ManagerURL, agent.ManagerToken) {
+		return false
+	}
+	now := time.Now().Unix()
+	if restartErr := callNodeManager(agent.ManagerURL, agent.ManagerToken, "restart"); restartErr != nil {
+		agent.LastCheckedAt = now
+		agent.LastError = fmt.Sprintf("%v | sqlmap offline auto restart failed: %v", err, restartErr)
+		db.Save(agent)
+		return false
+	}
+	agent.IsActive = false
+	agent.CurrentRunning = 0
+	agent.CurrentQueued = 0
+	agent.LastCheckedAt = now
+	agent.LastAutoRestartAt = now
+	agent.LastError = fmt.Sprintf("%v | sqlmap offline detected (%s), docker restart requested", err, source)
+	db.Save(agent)
+	log.Printf("[sqlmap][offline-restart] docker restart requested id=%d name=%s source=%s", agent.ID, agent.Name, source)
+	return true
+}
+
+func triggerPathAutoRestartOnOffline(db *gorm.DB, agent *models.PathAgent, err error, source string) bool {
+	if db == nil || agent == nil || !shouldAutoRestartManagedAgent(agent.IsActive, agent.Updating, agent.LastHeartbeatAt, agent.LastAutoRestartAt, agent.ManagerURL, agent.ManagerToken) {
+		return false
+	}
+	now := time.Now().Unix()
+	if restartErr := callNodeManager(agent.ManagerURL, agent.ManagerToken, "restart"); restartErr != nil {
+		agent.LastCheckedAt = now
+		agent.LastError = fmt.Sprintf("%v | path offline auto restart failed: %v", err, restartErr)
+		db.Save(agent)
+		return false
+	}
+	agent.IsActive = false
+	agent.CurrentRunning = 0
+	agent.CurrentQueued = 0
+	agent.LastCheckedAt = now
+	agent.LastAutoRestartAt = now
+	agent.LastError = fmt.Sprintf("%v | path offline detected (%s), docker restart requested", err, source)
+	db.Save(agent)
+	log.Printf("[path][offline-restart] docker restart requested id=%d name=%s source=%s", agent.ID, agent.Name, source)
+	return true
+}
+
 func cacheTaskSQLMapSnapshot(task *models.Task, snapshot map[string]interface{}) bool {
 	if task == nil || len(snapshot) == 0 {
 		return false
@@ -457,30 +548,35 @@ func refreshAWVSServersStatus(db *gorm.DB) {
 func maintainAWVSServers(db *gorm.DB) {
 	for {
 		time.Sleep(time.Duration(awvsMaintenanceIntervalSec) * time.Second)
+		global := loadGlobalAWVSReinstallSettings(db)
 		var servers []models.AWVSServer
-		if err := db.Where("auto_reinstall_enabled = ? OR draining = ?", true, true).Find(&servers).Error; err != nil || len(servers) == 0 {
+		query := db.Where("draining = ?", true)
+		if global.Enabled {
+			query = db
+		}
+		if err := query.Find(&servers).Error; err != nil || len(servers) == 0 {
 			continue
 		}
 		for _, server := range servers {
-			maintainAWVSServer(db, &server)
+			maintainAWVSServer(db, &server, global)
 		}
 	}
 }
 
-func maintainAWVSServer(db *gorm.DB, server *models.AWVSServer) {
+func maintainAWVSServer(db *gorm.DB, server *models.AWVSServer, global awvsGlobalReinstallSettings) {
 	if db == nil || server == nil || server.ID == 0 {
 		return
 	}
 	now := time.Now().Unix()
 	updateAWVSDiskFromManager(db, server)
-	if server.ReinstallThresholdPct <= 0 {
-		server.ReinstallThresholdPct = 85
+	if global.ThresholdPct <= 0 {
+		global.ThresholdPct = 90
 	}
-	if server.ReinstallMinFreeGB <= 0 {
-		server.ReinstallMinFreeGB = 10
+	if global.MinFreeGB <= 0 {
+		global.MinFreeGB = 10
 	}
 	diskKnown := server.DiskTotalGB > 0
-	diskLow := diskKnown && (server.DiskUsedPercent >= server.ReinstallThresholdPct || server.DiskFreeGB <= server.ReinstallMinFreeGB)
+	diskLow := diskKnown && (server.DiskUsedPercent >= global.ThresholdPct || server.DiskFreeGB <= global.MinFreeGB)
 	status := strings.ToLower(strings.TrimSpace(server.MaintenanceStatus))
 
 	if status == "reinstalling" {
@@ -499,7 +595,7 @@ func maintainAWVSServer(db *gorm.DB, server *models.AWVSServer) {
 		return
 	}
 
-	if !server.AutoReinstallEnabled {
+	if !global.Enabled {
 		return
 	}
 	if !diskLow {
@@ -606,6 +702,103 @@ func applyAWVSReinstallProtocolFromManager(db *gorm.DB, server *models.AWVSServe
 	return true
 }
 
+func latestProtocolFromManager(managerURL, managerToken, prefix string) (*protoCfg, bool) {
+	health, err := fetchNodeManagerHealth(managerURL, managerToken)
+	if err != nil {
+		return nil, false
+	}
+	pattern := regexp.QuoteMeta(prefix) + `[A-Za-z0-9+/_=-]+`
+	matches := regexp.MustCompile(pattern).FindAllString(health.UpdateLogTail, -1)
+	if len(matches) == 0 {
+		return nil, false
+	}
+	cfg, err := decodeProto(matches[len(matches)-1], prefix)
+	if err != nil || strings.TrimSpace(cfg.URL) == "" || strings.TrimSpace(cfg.APIKey) == "" {
+		return nil, false
+	}
+	return cfg, true
+}
+
+func applySQLMapProtocolFromManager(db *gorm.DB, agent *models.SqlmapAgent) bool {
+	if db == nil || agent == nil || strings.TrimSpace(agent.ManagerURL) == "" || strings.TrimSpace(agent.ManagerToken) == "" {
+		return false
+	}
+	cfg, ok := latestProtocolFromManager(agent.ManagerURL, agent.ManagerToken, "sqlmapagent://")
+	if !ok {
+		return false
+	}
+	now := time.Now().Unix()
+	updates := map[string]interface{}{
+		"url":             strings.TrimRight(strings.TrimSpace(cfg.URL), "/"),
+		"api_key":         strings.TrimSpace(cfg.APIKey),
+		"last_checked_at": now,
+	}
+	if strings.TrimSpace(cfg.ManagerURL) != "" {
+		updates["manager_url"] = strings.TrimRight(strings.TrimSpace(cfg.ManagerURL), "/")
+	}
+	if strings.TrimSpace(cfg.ManagerToken) != "" {
+		updates["manager_token"] = strings.TrimSpace(cfg.ManagerToken)
+	}
+	if cfg.MaxConcurrency > 0 {
+		updates["max_concurrency"] = cfg.MaxConcurrency
+	}
+	if strings.TrimSpace(cfg.Name) != "" {
+		updates["name"] = strings.TrimSpace(cfg.Name)
+	}
+	db.Model(&models.SqlmapAgent{}).Where("id = ?", agent.ID).Updates(updates)
+	agent.URL = updates["url"].(string)
+	agent.APIKey = updates["api_key"].(string)
+	if v, ok := updates["manager_url"].(string); ok {
+		agent.ManagerURL = v
+	}
+	if v, ok := updates["manager_token"].(string); ok {
+		agent.ManagerToken = v
+	}
+	agent.LastCheckedAt = now
+	log.Printf("[sqlmap][protocol-sync] manager protocol applied id=%d name=%s url=%s", agent.ID, agent.Name, agent.URL)
+	return true
+}
+
+func applyPathProtocolFromManager(db *gorm.DB, agent *models.PathAgent) bool {
+	if db == nil || agent == nil || strings.TrimSpace(agent.ManagerURL) == "" || strings.TrimSpace(agent.ManagerToken) == "" {
+		return false
+	}
+	cfg, ok := latestProtocolFromManager(agent.ManagerURL, agent.ManagerToken, "pathagent://")
+	if !ok {
+		return false
+	}
+	now := time.Now().Unix()
+	updates := map[string]interface{}{
+		"url":             strings.TrimRight(strings.TrimSpace(cfg.URL), "/"),
+		"api_key":         strings.TrimSpace(cfg.APIKey),
+		"last_checked_at": now,
+	}
+	if strings.TrimSpace(cfg.ManagerURL) != "" {
+		updates["manager_url"] = strings.TrimRight(strings.TrimSpace(cfg.ManagerURL), "/")
+	}
+	if strings.TrimSpace(cfg.ManagerToken) != "" {
+		updates["manager_token"] = strings.TrimSpace(cfg.ManagerToken)
+	}
+	if cfg.MaxConcurrency > 0 {
+		updates["max_concurrency"] = cfg.MaxConcurrency
+	}
+	if strings.TrimSpace(cfg.Name) != "" {
+		updates["name"] = strings.TrimSpace(cfg.Name)
+	}
+	db.Model(&models.PathAgent{}).Where("id = ?", agent.ID).Updates(updates)
+	agent.URL = updates["url"].(string)
+	agent.APIKey = updates["api_key"].(string)
+	if v, ok := updates["manager_url"].(string); ok {
+		agent.ManagerURL = v
+	}
+	if v, ok := updates["manager_token"].(string); ok {
+		agent.ManagerToken = v
+	}
+	agent.LastCheckedAt = now
+	log.Printf("[path][protocol-sync] manager protocol applied id=%d name=%s url=%s", agent.ID, agent.Name, agent.URL)
+	return true
+}
+
 func refreshSqlmapAgentsStatus(db *gorm.DB) {
 	for {
 		time.Sleep(time.Duration(agentHeartbeatIntervalSec) * time.Second)
@@ -624,6 +817,17 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 				if resp != nil && resp.Body != nil {
 					resp.Body.Close()
 				}
+				if applySQLMapProtocolFromManager(db, &agent) {
+					req, _ = http.NewRequest("GET", fmt.Sprintf("%s/status", agent.URL), nil)
+					req.Header.Set("X-Api-Token", agent.APIKey)
+					resp, err = client.Do(req)
+					if err == nil && resp != nil && resp.StatusCode == 200 {
+						goto sqlmapStatusOK
+					}
+					if resp != nil && resp.Body != nil {
+						resp.Body.Close()
+					}
+				}
 				now := time.Now().Unix()
 				if agent.Updating && updateGraceActive(agent.LastAutoUpdateAt, agent.LastCheckedAt, now) {
 					db.Save(&agent)
@@ -634,6 +838,14 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 				agent.CurrentRunning = 0
 				agent.CurrentQueued = 0
 				agent.LastCheckedAt = now
+				if err != nil {
+					agent.LastError = err.Error()
+				} else if resp != nil {
+					agent.LastError = fmt.Sprintf("status %d", resp.StatusCode)
+				} else {
+					agent.LastError = "status check failed"
+				}
+				triggerSQLMapAutoRestartOnOffline(db, &agent, fmt.Errorf("%s", agent.LastError), "heartbeat_status")
 				db.Save(&agent)
 				if isServerStale(agent.LastHeartbeatAt) {
 					requeueSqlmapAgentTasks(db, agent.ID, "sqlmap_heartbeat_timeout")
@@ -641,6 +853,7 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 				}
 				continue
 			}
+		sqlmapStatusOK:
 			var statusResp struct {
 				RunningCount  int    `json:"running_count"`
 				QueuedCount   int    `json:"queued_count"`
@@ -656,8 +869,10 @@ func refreshSqlmapAgentsStatus(db *gorm.DB) {
 			}
 			agent.AgentVersion = strings.TrimSpace(statusResp.Version)
 			agent.LastHeartbeatAt = time.Now().Unix()
+			agent.LastCheckedAt = agent.LastHeartbeatAt
 			agent.IsActive = true
 			agent.Updating = false
+			agent.LastError = ""
 			db.Save(&agent)
 		}
 	}

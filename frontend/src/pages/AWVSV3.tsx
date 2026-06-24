@@ -30,7 +30,7 @@ import {
   UploadOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import type { AWVSServer } from '../types'
+import type { AWVSServer, CloudSettings } from '../types'
 import {
   addServer,
   cleanupFinishedAWVSScans,
@@ -211,11 +211,11 @@ export default function AWVSV3Page() {
     onError: error => message.error(extractError(error)),
   })
 
-  const awvsAutoRestartMut = useMutation({
-    mutationFn: (checked: boolean) => updateCloudSettings({ awvs_auto_restart_on_api_500: checked }),
+  const awvsGlobalPolicyMut = useMutation({
+    mutationFn: (payload: Partial<CloudSettings>) => updateCloudSettings(payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cloud-settings'] })
-      message.success(t('global_api_500_restart_updated'))
+      message.success(t('global_awvs_policy_updated'))
     },
     onError: error => message.error(extractError(error)),
   })
@@ -289,9 +289,6 @@ export default function AWVSV3Page() {
       api_key: '',
       manager_token: '',
       awvs_password: '',
-      auto_reinstall_enabled: server.auto_reinstall_enabled,
-      reinstall_threshold_percent: server.reinstall_threshold_percent || 85,
-      reinstall_min_free_gb: server.reinstall_min_free_gb || 10,
     })
   }
 
@@ -345,9 +342,10 @@ export default function AWVSV3Page() {
   }
 
   const diskColor = (server: AWVSServer) => {
-    const threshold = server.reinstall_threshold_percent || 85
+    const threshold = cloudSettings?.awvs_reinstall_threshold_percent || 90
+    const minFreeGB = cloudSettings?.awvs_reinstall_min_free_gb || 10
     if (!server.disk_total_gb) return 'default'
-    if (server.disk_used_percent >= threshold || server.disk_free_gb <= (server.reinstall_min_free_gb || 10)) return 'red'
+    if (server.disk_used_percent >= threshold || server.disk_free_gb <= minFreeGB) return 'red'
     if (server.disk_used_percent >= Math.max(0, threshold - 10)) return 'orange'
     return 'green'
   }
@@ -370,7 +368,7 @@ export default function AWVSV3Page() {
         />
       ),
     },
-    { title: t('name'), dataIndex: 'name', ellipsis: true },
+    { title: t('node_name'), dataIndex: 'name', ellipsis: true },
     {
       title: t('url'),
       dataIndex: 'url',
@@ -534,12 +532,6 @@ export default function AWVSV3Page() {
               onChange={setShowInactive}
             />
             <Checkbox
-              checked={Boolean(cloudSettings?.awvs_auto_restart_on_api_500)}
-              onChange={event => awvsAutoRestartMut.mutate(event.target.checked)}
-            >
-              {t('awvs_auto_restart_global')}
-            </Checkbox>
-            <Checkbox
               checked={Boolean(cloudSettings?.awvs_auto_cleanup_synced_tasks)}
               onChange={event => awvsAutoCleanupMut.mutate(event.target.checked)}
             >
@@ -563,6 +555,45 @@ export default function AWVSV3Page() {
           style={{ marginBottom: 12 }}
           message={t('awvs_auto_restart_global_hint')}
         />
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Checkbox
+            checked={Boolean(cloudSettings?.awvs_auto_restart_on_api_500)}
+            onChange={event => awvsGlobalPolicyMut.mutate({ awvs_auto_restart_on_api_500: event.target.checked })}
+          >
+            {t('awvs_auto_restart_global')}
+          </Checkbox>
+          <Checkbox
+            checked={Boolean(cloudSettings?.awvs_auto_reinstall_enabled)}
+            onChange={event => awvsGlobalPolicyMut.mutate({ awvs_auto_reinstall_enabled: event.target.checked })}
+          >
+            {t('auto_reinstall_low_disk')}
+          </Checkbox>
+          <Space size={4}>
+            <Text>{t('disk_reinstall_threshold')}</Text>
+            <InputNumber
+              min={50}
+              max={99}
+              value={cloudSettings?.awvs_reinstall_threshold_percent || 90}
+              onChange={value => {
+                const next = typeof value === 'number' ? value : 90
+                awvsGlobalPolicyMut.mutate({ awvs_reinstall_threshold_percent: next })
+              }}
+              style={{ width: 90 }}
+            />
+          </Space>
+          <Space size={4}>
+            <Text>{t('disk_reinstall_min_free')}</Text>
+            <InputNumber
+              min={1}
+              value={cloudSettings?.awvs_reinstall_min_free_gb || 10}
+              onChange={value => {
+                const next = typeof value === 'number' ? value : 10
+                awvsGlobalPolicyMut.mutate({ awvs_reinstall_min_free_gb: next })
+              }}
+              style={{ width: 90 }}
+            />
+          </Space>
+        </Space>
         <Alert
           type="info"
           showIcon
@@ -604,18 +635,6 @@ export default function AWVSV3Page() {
           <Form.Item name="awvs_username" label={t('awvs_username')}><Input /></Form.Item>
           <Form.Item name="awvs_password" label={t('awvs_password')}><Input.Password /></Form.Item>
           <Form.Item name="max_concurrency" label={t('max_concurrency')}><InputNumber min={1} style={{ width: '100%' }} /></Form.Item>
-          <Form.Item name="auto_restart_on_api_500" valuePropName="checked">
-            <Checkbox>{t('awvs_auto_restart_global')}</Checkbox>
-          </Form.Item>
-          <Form.Item name="auto_reinstall_enabled" valuePropName="checked">
-            <Checkbox>{t('auto_reinstall_low_disk')}</Checkbox>
-          </Form.Item>
-          <Form.Item name="reinstall_threshold_percent" label={t('disk_reinstall_threshold')}>
-            <InputNumber min={50} max={99} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="reinstall_min_free_gb" label={t('disk_reinstall_min_free')}>
-            <InputNumber min={1} style={{ width: '100%' }} />
-          </Form.Item>
           <Form.Item name="manager_url" label="Manager URL"><Input placeholder="http://ip:port" /></Form.Item>
           <Form.Item name="manager_token" label="Manager Token"><Input.Password placeholder="******" /></Form.Item>
         </Form>

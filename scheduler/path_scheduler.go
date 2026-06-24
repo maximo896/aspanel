@@ -130,6 +130,17 @@ func refreshPathAgentsStatus(db *gorm.DB) {
 				if resp != nil && resp.Body != nil {
 					resp.Body.Close()
 				}
+				if applyPathProtocolFromManager(db, &agent) {
+					req, _ = http.NewRequest("GET", fmt.Sprintf("%s/status", agent.URL), nil)
+					req.Header.Set("X-Api-Token", agent.APIKey)
+					resp, err = client.Do(req)
+					if err == nil && resp != nil && resp.StatusCode == 200 {
+						goto pathStatusOK
+					}
+					if resp != nil && resp.Body != nil {
+						resp.Body.Close()
+					}
+				}
 				now := time.Now().Unix()
 				if agent.Updating && updateGraceActive(agent.LastAutoUpdateAt, agent.LastCheckedAt, now) {
 					db.Save(&agent)
@@ -137,9 +148,25 @@ func refreshPathAgentsStatus(db *gorm.DB) {
 				}
 				agent.IsActive = false
 				agent.Updating = false
+				agent.CurrentRunning = 0
+				agent.CurrentQueued = 0
+				agent.LastCheckedAt = now
+				if err != nil {
+					agent.LastError = err.Error()
+				} else if resp != nil {
+					agent.LastError = fmt.Sprintf("status %d", resp.StatusCode)
+				} else {
+					agent.LastError = "status check failed"
+				}
+				triggerPathAutoRestartOnOffline(db, &agent, fmt.Errorf("%s", agent.LastError), "heartbeat_status")
 				db.Save(&agent)
+				if isServerStale(agent.LastHeartbeatAt) {
+					requeuePathAgentTasks(db, agent.ID, "path_heartbeat_timeout")
+					log.Printf("[path][heartbeat] marked stale path agent offline id=%d name=%s", agent.ID, agent.Name)
+				}
 				continue
 			}
+		pathStatusOK:
 			var statusResp pathAgentStatusResponse
 			_ = json.NewDecoder(resp.Body).Decode(&statusResp)
 			resp.Body.Close()
@@ -150,8 +177,10 @@ func refreshPathAgentsStatus(db *gorm.DB) {
 			}
 			agent.AgentVersion = strings.TrimSpace(statusResp.Version)
 			agent.LastHeartbeatAt = time.Now().Unix()
+			agent.LastCheckedAt = agent.LastHeartbeatAt
 			agent.IsActive = true
 			agent.Updating = false
+			agent.LastError = ""
 			db.Save(&agent)
 		}
 	}

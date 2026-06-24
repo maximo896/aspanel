@@ -319,6 +319,7 @@ export default function CloudPage() {
   const pathInstances = instances.filter(i => i.workload === 'path')
 
   const instanceColumns: ColumnsType<CloudInstance> = [
+    { title: '节点名称', dataIndex: 'node_name', ellipsis: true, width: 160, render: (v: string) => v || '-' },
     { title: '实例ID', dataIndex: 'instance_id', ellipsis: true, width: 180 },
     { title: '地域', dataIndex: 'region', width: 120 },
     { title: '可用区', dataIndex: 'zone', width: 120 },

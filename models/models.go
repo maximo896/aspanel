@@ -79,9 +79,11 @@ type SqlmapAgent struct {
 	CurrentQueued         int    `json:"current_queued"`
 	LastCheckedAt         int64  `json:"last_checked_at"`
 	LastHeartbeatAt       int64  `json:"last_heartbeat_at"`
+	LastAutoRestartAt     int64  `json:"last_auto_restart_at"`
 	LastAutoUpdateCheckAt int64  `json:"last_auto_update_check_at"`
 	LastAutoUpdateAt      int64  `json:"last_auto_update_at"`
 	LastAutoUpdateError   string `json:"last_auto_update_error"`
+	LastError             string `json:"last_error"`
 	Provider              string `json:"provider" gorm:"default:'manual'"`
 	InstanceID            string `json:"instance_id"`
 	Region                string `json:"region"`
@@ -105,9 +107,11 @@ type PathAgent struct {
 	CurrentQueued         int    `json:"current_queued"`
 	LastCheckedAt         int64  `json:"last_checked_at"`
 	LastHeartbeatAt       int64  `json:"last_heartbeat_at"`
+	LastAutoRestartAt     int64  `json:"last_auto_restart_at"`
 	LastAutoUpdateCheckAt int64  `json:"last_auto_update_check_at"`
 	LastAutoUpdateAt      int64  `json:"last_auto_update_at"`
 	LastAutoUpdateError   string `json:"last_auto_update_error"`
+	LastError             string `json:"last_error"`
 	Provider              string `json:"provider" gorm:"default:'manual'"`
 	InstanceID            string `json:"instance_id"`
 	Region                string `json:"region"`
@@ -254,6 +258,9 @@ type CloudSettings struct {
 	PortMin                    int     `json:"port_min" gorm:"default:30000"`
 	PortMax                    int     `json:"port_max" gorm:"default:40000"`
 	AWVSAutoRestartOnAPI500    bool    `json:"awvs_auto_restart_on_api_500" gorm:"column:awvs_auto_restart_on_api500;default:false"`
+	AWVSAutoReinstallEnabled   bool    `json:"awvs_auto_reinstall_enabled" gorm:"default:false"`
+	AWVSReinstallThresholdPct  int     `json:"awvs_reinstall_threshold_percent" gorm:"default:90"`
+	AWVSReinstallMinFreeGB     int64   `json:"awvs_reinstall_min_free_gb" gorm:"default:10"`
 	AWVSAutoCleanupSyncedTasks bool    `json:"awvs_auto_cleanup_synced_tasks" gorm:"default:false"`
 	AWVSAutoEnabled            bool    `json:"awvs_auto_enabled" gorm:"default:false"`
 	AWVSLaunchStartedAt        int64   `json:"awvs_launch_started_at"`
@@ -304,6 +311,7 @@ type CloudInstance struct {
 	AWVSServerID          uint    `json:"awvs_server_id"`
 	SqlmapAgentID         uint    `json:"sqlmap_agent_id"`
 	PathAgentID           uint    `json:"path_agent_id"`
+	NodeName              string  `json:"node_name" gorm:"-"`
 	AWVSProtocolSeen      bool    `json:"awvs_protocol_seen"`
 	SQLProtocolSeen       bool    `json:"sql_protocol_seen"`
 	PathProtocolSeen      bool    `json:"path_protocol_seen"`

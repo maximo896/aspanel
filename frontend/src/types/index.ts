@@ -57,9 +57,11 @@ export interface SqlmapAgent {
   current_queued: number
   last_checked_at: number
   last_heartbeat_at: number
+  last_auto_restart_at: number
   last_auto_update_check_at: number
   last_auto_update_at: number
   last_auto_update_error: string
+  last_error: string
   provider: string
   instance_id: string
   region: string
@@ -84,9 +86,11 @@ export interface PathAgent {
   current_queued: number
   last_checked_at: number
   last_heartbeat_at: number
+  last_auto_restart_at: number
   last_auto_update_check_at: number
   last_auto_update_at: number
   last_auto_update_error: string
+  last_error: string
   provider: string
   instance_id: string
   region: string
@@ -200,6 +204,9 @@ export interface CloudSettings {
   instance_type: string
   awvs_max_concurrency: number
   awvs_auto_restart_on_api_500: boolean
+  awvs_auto_reinstall_enabled: boolean
+  awvs_reinstall_threshold_percent: number
+  awvs_reinstall_min_free_gb: number
   awvs_auto_cleanup_synced_tasks: boolean
   sqlmap_max_concurrency: number
   awvs_auto_enabled: boolean
@@ -272,4 +279,5 @@ export interface CloudInstance {
   launched_at: number
   expires_at: number
   workload: string
+  node_name: string
 }
